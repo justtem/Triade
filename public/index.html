@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="theme-color" content="#0b0e14">
+
+    <title>AI Council | Central de Inteligências</title>
+
+    <link rel="stylesheet" href="styles.css">
+
+    <script src="dashboard.js" defer></script>
+</head>
+
+<body>
+
+    <div class="app-container">
+
+        <!-- BARRA LATERAL -->
+
+        <aside class="sidebar">
+
+            <div class="brand">
+                <div class="brand-icon">AI</div>
+
+                <div class="brand-text">
+                    <h1>AI COUNCIL</h1>
+                    <span>INTELLIGENCE HUB</span>
+                </div>
+            </div>
+
+            <nav class="navigation">
+
+                <span class="nav-label">PRINCIPAL</span>
+
+                <a href="#dashboard" class="nav-item active">
+                    <span>◈</span>
+                    Dashboard
+                </a>
+
+                <a href="#platforms" class="nav-item">
+                    <span>◉</span>
+                    Inteligências
+                </a>
+
+                <a href="#history" class="nav-item">
+                    <span>◷</span>
+                    Histórico
+                </a>
+
+                <span class="nav-label">SISTEMA</span>
+
+                <a href="#debates" class="nav-item">
+                    <span>⚖</span>
+                    Debates
+                </a>
+
+            </nav>
+
+            <div class="sidebar-footer">
+
+                <div class="connection-indicator">
+                    <span class="status-dot" id="server-indicator"></span>
+
+                    <div>
+                        <strong>Servidor local</strong>
+                        <small id="server-status">Verificando conexão...</small>
+                    </div>
+                </div>
+
+                <span class="version">AI COUNCIL v1.0.0</span>
+
+            </div>
+
+        </aside>
+
+
+        <!-- CONTEÚDO PRINCIPAL -->
+
+        <main class="main-content" id="dashboard">
+
+            <header class="topbar">
+
+                <div>
+                    <span class="breadcrumb">CENTRAL / DASHBOARD</span>
+                    <h2>Central de Inteligências</h2>
+                    <p>Acompanhe suas inteligências artificiais em um único lugar.</p>
+                </div>
+
+                <div class="topbar-right">
+
+                    <div class="system-clock" id="system-clock">
+                        --:--:--
+                    </div>
+
+                    <div class="profile">
+                        <div class="profile-avatar">AC</div>
+
+                        <div>
+                            <strong>Administrador</strong>
+                            <small>Ambiente local</small>
+                        </div>
+                    </div>
+
+                </div>
+
+            </header>
+
+
+            <!-- INDICADORES -->
+
+            <section class="overview">
+
+                <div class="section-heading">
+                    <div>
+                        <span class="eyebrow">VISÃO GERAL</span>
+                        <h3>Resumo do sistema</h3>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+
+                    <article class="stat-card">
+
+                        <div class="stat-header">
+                            <span>Inteligências monitoradas</span>
+                            <span class="stat-icon">◈</span>
+                        </div>
+
+                        <strong class="stat-value">3</strong>
+
+                        <small>Plataformas configuradas</small>
+
+                    </article>
+
+
+                    <article class="stat-card">
+
+                        <div class="stat-header">
+                            <span>Eventos registrados</span>
+                            <span class="stat-icon">◷</span>
+                        </div>
+
+                        <strong class="stat-value" id="total-events">--</strong>
+
+                        <small>Registros no histórico local</small>
+
+                    </article>
+
+
+                    <article class="stat-card">
+
+                        <div class="stat-header">
+                            <span>Debates ativos</span>
+                            <span class="stat-icon">⚖</span>
+                        </div>
+
+                        <strong class="stat-value" id="active-debates">0</strong>
+
+                        <small id="debate-summary">Nenhum debate iniciado</small>
+
+                    </article>
+
+
+                    <article class="stat-card">
+
+                        <div class="stat-header">
+                            <span>Estado do monitor</span>
+                            <span class="stat-icon">⌁</span>
+                        </div>
+
+                        <strong class="stat-value status-text" id="monitor-status">
+                            Verificando
+                        </strong>
+
+                        <small>Serviço de monitoramento local</small>
+
+                    </article>
+
+                </div>
+
+            </section>
+
+
+            <!-- PLATAFORMAS -->
+
+            <section class="platforms-section" id="platforms">
+
+                <div class="section-heading">
+
+                    <div>
+                        <span class="eyebrow">MONITORAMENTO</span>
+                        <h3>Inteligências conectadas</h3>
+                        <p>Estado dos serviços monitorados pelo navegador.</p>
+                    </div>
+
+                    <span class="live-label">
+                        <span class="status-dot"></span>
+                        MONITOR LOCAL
+                    </span>
+
+                </div>
+
+
+                <div class="platform-grid">
+
+                    <!-- CHATGPT -->
+
+                    <article class="platform-card" data-platform="chatgpt">
+
+                        <div class="platform-header">
+
+                            <div class="platform-identity">
+
+                                <div class="platform-logo chatgpt-logo">
+                                    GPT
+                                </div>
+
+                                <div>
+                                    <h4>ChatGPT</h4>
+                                    <span>OpenAI</span>
+                                </div>
+
+                            </div>
+
+                            <span class="platform-badge unknown">
+                                Desconhecido
+                            </span>
+
+                        </div>
+
+                        <div class="platform-divider"></div>
+
+                        <div class="platform-details">
+
+                            <div>
+                                <span>Disponibilidade</span>
+                                <strong data-field="availability">Não confirmada</strong>
+                            </div>
+
+                            <div>
+                                <span>Último aviso</span>
+                                <strong data-field="last-event">Nenhum registrado</strong>
+                            </div>
+
+                            <div>
+                                <span>Eventos históricos</span>
+                                <strong data-field="event-count">0</strong>
+                            </div>
+
+                        </div>
+
+                    </article>
+
+
+                    <!-- CLAUDE -->
+
+                    <article class="platform-card" data-platform="claude">
+
+                        <div class="platform-header">
+
+                            <div class="platform-identity">
+
+                                <div class="platform-logo claude-logo">
+                                    CL
+                                </div>
+
+                                <div>
+                                    <h4>Claude</h4>
+                                    <span>Anthropic</span>
+                                </div>
+
+                            </div>
+
+                            <span class="platform-badge unknown">
+                                Desconhecido
+                            </span>
+
+                        </div>
+
+                        <div class="platform-divider"></div>
+
+                        <div class="platform-details">
+
+                            <div>
+                                <span>Disponibilidade</span>
+                                <strong data-field="availability">Não confirmada</strong>
+                            </div>
+
+                            <div>
+                                <span>Último aviso</span>
+                                <strong data-field="last-event">Nenhum registrado</strong>
+                            </div>
+
+                            <div>
+                                <span>Eventos históricos</span>
+                                <strong data-field="event-count">0</strong>
+                            </div>
+
+                        </div>
+
+                    </article>
+
+
+                    <!-- GEMINI -->
+
+                    <article class="platform-card" data-platform="gemini">
+
+                        <div class="platform-header">
+
+                            <div class="platform-identity">
+
+                                <div class="platform-logo gemini-logo">
+                                    GE
+                                </div>
+
+                                <div>
+                                    <h4>Gemini</h4>
+                                    <span>Google</span>
+                                </div>
+
+                            </div>
+
+                            <span class="platform-badge unknown">
+                                Desconhecido
+                            </span>
+
+                        </div>
+
+                        <div class="platform-divider"></div>
+
+                        <div class="platform-details">
+
+                            <div>
+                                <span>Disponibilidade</span>
+                                <strong data-field="availability">Não confirmada</strong>
+                            </div>
+
+                            <div>
+                                <span>Último aviso</span>
+                                <strong data-field="last-event">Nenhum registrado</strong>
+                            </div>
+
+                            <div>
+                                <span>Eventos históricos</span>
+                                <strong data-field="event-count">0</strong>
+                            </div>
+
+                        </div>
+
+                    </article>
+
+                </div>
+
+            </section>
+
+
+            <!-- HISTÓRICO -->
+
+            <section class="history-section" id="history">
+
+                <div class="section-heading">
+
+                    <div>
+                        <span class="eyebrow">REGISTROS</span>
+                        <h3>Atividade recente</h3>
+                        <p>Últimos eventos recebidos pelo monitor.</p>
+                    </div>
+
+                    <span class="history-counter" id="history-counter">
+                        0 eventos
+                    </span>
+
+                </div>
+
+
+                <div class="history-container">
+
+                    <div class="history-header">
+                        <span>PLATAFORMA</span>
+                        <span>EVENTO</span>
+                        <span>DATA</span>
+                        <span>CLASSIFICAÇÃO</span>
+                    </div>
+
+                    <div id="history-list" class="history-list">
+
+                        <div class="empty-state">
+                            <span class="empty-icon">◷</span>
+
+                            <strong>Nenhum evento carregado</strong>
+
+                            <p>Os registros aparecerão aqui quando forem recebidos.</p>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- DEBATES -->
+
+            <section class="debates-section" id="debates">
+
+                <div class="section-heading">
+
+                    <div>
+                        <span class="eyebrow">INTELIGÊNCIA COLETIVA</span>
+                        <h3>Centro de debates</h3>
+                        <p>Coordenação de debates entre IAs com preservação de estado e proteção de limite gratuito.</p>
+                    </div>
+
+                </div>
+
+                <div class="debate-workspace">
+
+                    <!-- FORMULÁRIO DE NOVO DEBATE -->
+                    <article class="debate-card">
+                        <div class="debate-card-header">
+                            <h4>Iniciar novo debate</h4>
+                            <span class="development-badge">CUSTO ZERO</span>
+                        </div>
+
+                        <form id="create-debate-form" class="debate-form">
+                            <div class="form-group">
+                                <label for="debate-title">Título do debate</label>
+                                <input
+                                    type="text"
+                                    id="debate-title"
+                                    placeholder="Ex.: Arquitetura de microsserviços vs. monolito modular"
+                                    required
+                                    maxlength="120"
+                                >
+                            </div>
+
+                            <div class="form-group">
+                                <label for="debate-topic">Tema / Problema para análise conjunta</label>
+                                <textarea
+                                    id="debate-topic"
+                                    rows="3"
+                                    placeholder="Descreva o problema que as inteligências deverão analisar, criticar e resolver em conjunto..."
+                                    required
+                                ></textarea>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Inteligências participantes (mínimo 2)</label>
+                                    <div class="checkbox-group">
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" name="participants" value="chatgpt" checked>
+                                            <span>ChatGPT</span>
+                                        </label>
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" name="participants" value="claude" checked>
+                                            <span>Claude</span>
+                                        </label>
+                                        <label class="checkbox-item">
+                                            <input type="checkbox" name="participants" value="gemini" checked>
+                                            <span>Gemini Argon</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="form-group form-group-small">
+                                    <label for="debate-rounds">Rodadas de debate</label>
+                                    <select id="debate-rounds">
+                                        <option value="1">1 rodada + Síntese</option>
+                                        <option value="2" selected>2 rodadas + Síntese</option>
+                                        <option value="3">3 rodadas + Síntese</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="debate-rules">Regras e diretrizes (opcional)</label>
+                                <input
+                                    type="text"
+                                    id="debate-rules"
+                                    placeholder="Analise com rigor técnico, aponte falhas das outras IAs com objetividade e proponha consenso."
+                                >
+                            </div>
+
+                            <div class="form-actions">
+                                <span id="debate-form-feedback" class="form-feedback"></span>
+                                <button type="submit" class="btn-primary">
+                                    Criar e Iniciar Debate
+                                </button>
+                            </div>
+                        </form>
+                    </article>
+
+                    <!-- SESSÕES DE DEBATE REGISTRADAS -->
+                    <div id="debates-list-container" class="debates-list-container">
+                        <div class="empty-state">
+                            <span class="empty-icon">⚖</span>
+                            <strong>Nenhuma sessão de debate registrada</strong>
+                            <p>Crie um debate acima para gerar os prompts contextuais de cada IA e acompanhar as rodadas.</p>
+                        </div>
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <footer class="main-footer">
+
+                <span>AI COUNCIL © 2026</span>
+
+                <span>
+                    Sistema local de coordenação de inteligências artificiais
+                </span>
+
+            </footer>
+
+        </main>
+
+    </div>
+
+</body>
+</html>
