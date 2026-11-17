@@ -1,8 +1,42 @@
-export type AIPlatform = "chatgpt" | "claude" | "gemini";
+export type AIPlatform =
+  | "chatgpt"
+  | "claude"
+  | "gemini"
+  | "groq"
+  | "openrouter";
+
+/** Assentos automáticos: o servidor chama a API sozinho. */
+export type AutoPlatform = "gemini" | "groq" | "openrouter";
+
+/** Assentos manuais: o usuário cola a resposta da interface web. */
+export type ManualPlatform = "chatgpt" | "claude";
+
+export const ALL_PLATFORMS: readonly AIPlatform[] = [
+  "chatgpt",
+  "claude",
+  "gemini",
+  "groq",
+  "openrouter"
+];
+
+export const AUTO_PLATFORMS: readonly AutoPlatform[] = [
+  "gemini",
+  "groq",
+  "openrouter"
+];
+
+export function isAutoPlatform(
+  platform: string
+): platform is AutoPlatform {
+  return (AUTO_PLATFORMS as readonly string[]).includes(platform);
+}
+
+export type DebateFocus = "geral" | "backend" | "frontend";
 
 export type DebateStatus =
   | "running"
   | "paused_limit"
+  | "paused_error"
   | "paused_manual"
   | "completed";
 
@@ -29,10 +63,22 @@ export interface DebateTask {
   round: number;
   stage: Exclude<DebateStage, "completed">;
   platform: AIPlatform;
+
+  /** Prompt completo (sistema + usuário), usado para copiar nos assentos manuais. */
   prompt: string;
+
   status: "pending" | "completed";
   createdAt: string;
   completedAt?: string;
+
+  // Campos da engine v2 (ausentes em debates antigos)
+  seat?: "auto" | "manual";
+  role?: string;
+  systemPrompt?: string;
+  userPrompt?: string;
+  maxTokens?: number;
+  attempts?: number;
+  lastError?: string;
 }
 
 export interface DebateResponse {
@@ -44,10 +90,12 @@ export interface DebateResponse {
   promptUsed: string;
   content: string;
   submittedAt: string;
+  model?: string;
+  tokens?: number;
 }
 
 export interface DebatePauseInfo {
-  reason: "usage_limit_reached" | "manual_pause";
+  reason: "usage_limit_reached" | "manual_pause" | "provider_error";
   blockedBy?: AIPlatform;
   message: string;
   pausedAt: string;
@@ -71,6 +119,11 @@ export interface DebateSession {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+
+  focus?: DebateFocus;
+
+  /** 2 = debates criados pela engine nova (o runner só automatiza estes). */
+  engineVersion?: number;
 }
 
 export interface CreateDebateInput {
@@ -79,9 +132,17 @@ export interface CreateDebateInput {
   rules?: string;
   participants: AIPlatform[];
   totalRounds: number;
+  focus?: DebateFocus;
 }
 
 export interface SubmitResponseInput {
   taskId: string;
   content: string;
+}
+
+export interface SubmitResponseMeta {
+  /** Permite registrar uma resposta de API já paga mesmo se o debate foi pausado no meio. */
+  allowWhilePaused?: boolean;
+  model?: string;
+  tokens?: number;
 }
