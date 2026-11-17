@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  AIPlatform,
-  CreateDebateInput,
-  DebateResponse,
-  DebateSession,
-  DebateStage,
-  DebateTask,
-  ParticipantState,
-  SubmitResponseInput
+import {
+  ALL_PLATFORMS,
+  isAutoPlatform,
+  type AIPlatform,
+  type CreateDebateInput,
+  type DebateFocus,
+  type DebateResponse,
+  type DebateSession,
+  type DebateStage,
+  type DebateTask,
+  type ParticipantState,
+  type SubmitResponseInput,
+  type SubmitResponseMeta
 } from "../shared/debate-types.js";
 
 import {
@@ -17,30 +21,244 @@ import {
   writeDebateSessionsAtomically
 } from "../persistence/debate-store.js";
 
-const PLATFORM_NAMES: Record<AIPlatform, string> = {
+// ============================================
+// CONSTANTES
+// ============================================
+
+export const ENGINE_VERSION = 2;
+
+export const PLATFORM_NAMES: Record<AIPlatform, string> = {
   chatgpt: "ChatGPT",
   claude: "Claude",
-  gemini: "Gemini Argon"
+  gemini: "Gemini",
+  groq: "Groq",
+  openrouter: "OpenRouter"
 };
 
 const DEFAULT_RULES =
-  "Responda diretamente ao problema com profundidade prática, exemplos concretos, código funcional (se aplicável) e rigor técnico.";
+  "Seja curto, direto e 100% concreto. Sem enrolação, sem introdução longa e sem teoria desnecessária. Foque na solução prática e acionável.";
 
-// Usa cerca de 4 tils (~~~~markdown) para que blocos internos de código (```) NÃO quebrem o bloco único no ChatGPT/Claude/Gemini!
-const MARKDOWN_FORMAT_INSTRUCTION = [
-  `REGRA ABSOLUTA DE FORMATO (BLOCO MARKDOWN ÚNICO):`,
-  `- Você DEVE colocar 100% da sua resposta dentro de UM ÚNICO bloco cercado por 4 tils, começando exatamente com \`~~~markdown\` (ou \`~~~~markdown\`) na primeira linha e fechando com \`~~~~\` na última linha.`,
-  `- Se precisar mostrar exemplos de código (SQL, JS, Python, HTML, etc.) dentro da explicação, use 3 crases (\`\`\`) normalmente lá dentro, pois o bloco externo de 4 tils (\`~~~~markdown\`) manterá tudo dentro de uma única caixa copiável sem quebrar!`,
-  `- Não escreva absolutamente NADA fora desse bloco único e, na última linha antes de fechar o bloco, escreva: [FIM_DA_RESPOSTA]`
-].join("\n");
+const MAX_TOKENS = {
+  initial_response: 1100,
+  critique: 1100,
+  synthesis: 1600
+} as const;
+
+// Limites de contexto reenviado entre rodadas (economia de tokens).
+const COMPACT_CRITIQUE_CHARS = 3000;
+const COMPACT_SYNTHESIS_CHARS = 4500;
+
+export const DEFAULT_SYSTEM_PROMPT = [
+  "Você integra o AI Council, um conselho técnico de IAs que debate para chegar à melhor resposta.",
+  "Responda sempre em Markdown, em português do Brasil, de forma curta, direta e concreta.",
+  "Sem introdução, sem elogios e sem repetir o enunciado.",
+  "Use código somente quando necessário, em blocos com a linguagem indicada.",
+  "Se faltar informação, assuma o mais razoável e escreva a suposição em uma linha."
+].join(" ");
+
+const FRONTEND_RULES = [
+  "Evite o visual genérico de IA: sem gradientes roxo/azul, sem emojis em títulos,",
+  "sem grade de cards idênticos com sombra, sem excesso de ícones decorativos,",
+  "sem textos de marketing vagos. Defina tipografia, escala de espaçamento,",
+  "paleta com uma única cor de destaque e hierarquia visual coerentes.",
+  "Prefira detalhes específicos do produto e alinhamentos intencionais."
+].join(" ");
+
+// ============================================
+// PAPÉIS (cada IA recebe uma função diferente)
+// ============================================
+
+interface Role {
+  title: string;
+  round1: string;
+  critique: string;
+}
+
+function roleFor(platform: AIPlatform, focus: DebateFocus): Role {
+  switch (platform) {
+    case "gemini":
+      return {
+        title: "Arquiteto e relator",
+        round1:
+          "Proponha a arquitetura principal e o código essencial completo.",
+        critique:
+          "Preserve sua estrutura base e faça merge linha a linha com as travas de segurança e otimizações válidas dos colegas."
+      };
+
+    case "groq":
+      return {
+        title: "Revisor técnico (bugs, segurança e borda)",
+        round1:
+          "Proponha sua solução focando em segurança, erros e casos de borda.",
+        critique:
+          "Aponte apenas bugs/riscos reais nas propostas e faça merge das suas travas na melhor estrutura do conselho."
+      };
+
+    case "openrouter":
+      if (focus === "frontend") {
+        return {
+          title: "Revisor de UX e estética",
+          round1: `Proponha a interface focando em UX. ${FRONTEND_RULES}`,
+          critique: `Melhore a UX/estética fazendo merge no código do conselho. ${FRONTEND_RULES}`
+        };
+      }
+
+      if (focus === "backend") {
+        return {
+          title: "Revisor de simplicidade",
+          round1:
+            "Proponha a solução mais simples, completa e desacoplada.",
+          critique:
+            "Corte complexidade desnecessária preservando todas as validações e regras das demais propostas."
+        };
+      }
+
+      return {
+        title: "Voz alternativa e otimização",
+        round1:
+          "Proponha uma abordagem otimizada no mesmo escopo, com código completo e trade-off em 1 linha.",
+        critique:
+          "Otimize gargalos fazendo merge direto na estrutura do conselho, sem remover validações existentes."
+      };
+
+    case "chatgpt":
+      return {
+        title: "Autor alternativo",
+        round1: "Proponha uma abordagem alternativa explicando o trade-off.",
+        critique: "Integre o que faltou nas propostas em uma versão unificada."
+      };
+
+    case "claude":
+      return {
+        title: "Revisor de qualidade",
+        round1: "Proponha a solução focando em clareza e manutenção.",
+        critique: "Refine a legibilidade mantendo a lógica consolidada do conselho."
+      };
+  }
+}
+
+// ============================================
+// UTILITÁRIOS DE PROMPT
+// ============================================
+
+/** Reduz uma resposta longa mantendo início e fim (evita reenviar tudo a cada rodada). */
+export function compactForPrompt(text: string, maxChars: number): string {
+  const clean = text.trim();
+
+  if (clean.length <= maxChars) {
+    return clean;
+  }
+
+  const head = clean.slice(0, Math.floor(maxChars * 0.7));
+  const tail = clean.slice(-Math.floor(maxChars * 0.25));
+
+  let output = `${head}\n\n[... trecho omitido para economizar tokens ...]\n\n${tail}`;
+
+  const fenceCount = (output.match(/^```/gm) ?? []).length;
+  if (fenceCount % 2 === 1) {
+    output += "\n```";
+  }
+
+  return output;
+}
+
+function combinePrompt(system: string, user: string): string {
+  return `${system}\n\n---\n\n${user}`;
+}
+
+function labelFor(platform: AIPlatform, focus: DebateFocus): string {
+  return `${PLATFORM_NAMES[platform]} — ${roleFor(platform, focus).title}`;
+}
+
+function focusOf(session: DebateSession): DebateFocus {
+  return session.focus ?? "geral";
+}
+
+function buildInitialUserPrompt(
+  session: DebateSession,
+  platform: AIPlatform
+): string {
+  const role = roleFor(platform, focusOf(session));
+
+  return [
+    `Tema: ${session.title}`,
+    ``,
+    `Problema:`,
+    session.topic,
+    ``,
+    `Diretriz: ${session.rules}`,
+    ``,
+    `Seu papel: ${role.title}.`,
+    role.round1,
+    `Seja enxuto: no máximo ~350 palavras fora blocos de código.`
+  ].join("\n");
+}
+
+function buildPreviousBlock(
+  session: DebateSession,
+  round: number,
+  maxChars: number
+): string {
+  const focus = focusOf(session);
+
+  return session.responses
+    .filter((resp) => resp.round === round)
+    .map((resp) =>
+      [
+        `### ${labelFor(resp.platform, focus)}`,
+        compactForPrompt(resp.content, maxChars)
+      ].join("\n")
+    )
+    .join("\n\n");
+}
+
+function buildCritiqueUserPrompt(
+  session: DebateSession,
+  round: number,
+  platform: AIPlatform
+): string {
+  const role = roleFor(platform, focusOf(session));
+  const previousRound = round - 1;
+
+  return [
+    `Problema: ${session.topic}`,
+    `Diretriz: ${session.rules}`,
+    ``,
+    `Propostas da rodada ${previousRound} (resumidas):`,
+    ``,
+    buildPreviousBlock(session, previousRound, COMPACT_CRITIQUE_CHARS),
+    ``,
+    `Seu papel: ${role.title}.`,
+    role.critique,
+    `Formato: (1) até 3 falhas reais (não invente se já estiver correto); (2) código único mesclando o melhor das 3 propostas (proibido TODOs ou cortes). Seja curto.`
+  ].join("\n");
+}
+
+function buildSynthesisUserPrompt(session: DebateSession): string {
+  return [
+    `Pedido original: ${session.topic}`,
+    `Diretriz: ${session.rules}`,
+    ``,
+    `Posições finais da rodada ${session.totalRounds}:`,
+    ``,
+    buildPreviousBlock(session, session.totalRounds, COMPACT_SYNTHESIS_CHARS),
+    ``,
+    `Você é o relator. Faça um MERGE linha a linha mantendo sua estrutura base (Gemini) somada às validações do Groq e otimizações do OpenRouter (ignore códigos cortados/TODOs e restaure qualquer trava de estado omitida):`,
+    `1. "# Solução final" — a solução consolidada completa.`,
+    `2. "## Conclusão do conselho" — 1 parágrafo curto sobre o que foi fundido.`
+  ].join("\n");
+}
+
+// ============================================
+// CRIAÇÃO DE TAREFAS
+// ============================================
 
 function createInitialParticipantStates(
   participants: AIPlatform[]
 ): Record<AIPlatform, ParticipantState> {
-  const allPlatforms: AIPlatform[] = ["chatgpt", "claude", "gemini"];
   const states = {} as Record<AIPlatform, ParticipantState>;
 
-  for (const platform of allPlatforms) {
+  for (const platform of ALL_PLATFORMS) {
     if (participants.includes(platform)) {
       states[platform] = {
         platform,
@@ -52,109 +270,43 @@ function createInitialParticipantStates(
   return states;
 }
 
-function buildInitialPrompt(
-  title: string,
-  topic: string,
-  rules: string,
-  platform: AIPlatform
-): string {
-  const aiName = PLATFORM_NAMES[platform];
+function pickRelator(session: DebateSession): AIPlatform {
+  if (session.participants.includes("gemini")) return "gemini";
 
-  return [
-    `Você é ${aiName} atuando no conselho técnico AI Council.`,
-    `Tema: ${title}`,
-    ``,
-    `PEDIDO DO USUÁRIO:`,
-    `"${topic}"`,
-    ``,
-    `DIRETRIZ TÉCNICA:`,
-    `${rules}`,
-    ``,
-    `SUA MISSÃO NESTA RODADA 1:`,
-    `Entregue uma explicação completa, didática e prática que resolva diretamente o pedido do usuário (incluindo todos os elementos, estrutura, passos e exemplos práticos/código).`,
-    ``,
-    MARKDOWN_FORMAT_INSTRUCTION
-  ].join("\n");
+  const firstAuto = session.participants.find((p) => isAutoPlatform(p));
+  return firstAuto ?? session.participants[0] ?? "gemini";
 }
 
-function buildCritiquePrompt(
+function buildTask(
   session: DebateSession,
   round: number,
+  stage: Exclude<DebateStage, "completed">,
   platform: AIPlatform
-): string {
-  const aiName = PLATFORM_NAMES[platform];
-  const previousRound = round - 1;
+): DebateTask {
+  const focus = focusOf(session);
+  const role = roleFor(platform, focus);
 
-  const previousResponses = session.responses.filter(
-    (resp) => resp.round === previousRound
-  );
+  const userPrompt =
+    stage === "initial_response"
+      ? buildInitialUserPrompt(session, platform)
+      : stage === "critique"
+        ? buildCritiqueUserPrompt(session, round, platform)
+        : buildSynthesisUserPrompt(session);
 
-  const formattedResponses = previousResponses
-    .map((resp) => {
-      const authorLabel =
-        resp.platform === platform
-          ? `${PLATFORM_NAMES[resp.platform]} (Sua resposta anterior)`
-          : PLATFORM_NAMES[resp.platform];
-
-      return [
-        `--- INÍCIO DA RESPOSTA DE ${authorLabel.toUpperCase()} ---`,
-        resp.content.trim(),
-        `--- FIM DA RESPOSTA DE ${authorLabel.toUpperCase()} ---`
-      ].join("\n");
-    })
-    .join("\n\n");
-
-  return [
-    `Rodada ${round} do AI Council sobre o pedido: "${session.topic}"`,
-    `Diretriz técnica: ${session.rules}`,
-    ``,
-    `Veja abaixo o que cada inteligência respondeu na Rodada ${previousRound}:`,
-    ``,
-    formattedResponses,
-    ``,
-    `SUA MISSÃO NESTA RODADA ${round} (${aiName.toUpperCase()}):`,
-    `1. Avalie as respostas das outras inteligências acima: destaque os melhores pontos e corrija o que estiver faltando ou incompleto.`,
-    `2. Monte uma resposta consolidada e aprimorada que una a sua explicação com as melhores partes das outras inteligências.`,
-    ``,
-    MARKDOWN_FORMAT_INSTRUCTION
-  ].join("\n");
-}
-
-function buildSynthesisPrompt(
-  session: DebateSession,
-  platform: AIPlatform
-): string {
-  const aiName = PLATFORM_NAMES[platform];
-  const lastRound = session.totalRounds;
-
-  const latestResponses = session.responses.filter(
-    (resp) => resp.round === lastRound
-  );
-
-  const formattedLatest = latestResponses
-    .map(
-      (resp) =>
-        `--- POSIÇÃO DE ${PLATFORM_NAMES[resp.platform].toUpperCase()} ---\n${resp.content.trim()}`
-    )
-    .join("\n\n");
-
-  return [
-    `ETAPA FINAL DE SÍNTESE E CONCLUSÃO DO AI COUNCIL`,
-    `Relator Oficial: ${aiName}`,
-    `Pedido original do usuário: "${session.topic}"`,
-    `Diretriz aplicada: ${session.rules}`,
-    ``,
-    `Respostas finais das inteligências na Rodada ${lastRound}:`,
-    ``,
-    formattedLatest,
-    ``,
-    `SUA MISSÃO FINAL COMO RELATOR (${aiName.toUpperCase()}):`,
-    `Elabore o DOCUMENTO FINAL DEFINITIVO para o usuário em Markdown, contendo obrigatoriamente:`,
-    `1. # SOLUÇÃO DEFINITIVA E COMPLETA (Explicação completa, todos os elementos, instruções passo a passo e códigos/exemplos prontos sobre "${session.topic}").`,
-    `2. ## AVAL E CONCLUSÃO DO CONSELHO (Resumo objetivo do consenso entre ChatGPT, Claude e Gemini Argon aprovando esta solução).`,
-    ``,
-    MARKDOWN_FORMAT_INSTRUCTION
-  ].join("\n");
+  return {
+    id: randomUUID(),
+    round,
+    stage,
+    platform,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    seat: isAutoPlatform(platform) ? "auto" : "manual",
+    role: stage === "synthesis" ? "Relator" : role.title,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    userPrompt,
+    maxTokens: MAX_TOKENS[stage],
+    prompt: combinePrompt(DEFAULT_SYSTEM_PROMPT, userPrompt)
+  };
 }
 
 function createTasksForStage(
@@ -162,44 +314,18 @@ function createTasksForStage(
   round: number,
   stage: Exclude<DebateStage, "completed">
 ): DebateTask[] {
-  const now = new Date().toISOString();
-
   if (stage === "synthesis") {
-    const leadPlatform: AIPlatform = session.participants.includes("gemini")
-      ? "gemini"
-      : (session.participants[0] ?? "chatgpt");
-
-    return [
-      {
-        id: randomUUID(),
-        round,
-        stage: "synthesis",
-        platform: leadPlatform,
-        prompt: buildSynthesisPrompt(session, leadPlatform),
-        status: "pending",
-        createdAt: now
-      }
-    ];
+    return [buildTask(session, round, "synthesis", pickRelator(session))];
   }
 
-  return session.participants.map((platform) => ({
-    id: randomUUID(),
-    round,
-    stage,
-    platform,
-    prompt:
-      stage === "initial_response"
-        ? buildInitialPrompt(
-            session.title,
-            session.topic,
-            session.rules,
-            platform
-          )
-        : buildCritiquePrompt(session, round, platform),
-    status: "pending",
-    createdAt: now
-  }));
+  return session.participants.map((platform) =>
+    buildTask(session, round, stage, platform)
+  );
 }
+
+// ============================================
+// CONSULTAS
+// ============================================
 
 export async function listDebateSessions(): Promise<DebateSession[]> {
   const sessions = await readDebateSessions();
@@ -231,6 +357,10 @@ export async function deleteDebateSession(
   });
 }
 
+// ============================================
+// CRIAÇÃO DE DEBATE
+// ============================================
+
 export async function createDebateSession(
   input: CreateDebateInput
 ): Promise<DebateSession> {
@@ -242,11 +372,16 @@ export async function createDebateSession(
     );
   }
 
-  const totalRounds = Math.min(Math.max(Number(input.totalRounds) || 2, 1), 5);
+  const totalRounds = Math.min(Math.max(Number(input.totalRounds) || 2, 1), 3);
   const now = new Date().toISOString();
   const title = input.title.trim();
   const topic = input.topic.trim();
   const rules = (input.rules || DEFAULT_RULES).trim();
+
+  const focus: DebateFocus =
+    input.focus === "backend" || input.focus === "frontend"
+      ? input.focus
+      : "geral";
 
   if (!title || !topic) {
     throw new Error("Título e tema do debate são obrigatórios.");
@@ -255,7 +390,7 @@ export async function createDebateSession(
   return withDebateLock(async () => {
     const sessions = await readDebateSessions();
 
-    // Pausa debates antigos que tenham ficado abertos para que o novo debate seja o único ativo (running)
+    // Pausa debates antigos abertos para que o novo seja o único ativo (running).
     for (const old of sessions) {
       if (old.status === "running") {
         old.status = "paused_manual";
@@ -281,14 +416,12 @@ export async function createDebateSession(
       tasks: [],
       responses: [],
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      focus,
+      engineVersion: ENGINE_VERSION
     };
 
-    newSession.tasks = createTasksForStage(
-      newSession,
-      1,
-      "initial_response"
-    );
+    newSession.tasks = createTasksForStage(newSession, 1, "initial_response");
 
     sessions.push(newSession);
     await writeDebateSessionsAtomically(sessions);
@@ -297,17 +430,26 @@ export async function createDebateSession(
   });
 }
 
-export async function submitDebateTaskResponse(
-  debateId: string,
-  input: SubmitResponseInput
-): Promise<DebateSession> {
-  const content = input.content
+// ============================================
+// REGISTRO DE RESPOSTAS
+// ============================================
+
+function stripLegacyWrappers(raw: string): string {
+  return raw
     .replace(/^~~~~+markdown\s*/i, "")
     .replace(/^~~~+markdown\s*/i, "")
     .replace(/^```+markdown\s*/i, "")
     .replace(/~~~~+\s*$/i, "")
     .replace(/\[FIM_DA_RESPOSTA\]/gi, "")
     .trim();
+}
+
+export async function submitDebateTaskResponse(
+  debateId: string,
+  input: SubmitResponseInput,
+  meta: SubmitResponseMeta = {}
+): Promise<DebateSession> {
+  const content = stripLegacyWrappers(input.content);
 
   if (!content) {
     throw new Error("O conteúdo da resposta não pode estar vazio.");
@@ -321,7 +463,11 @@ export async function submitDebateTaskResponse(
       throw new Error("Sessão de debate não encontrada.");
     }
 
-    if (session.status !== "running") {
+    if (session.status === "completed") {
+      throw new Error("O debate já foi concluído.");
+    }
+
+    if (session.status !== "running" && !meta.allowWhilePaused) {
       throw new Error(
         "Não é possível registrar respostas enquanto o debate estiver pausado ou concluído."
       );
@@ -337,14 +483,14 @@ export async function submitDebateTaskResponse(
       return session;
     }
 
+    const echoProbe = task.userPrompt?.trim().slice(0, 120);
+
     if (
       content === task.prompt.trim() ||
-      content.includes("REGRA ABSOLUTA DE FORMATO (BLOCO MARKDOWN ÚNICO):") ||
-      content.includes("SUA MISSÃO NESTA RODADA 1:") ||
-      content.includes("SUA MISSÃO FINAL COMO RELATOR")
+      (echoProbe && echoProbe.length > 40 && content.includes(echoProbe))
     ) {
       throw new Error(
-        "O texto capturado era o próprio prompt da pergunta. Aguardando a resposta real da IA."
+        "O texto colado é o próprio prompt da pergunta. Cole a resposta real da IA."
       );
     }
 
@@ -352,6 +498,7 @@ export async function submitDebateTaskResponse(
 
     task.status = "completed";
     task.completedAt = now;
+    delete task.lastError;
 
     const responseRecord: DebateResponse = {
       id: randomUUID(),
@@ -361,7 +508,9 @@ export async function submitDebateTaskResponse(
       platform: task.platform,
       promptUsed: task.prompt,
       content,
-      submittedAt: now
+      submittedAt: now,
+      ...(meta.model ? { model: meta.model } : {}),
+      ...(meta.tokens !== undefined ? { tokens: meta.tokens } : {})
     };
 
     session.responses.push(responseRecord);
@@ -380,23 +529,18 @@ export async function submitDebateTaskResponse(
         session.status = "completed";
         session.conclusion = content;
         session.completedAt = now;
+        delete session.pauseInfo;
       } else if (session.currentRound < session.totalRounds) {
         session.currentRound += 1;
         session.currentStage = "critique";
-        const nextTasks = createTasksForStage(
-          session,
-          session.currentRound,
-          "critique"
+        session.tasks.push(
+          ...createTasksForStage(session, session.currentRound, "critique")
         );
-        session.tasks.push(...nextTasks);
       } else {
         session.currentStage = "synthesis";
-        const synthesisTasks = createTasksForStage(
-          session,
-          session.currentRound,
-          "synthesis"
+        session.tasks.push(
+          ...createTasksForStage(session, session.currentRound, "synthesis")
         );
-        session.tasks.push(...synthesisTasks);
       }
     }
 
@@ -404,6 +548,53 @@ export async function submitDebateTaskResponse(
     return session;
   });
 }
+
+// ============================================
+// FALHAS DE PROVEDOR
+// ============================================
+
+export async function recordTaskFailure(
+  debateId: string,
+  taskId: string,
+  message: string,
+  options: { maxAttempts?: number; fatal?: boolean } = {}
+): Promise<DebateSession | null> {
+  return withDebateLock(async () => {
+    const sessions = await readDebateSessions();
+    const session = sessions.find((s) => s.id === debateId);
+    const task = session?.tasks.find((t) => t.id === taskId);
+
+    if (!session || !task || task.status === "completed") {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+
+    task.attempts = (task.attempts ?? 0) + 1;
+    task.lastError = message.slice(0, 400);
+    session.updatedAt = now;
+
+    const exhausted =
+      options.fatal === true || task.attempts >= (options.maxAttempts ?? 2);
+
+    if (exhausted && session.status === "running") {
+      session.status = "paused_error";
+      session.pauseInfo = {
+        reason: "provider_error",
+        blockedBy: task.platform,
+        message: `Debate pausado: ${PLATFORM_NAMES[task.platform]} falhou (${task.lastError}). Corrija o problema e clique em Retomar. O progresso foi preservado.`,
+        pausedAt: now
+      };
+    }
+
+    await writeDebateSessionsAtomically(sessions);
+    return session;
+  });
+}
+
+// ============================================
+// PAUSA E RETOMADA
+// ============================================
 
 export async function pauseDebateManually(
   debateId: string,
@@ -462,6 +653,14 @@ export async function resumeDebateSession(
           ...session.participantStates[blockedPlatform],
           availability: "unknown"
         };
+      }
+    }
+
+    // Recomeça a contagem de tentativas das tarefas pendentes.
+    for (const task of session.tasks) {
+      if (task.status === "pending") {
+        delete task.attempts;
+        delete task.lastError;
       }
     }
 

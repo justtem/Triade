@@ -3,521 +3,686 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <meta name="theme-color" content="#0b0e14">
-
-    <title>AI Council | Central de Inteligências</title>
-
+    <meta name="theme-color" content="#181818">
+    <title>AI Council — Intelligence Hub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Oswald:wght@700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
-
     <script src="dashboard.js" defer></script>
 </head>
-
 <body>
 
-    <div class="app-container">
+    <div class="app-container" id="app-shell">
 
-        <!-- BARRA LATERAL -->
+        <!-- OVERLAY MOBILE PARA DRAWERS -->
+        <div class="mobile-backdrop" id="mobile-backdrop" aria-hidden="true"></div>
 
-        <aside class="sidebar">
+        <!-- =====================================================
+             COLUNA 1: SIDEBAR ESQUERDA RETRÁTIL E EM ABAS
+        ====================================================== -->
+        <aside class="sidebar" id="left-sidebar" aria-label="Navegação e Histórico de Debates">
 
-            <div class="brand">
-                <div class="brand-icon">AI</div>
+            <div class="sidebar-top">
+                <div class="brand-row">
+                    <div class="brand">
+                        <div class="brand-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                                <polyline points="2 17 12 22 22 17"></polyline>
+                                <polyline points="2 12 12 17 22 12"></polyline>
+                            </svg>
+                        </div>
 
-                <div class="brand-text">
-                    <h1>AI COUNCIL</h1>
-                    <span>INTELLIGENCE HUB</span>
+                        <div class="brand-text">
+                            <h1>AI COUNCIL</h1>
+                            <span>INTELLIGENCE HUB</span>
+                        </div>
+                    </div>
+
+                    <button type="button" class="icon-btn mobile-only" id="close-left-drawer" aria-label="Fechar menu">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+
+                <button type="button" class="btn-primary btn-new-debate" id="btn-new-debate">
+                    <span>+ Novo Debate</span>
+                    <span class="cta-arrow" aria-hidden="true">→</span>
+                </button>
+            </div>
+
+            <!-- SEÇÃO COLAPSÁVEL 1: NAVEGAÇÃO DO SISTEMA (ABAS) -->
+            <div class="sidebar-section" data-sidebar-section="nav">
+                <button type="button" class="sidebar-section-toggle" data-toggle-section="nav" aria-expanded="true">
+                    <span class="nav-label">NAVEGAÇÃO DO SISTEMA</span>
+                    <svg class="section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </button>
+
+                <nav class="navigation sidebar-section-body" aria-label="Visualizações do Sistema">
+                    <button type="button" class="nav-item active" data-view-target="chat">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <span>Chat Central</span>
+                    </button>
+
+                    <button type="button" class="nav-item" data-view-target="dashboard">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                        </svg>
+                        <span>Resumo &amp; Monitoramento</span>
+                    </button>
+
+                    <button type="button" class="nav-item" data-view-target="history">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="9"></circle>
+                            <polyline points="12 7 12 12 15 15"></polyline>
+                        </svg>
+                        <span>Atividade &amp; Histórico</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- SEÇÃO COLAPSÁVEL 2: CONVERSAS / DEBATES -->
+            <div class="sidebar-section sidebar-conversations" data-sidebar-section="debates">
+                <button type="button" class="sidebar-section-toggle" data-toggle-section="debates" aria-expanded="true">
+                    <span class="nav-label">CONVERSAS / DEBATES</span>
+                    <div class="sidebar-toggle-right">
+                        <span class="sidebar-counter" id="sidebar-debates-count">0</span>
+                        <svg class="section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </div>
+                </button>
+
+                <div class="conversation-list sidebar-section-body" id="sidebar-debate-list" role="list">
+                    <div class="sidebar-empty">
+                        <span>Nenhum debate registrado</span>
+                    </div>
                 </div>
             </div>
 
-            <nav class="navigation">
-
-                <span class="nav-label">PRINCIPAL</span>
-
-                <a href="#dashboard" class="nav-item active">
-                    <span>◈</span>
-                    Dashboard
-                </a>
-
-                <a href="#platforms" class="nav-item">
-                    <span>◉</span>
-                    Inteligências
-                </a>
-
-                <a href="#history" class="nav-item">
-                    <span>◷</span>
-                    Histórico
-                </a>
-
-                <span class="nav-label">SISTEMA</span>
-
-                <a href="#debates" class="nav-item">
-                    <span>⚖</span>
-                    Debates
-                </a>
-
-            </nav>
-
+            <!-- RODAPÉ COMPACTO DA SIDEBAR -->
             <div class="sidebar-footer">
-
-                <div class="connection-indicator">
-                    <span class="status-dot" id="server-indicator"></span>
-
-                    <div>
-                        <strong>Servidor local</strong>
+                <div class="connection-indicator" id="server-indicator">
+                    <span class="server-icon" aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                        </svg>
+                    </span>
+                    <div class="connection-meta">
                         <small id="server-status">Verificando conexão...</small>
                     </div>
+                    <span class="system-clock" id="system-clock">--:--:--</span>
                 </div>
-
-                <span class="version">AI COUNCIL v1.0.0</span>
-
             </div>
 
         </aside>
 
+        <!-- =====================================================
+             COLUNA 2: PALCO CENTRAL (CHAT-FIRST & VIEWS EM ABAS)
+        ====================================================== -->
+        <main class="main-stage" id="main-stage">
 
-        <!-- CONTEÚDO PRINCIPAL -->
+            <!-- TOPBAR SIMPLIFICADA DO CHAT / VIEW ATUAL -->
+            <header class="stage-topbar" id="stage-topbar">
+                <div class="topbar-left">
+                    <!-- Botão Mobile Drawer Esquerdo -->
+                    <button type="button" class="icon-btn mobile-only" id="open-left-drawer" aria-label="Abrir menu lateral">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                    </button>
 
-        <main class="main-content" id="dashboard">
+                    <!-- Botão Desktop Retrair/Expandir Sidebar Esquerda -->
+                    <button type="button" class="icon-btn desktop-only" id="toggle-left-sidebar" aria-label="Minimizar ou expandir barra lateral esquerda" title="Alternar barra lateral esquerda">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="9" y1="3" x2="9" y2="21"></line>
+                        </svg>
+                    </button>
 
-            <header class="topbar">
-
-                <div>
-                    <span class="breadcrumb">CENTRAL / DASHBOARD</span>
-                    <h2>Central de Inteligências</h2>
-                    <p>Acompanhe suas inteligências artificiais em um único lugar.</p>
+                    <div class="topbar-title-group">
+                        <span class="breadcrumb" id="topbar-breadcrumb" hidden>CHAT</span>
+                        <h2 id="topbar-title">Novo Debate</h2>
+                        <p id="topbar-meta" hidden></p>
+                    </div>
                 </div>
 
                 <div class="topbar-right">
+                    <div class="topbar-actions" id="topbar-debate-actions"></div>
 
-                    <div class="system-clock" id="system-clock">
-                        --:--:--
-                    </div>
+                    <!-- Botão Desktop Retrair/Expandir Dock Direito das 3 IAs -->
+                    <button type="button" class="icon-btn desktop-only" id="toggle-right-panel" aria-label="Minimizar ou expandir painel das IAs" title="Alternar dock de IAs automáticas">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="15" y1="3" x2="15" y2="21"></line>
+                        </svg>
+                    </button>
 
-                    <div class="profile">
-                        <div class="profile-avatar">AC</div>
-
-                        <div>
-                            <strong>Administrador</strong>
-                            <small>Ambiente local</small>
-                        </div>
-                    </div>
-
+                    <!-- Botão Mobile/Tablet Drawer Direito -->
+                    <button type="button" class="icon-btn tablet-mobile-only" id="open-right-drawer" aria-label="Ver status das IAs">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                    </button>
                 </div>
-
             </header>
 
+            <!-- BARRA COMPACTA MOBILE DE STATUS DAS 3 IAs AUTOMÁTICAS -->
+            <div class="mobile-ai-strip" id="mobile-ai-strip" aria-label="Status rápido das IAs"></div>
 
-            <!-- INDICADORES -->
+            <!-- =================================================
+                 VIEW 1: CHAT CENTRAL (PADRÃO AO ABRIR O SITE)
+            ================================================== -->
+            <section class="stage-view active" id="view-chat" data-view="chat">
 
-            <section class="overview">
+                <!-- ÁREA DE MENSAGENS ROLÁVEL -->
+                <div class="chat-scroll-area" id="chat-scroll-area">
 
-                <div class="section-heading">
-                    <div>
-                        <span class="eyebrow">VISÃO GERAL</span>
-                        <h3>Resumo do sistema</h3>
-                    </div>
-                </div>
-
-                <div class="stats-grid">
-
-                    <article class="stat-card">
-
-                        <div class="stat-header">
-                            <span>Inteligências monitoradas</span>
-                            <span class="stat-icon">◈</span>
+                    <!-- ZERO STATE ULTRA-LIMPO (APENAS DISPLAY HEADLINE + CHAMADA DIRETA) -->
+                    <div class="chat-zero-state" id="chat-zero-state">
+                        <div class="zero-state-inner">
+                            <h3 class="zero-state-heading" aria-label="Qual problema analisar hoje? Conselho Técnico Multi-IA">
+                                <span class="word-iris">QUAL</span>
+                                <span class="word-sky">PROBLEMA</span>
+                                <span class="word-saffron">ANALISAR</span>
+                                <span class="word-rose">HOJE?</span>
+                                <span class="word-bone">AI COUNCIL</span>
+                            </h3>
+                            <p class="zero-state-subtitle">
+                                Envie o problema abaixo para iniciar o debate técnico em rodadas com síntese final em Markdown.
+                            </p>
                         </div>
-
-                        <strong class="stat-value">3</strong>
-
-                        <small>Plataformas configuradas</small>
-
-                    </article>
-
-
-                    <article class="stat-card">
-
-                        <div class="stat-header">
-                            <span>Eventos registrados</span>
-                            <span class="stat-icon">◷</span>
-                        </div>
-
-                        <strong class="stat-value" id="total-events">--</strong>
-
-                        <small>Registros no histórico local</small>
-
-                    </article>
-
-
-                    <article class="stat-card">
-
-                        <div class="stat-header">
-                            <span>Debates ativos</span>
-                            <span class="stat-icon">⚖</span>
-                        </div>
-
-                        <strong class="stat-value" id="active-debates">0</strong>
-
-                        <small id="debate-summary">Nenhum debate iniciado</small>
-
-                    </article>
-
-
-                    <article class="stat-card">
-
-                        <div class="stat-header">
-                            <span>Estado do monitor</span>
-                            <span class="stat-icon">⌁</span>
-                        </div>
-
-                        <strong class="stat-value status-text" id="monitor-status">
-                            Verificando
-                        </strong>
-
-                        <small>Serviço de monitoramento local</small>
-
-                    </article>
-
-                </div>
-
-            </section>
-
-
-            <!-- PLATAFORMAS -->
-
-            <section class="platforms-section" id="platforms">
-
-                <div class="section-heading">
-
-                    <div>
-                        <span class="eyebrow">MONITORAMENTO</span>
-                        <h3>Inteligências conectadas</h3>
-                        <p>Estado dos serviços monitorados pelo navegador.</p>
                     </div>
 
-                    <span class="live-label">
-                        <span class="status-dot"></span>
-                        MONITOR LOCAL
-                    </span>
+                    <!-- FLUXO DE MENSAGENS DO DEBATE SELECIONADO (CENTRALIZADO 860PX) -->
+                    <div class="chat-thread" id="chat-thread" hidden></div>
 
                 </div>
 
+                <!-- COMPOSER FIXO NA BASE: AI PROMPT PANEL ESTRITAMENTE ESSENCIAL -->
+                <div class="composer-dock" id="composer-dock">
+                    <form id="create-debate-form" class="composer-card" novalidate>
 
-                <div class="platform-grid">
-
-                    <!-- CHATGPT -->
-
-                    <article class="platform-card" data-platform="chatgpt">
-
-                        <div class="platform-header">
-
-                            <div class="platform-identity">
-
-                                <div class="platform-logo chatgpt-logo">
-                                    GPT
-                                </div>
-
-                                <div>
-                                    <h4>ChatGPT</h4>
-                                    <span>OpenAI</span>
-                                </div>
-
-                            </div>
-
-                            <span class="platform-badge unknown">
-                                Desconhecido
-                            </span>
-
+                        <!-- CAMPO PRINCIPAL DE TEXTO (AUTO-EXPANSÍVEL) -->
+                        <div class="composer-input-wrap">
+                            <label for="debate-topic" class="sr-only">Tema / Problema para análise conjunta</label>
+                            <textarea
+                                id="debate-topic"
+                                rows="2"
+                                placeholder="Descreva o problema para análise conjunta do AI Council... (Enter envia, Shift + Enter quebra linha)"
+                                required
+                            ></textarea>
                         </div>
 
-                        <div class="platform-divider"></div>
-
-                        <div class="platform-details">
-
-                            <div>
-                                <span>Disponibilidade</span>
-                                <strong data-field="availability">Não confirmada</strong>
-                            </div>
-
-                            <div>
-                                <span>Último aviso</span>
-                                <strong data-field="last-event">Nenhum registrado</strong>
-                            </div>
-
-                            <div>
-                                <span>Eventos históricos</span>
-                                <strong data-field="event-count">0</strong>
-                            </div>
-
-                        </div>
-
-                    </article>
-
-
-                    <!-- CLAUDE -->
-
-                    <article class="platform-card" data-platform="claude">
-
-                        <div class="platform-header">
-
-                            <div class="platform-identity">
-
-                                <div class="platform-logo claude-logo">
-                                    CL
-                                </div>
-
-                                <div>
-                                    <h4>Claude</h4>
-                                    <span>Anthropic</span>
-                                </div>
-
-                            </div>
-
-                            <span class="platform-badge unknown">
-                                Desconhecido
-                            </span>
-
-                        </div>
-
-                        <div class="platform-divider"></div>
-
-                        <div class="platform-details">
-
-                            <div>
-                                <span>Disponibilidade</span>
-                                <strong data-field="availability">Não confirmada</strong>
-                            </div>
-
-                            <div>
-                                <span>Último aviso</span>
-                                <strong data-field="last-event">Nenhum registrado</strong>
-                            </div>
-
-                            <div>
-                                <span>Eventos históricos</span>
-                                <strong data-field="event-count">0</strong>
-                            </div>
-
-                        </div>
-
-                    </article>
-
-
-                    <!-- GEMINI -->
-
-                    <article class="platform-card" data-platform="gemini">
-
-                        <div class="platform-header">
-
-                            <div class="platform-identity">
-
-                                <div class="platform-logo gemini-logo">
-                                    GE
-                                </div>
-
-                                <div>
-                                    <h4>Gemini</h4>
-                                    <span>Google</span>
-                                </div>
-
-                            </div>
-
-                            <span class="platform-badge unknown">
-                                Desconhecido
-                            </span>
-
-                        </div>
-
-                        <div class="platform-divider"></div>
-
-                        <div class="platform-details">
-
-                            <div>
-                                <span>Disponibilidade</span>
-                                <strong data-field="availability">Não confirmada</strong>
-                            </div>
-
-                            <div>
-                                <span>Último aviso</span>
-                                <strong data-field="last-event">Nenhum registrado</strong>
-                            </div>
-
-                            <div>
-                                <span>Eventos históricos</span>
-                                <strong data-field="event-count">0</strong>
-                            </div>
-
-                        </div>
-
-                    </article>
-
-                </div>
-
-            </section>
-
-
-            <!-- HISTÓRICO -->
-
-            <section class="history-section" id="history">
-
-                <div class="section-heading">
-
-                    <div>
-                        <span class="eyebrow">REGISTROS</span>
-                        <h3>Atividade recente</h3>
-                        <p>Últimos eventos recebidos pelo monitor.</p>
-                    </div>
-
-                    <span class="history-counter" id="history-counter">
-                        0 eventos
-                    </span>
-
-                </div>
-
-
-                <div class="history-container">
-
-                    <div class="history-header">
-                        <span>PLATAFORMA</span>
-                        <span>EVENTO</span>
-                        <span>DATA</span>
-                        <span>CLASSIFICAÇÃO</span>
-                    </div>
-
-                    <div id="history-list" class="history-list">
-
-                        <div class="empty-state">
-                            <span class="empty-icon">◷</span>
-
-                            <strong>Nenhum evento carregado</strong>
-
-                            <p>Os registros aparecerão aqui quando forem recebidos.</p>
-                        </div>
-
-                    </div>
-
-                </div>
-
-            </section>
-
-
-            <!-- DEBATES -->
-
-            <section class="debates-section" id="debates">
-
-                <div class="section-heading">
-
-                    <div>
-                        <span class="eyebrow">INTELIGÊNCIA COLETIVA</span>
-                        <h3>Centro de debates</h3>
-                        <p>Coordenação de debates entre IAs com preservação de estado e proteção de limite gratuito.</p>
-                    </div>
-
-                </div>
-
-                <div class="debate-workspace">
-
-                    <!-- FORMULÁRIO DE NOVO DEBATE -->
-                    <article class="debate-card">
-                        <div class="debate-card-header">
-                            <h4>Iniciar novo debate</h4>
-                            <span class="development-badge">CUSTO ZERO</span>
-                        </div>
-
-                        <form id="create-debate-form" class="debate-form">
-                            <div class="form-group">
-                                <label for="debate-title">Título do debate</label>
-                                <input
-                                    type="text"
-                                    id="debate-title"
-                                    placeholder="Ex.: Arquitetura de microsserviços vs. monolito modular"
-                                    required
-                                    maxlength="120"
-                                >
-                            </div>
-
-                            <div class="form-group">
-                                <label for="debate-topic">Tema / Problema para análise conjunta</label>
-                                <textarea
-                                    id="debate-topic"
-                                    rows="3"
-                                    placeholder="Descreva o problema que as inteligências deverão analisar, criticar e resolver em conjunto..."
-                                    required
-                                ></textarea>
-                            </div>
-
-                            <div class="form-row">
+                        <!-- GAVETA COLAPSÁVEL: OPÇÕES AVANÇADAS (TÍTULO E DIRETRIZES) -->
+                        <div class="composer-advanced" id="composer-advanced" hidden>
+                            <div class="composer-advanced-grid">
                                 <div class="form-group">
-                                    <label>Inteligências participantes (mínimo 2)</label>
-                                    <div class="checkbox-group">
-                                        <label class="checkbox-item">
-                                            <input type="checkbox" name="participants" value="chatgpt" checked>
-                                            <span>ChatGPT</span>
-                                        </label>
-                                        <label class="checkbox-item">
-                                            <input type="checkbox" name="participants" value="claude" checked>
-                                            <span>Claude</span>
-                                        </label>
-                                        <label class="checkbox-item">
-                                            <input type="checkbox" name="participants" value="gemini" checked>
-                                            <span>Gemini Argon</span>
-                                        </label>
-                                    </div>
+                                    <label for="debate-title">Título do debate (opcional — gerado automaticamente se vazio)</label>
+                                    <input
+                                        type="text"
+                                        id="debate-title"
+                                        placeholder="Ex.: Arquitetura de microsserviços vs. monolito modular"
+                                        maxlength="120"
+                                    >
                                 </div>
 
-                                <div class="form-group form-group-small">
-                                    <label for="debate-rounds">Rodadas de debate</label>
+                                <div class="form-group">
+                                    <label for="debate-rules">Regras e diretrizes (opcional)</label>
+                                    <input
+                                        type="text"
+                                        id="debate-rules"
+                                        placeholder="Analise com rigor técnico, aponte falhas das outras IAs com objetividade e proponha consenso."
+                                    >
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- BARRA ESSENCIAL DE CONTROLES: PARTICIPANTES + RODADAS + PAPEL/FOCO + AVANÇADO + CTA -->
+                        <div class="composer-footer">
+                            <div class="composer-controls">
+                                <!-- Participantes -->
+                                <div class="participant-pills" role="group" aria-label="Inteligências participantes">
+                                    <label class="participant-pill is-selected" title="Google Gemini (API Automática)">
+                                        <input type="checkbox" name="participants" value="gemini" checked>
+                                        <span class="pill-name">Gemini</span>
+                                    </label>
+
+                                    <label class="participant-pill is-selected" title="Groq (API Automática)">
+                                        <input type="checkbox" name="participants" value="groq" checked>
+                                        <span class="pill-name">Groq</span>
+                                    </label>
+
+                                    <label class="participant-pill is-selected" title="OpenRouter (API Automática :free)">
+                                        <input type="checkbox" name="participants" value="openrouter" checked>
+                                        <span class="pill-name">OpenRouter</span>
+                                    </label>
+
+                                    <label class="participant-pill" title="ChatGPT (Assento Manual)">
+                                        <input type="checkbox" name="participants" value="chatgpt">
+                                        <span class="pill-name">ChatGPT</span>
+                                        <span class="pill-mode">man</span>
+                                    </label>
+
+                                    <label class="participant-pill" title="Claude (Assento Manual)">
+                                        <input type="checkbox" name="participants" value="claude">
+                                        <span class="pill-name">Claude</span>
+                                        <span class="pill-mode">man</span>
+                                    </label>
+                                </div>
+
+                                <span class="controls-divider" aria-hidden="true"></span>
+
+                                <!-- Rodadas -->
+                                <div class="compact-control">
+                                    <label for="debate-rounds">Rodadas</label>
                                     <select id="debate-rounds">
-                                        <option value="1">1 rodada + Síntese</option>
-                                        <option value="2" selected>2 rodadas + Síntese</option>
-                                        <option value="3">3 rodadas + Síntese</option>
+                                        <option value="1">1 + Síntese</option>
+                                        <option value="2" selected>2 + Síntese</option>
+                                        <option value="3">3 + Síntese</option>
                                     </select>
                                 </div>
-                            </div>
 
-                            <div class="form-group">
-                                <label for="debate-rules">Regras e diretrizes (opcional)</label>
-                                <input
-                                    type="text"
-                                    id="debate-rules"
-                                    placeholder="Analise com rigor técnico, aponte falhas das outras IAs com objetividade e proponha consenso."
-                                >
-                            </div>
+                                <!-- Papel / Foco -->
+                                <div class="compact-control">
+                                    <label for="debate-focus">Foco</label>
+                                    <select id="debate-focus">
+                                        <option value="geral" selected>Geral</option>
+                                        <option value="backend">Backend / código</option>
+                                        <option value="frontend">Frontend</option>
+                                    </select>
+                                </div>
 
-                            <div class="form-actions">
-                                <span id="debate-form-feedback" class="form-feedback"></span>
-                                <button type="submit" class="btn-primary">
-                                    Criar e Iniciar Debate
+                                <!-- Opções Avançadas -->
+                                <button type="button" class="btn-ghost-pill" id="toggle-advanced-btn" aria-expanded="false" aria-controls="composer-advanced">
+                                    <span>+ Opções avançadas</span>
                                 </button>
                             </div>
-                        </form>
-                    </article>
 
-                    <!-- SESSÕES DE DEBATE REGISTRADAS -->
-                    <div id="debates-list-container" class="debates-list-container">
-                        <div class="empty-state">
-                            <span class="empty-icon">⚖</span>
-                            <strong>Nenhuma sessão de debate registrada</strong>
-                            <p>Crie um debate acima para gerar os prompts contextuais de cada IA e acompanhar as rodadas.</p>
+                            <div class="composer-submit-group">
+                                <span id="debate-form-feedback" class="form-feedback" role="status" aria-live="polite"></span>
+                                <button type="submit" class="btn-primary composer-send-btn" id="composer-submit-btn">
+                                    <span>Iniciar Debate</span>
+                                    <span class="cta-arrow" aria-hidden="true">→</span>
+                                </button>
+                            </div>
                         </div>
-                    </div>
 
+                    </form>
                 </div>
 
             </section>
 
+            <!-- =================================================
+                 VIEW 2: RESUMO & MONITORAMENTO (DASHBOARD)
+            ================================================== -->
+            <section class="stage-view" id="view-dashboard" data-view="dashboard" hidden>
+                <div class="stage-scroll-content">
 
-            <footer class="main-footer">
+                    <!-- INDICADORES GLOBAIS -->
+                    <section class="overview" id="dashboard">
+                        <div class="section-heading">
+                            <div>
+                                <span class="eyebrow">VISÃO GERAL</span>
+                                <h3>Resumo do sistema</h3>
+                            </div>
+                        </div>
 
-                <span>AI COUNCIL © 2026</span>
+                        <div class="stats-grid">
+                            <article class="stat-card">
+                                <div class="stat-header">
+                                    <span>Inteligências monitoradas</span>
+                                </div>
+                                <strong class="stat-value">5</strong>
+                                <small>3 automáticas • 2 manuais</small>
+                            </article>
 
-                <span>
-                    Sistema local de coordenação de inteligências artificiais
-                </span>
+                            <article class="stat-card">
+                                <div class="stat-header">
+                                    <span>Eventos registrados</span>
+                                </div>
+                                <strong class="stat-value" id="total-events">--</strong>
+                                <small>Registros no histórico local</small>
+                            </article>
 
-            </footer>
+                            <article class="stat-card">
+                                <div class="stat-header">
+                                    <span>Debates ativos</span>
+                                </div>
+                                <strong class="stat-value" id="active-debates">0</strong>
+                                <small id="debate-summary">Nenhum debate iniciado</small>
+                            </article>
+
+                            <article class="stat-card">
+                                <div class="stat-header">
+                                    <span>Estado do monitor</span>
+                                </div>
+                                <strong class="stat-value status-text" id="monitor-status">Verificando</strong>
+                                <small>Serviço de monitoramento local</small>
+                            </article>
+                        </div>
+                    </section>
+
+                    <!-- PLATAFORMAS DETALHADAS (MANTÉM OS 5 CARDS NA ABA DE MONITORAMENTO) -->
+                    <section class="platforms-section" id="platforms">
+                        <div class="section-heading">
+                            <div>
+                                <span class="eyebrow">PROVEDORES &amp; LIMITES</span>
+                                <h3>Inteligências conectadas</h3>
+                            </div>
+                        </div>
+
+                        <div class="platform-grid">
+                            <!-- GEMINI -->
+                            <article class="platform-card" data-platform="gemini">
+                                <div class="platform-header">
+                                    <div class="platform-identity">
+                                        <div class="platform-logo">GE</div>
+                                        <div>
+                                            <h4>Gemini</h4>
+                                            <span>Google • API automática</span>
+                                        </div>
+                                    </div>
+                                    <span class="platform-badge unknown">Desconhecido</span>
+                                </div>
+                                <div class="platform-divider"></div>
+                                <div class="platform-details">
+                                    <div>
+                                        <span>Disponibilidade</span>
+                                        <strong data-field="availability">Não confirmada</strong>
+                                    </div>
+                                    <div>
+                                        <span>Uso hoje</span>
+                                        <strong data-field="last-event">Nenhum registrado</strong>
+                                    </div>
+                                    <div>
+                                        <span>Eventos históricos</span>
+                                        <strong data-field="event-count">0</strong>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <!-- GROQ -->
+                            <article class="platform-card" data-platform="groq">
+                                <div class="platform-header">
+                                    <div class="platform-identity">
+                                        <div class="platform-logo">GQ</div>
+                                        <div>
+                                            <h4>Groq</h4>
+                                            <span>API automática</span>
+                                        </div>
+                                    </div>
+                                    <span class="platform-badge unknown">Desconhecido</span>
+                                </div>
+                                <div class="platform-divider"></div>
+                                <div class="platform-details">
+                                    <div>
+                                        <span>Disponibilidade</span>
+                                        <strong data-field="availability">Não confirmada</strong>
+                                    </div>
+                                    <div>
+                                        <span>Uso hoje</span>
+                                        <strong data-field="last-event">Nenhum registrado</strong>
+                                    </div>
+                                    <div>
+                                        <span>Eventos históricos</span>
+                                        <strong data-field="event-count">0</strong>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <!-- OPENROUTER -->
+                            <article class="platform-card" data-platform="openrouter">
+                                <div class="platform-header">
+                                    <div class="platform-identity">
+                                        <div class="platform-logo">OR</div>
+                                        <div>
+                                            <h4>OpenRouter</h4>
+                                            <span>API automática (:free)</span>
+                                        </div>
+                                    </div>
+                                    <span class="platform-badge unknown">Desconhecido</span>
+                                </div>
+                                <div class="platform-divider"></div>
+                                <div class="platform-details">
+                                    <div>
+                                        <span>Disponibilidade</span>
+                                        <strong data-field="availability">Não confirmada</strong>
+                                    </div>
+                                    <div>
+                                        <span>Uso hoje</span>
+                                        <strong data-field="last-event">Nenhum registrado</strong>
+                                    </div>
+                                    <div>
+                                        <span>Eventos históricos</span>
+                                        <strong data-field="event-count">0</strong>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <!-- CHATGPT -->
+                            <article class="platform-card" data-platform="chatgpt">
+                                <div class="platform-header">
+                                    <div class="platform-identity">
+                                        <div class="platform-logo">GPT</div>
+                                        <div>
+                                            <h4>ChatGPT</h4>
+                                            <span>OpenAI • Manual</span>
+                                        </div>
+                                    </div>
+                                    <span class="platform-badge unknown">Desconhecido</span>
+                                </div>
+                                <div class="platform-divider"></div>
+                                <div class="platform-details">
+                                    <div>
+                                        <span>Disponibilidade</span>
+                                        <strong data-field="availability">Não confirmada</strong>
+                                    </div>
+                                    <div>
+                                        <span>Último aviso</span>
+                                        <strong data-field="last-event">Nenhum registrado</strong>
+                                    </div>
+                                    <div>
+                                        <span>Eventos históricos</span>
+                                        <strong data-field="event-count">0</strong>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <!-- CLAUDE -->
+                            <article class="platform-card" data-platform="claude">
+                                <div class="platform-header">
+                                    <div class="platform-identity">
+                                        <div class="platform-logo">CL</div>
+                                        <div>
+                                            <h4>Claude</h4>
+                                            <span>Anthropic • Manual</span>
+                                        </div>
+                                    </div>
+                                    <span class="platform-badge unknown">Desconhecido</span>
+                                </div>
+                                <div class="platform-divider"></div>
+                                <div class="platform-details">
+                                    <div>
+                                        <span>Disponibilidade</span>
+                                        <strong data-field="availability">Não confirmada</strong>
+                                    </div>
+                                    <div>
+                                        <span>Último aviso</span>
+                                        <strong data-field="last-event">Nenhum registrado</strong>
+                                    </div>
+                                    <div>
+                                        <span>Eventos históricos</span>
+                                        <strong data-field="event-count">0</strong>
+                                    </div>
+                                </div>
+                            </article>
+                        </div>
+                    </section>
+
+                    <!-- LISTA RESUMIDA DE SESSÕES NO DASHBOARD -->
+                    <section class="debates-section" id="debates">
+                        <div class="section-heading">
+                            <div>
+                                <span class="eyebrow">SESSÕES ARMAZENADAS</span>
+                                <h3>Debates registrados</h3>
+                            </div>
+                        </div>
+
+                        <div id="debates-list-container" class="debates-list-container"></div>
+                    </section>
+
+                </div>
+            </section>
+
+            <!-- =================================================
+                 VIEW 3: ATIVIDADE & HISTÓRICO DE EVENTOS
+            ================================================== -->
+            <section class="stage-view" id="view-history" data-view="history" hidden>
+                <div class="stage-scroll-content">
+                    <section class="history-section" id="history">
+                        <div class="section-heading">
+                            <div>
+                                <span class="eyebrow">REGISTROS</span>
+                                <h3>Atividade recente</h3>
+                            </div>
+
+                            <span class="history-counter" id="history-counter">0 eventos</span>
+                        </div>
+
+                        <div class="history-container">
+                            <div class="history-header">
+                                <span>PLATAFORMA</span>
+                                <span>EVENTO</span>
+                                <span>DATA</span>
+                                <span>CLASSIFICAÇÃO</span>
+                            </div>
+
+                            <div id="history-list" class="history-list">
+                                <div class="empty-state">
+                                    <strong>Nenhum evento carregado</strong>
+                                    <p>Os registros aparecerão aqui quando forem recebidos.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </section>
 
         </main>
+
+        <!-- =====================================================
+             COLUNA 3: DOCK LATERAL DIREITO COMPACTO E RETRÁTIL
+             (EXCLUSIVAMENTE AS 3 IAs AUTOMÁTICAS COM SVGs REAIS)
+        ====================================================== -->
+        <aside class="ai-monitor-panel" id="right-ai-panel" aria-label="Status das 3 IAs Automáticas">
+
+            <div class="ai-panel-header">
+                <div class="ai-panel-title-wrap">
+                    <span class="eyebrow">IAs AUTOMÁTICAS</span>
+                    <small id="ai-panel-round-indicator">Em repouso</small>
+                </div>
+
+                <button type="button" class="icon-btn tablet-mobile-only" id="close-right-drawer" aria-label="Fechar painel de IAs">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- LISTA COMPACTA APENAS DAS 3 IAs AUTOMÁTICAS -->
+            <div class="ai-cards-list" id="right-ai-cards-list">
+
+                <!-- 1. GEMINI (SVG Estrela Spark de 4 Pontas Oficial — #94dbff) -->
+                <article class="ai-status-card" data-ai-card="gemini">
+                    <div class="ai-card-line-1">
+                        <div class="ai-card-identity">
+                            <span class="ai-brand-svg gemini-svg" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                    <path d="M12 2C12 7.52285 16.4772 12 22 12C16.4772 12 12 16.4772 12 22C12 16.4772 7.52285 12 2 12C7.52285 12 12 7.52285 12 2Z" fill="currentColor"/>
+                                </svg>
+                            </span>
+                            <h4>Gemini</h4>
+                        </div>
+                        <span class="ai-exec-badge neutral" data-ai-badge="gemini" data-live-timer-platform="gemini">Pronto</span>
+                    </div>
+
+                    <div class="ai-card-line-2">
+                        <div class="ai-quota-bar" aria-hidden="true">
+                            <div class="ai-quota-fill" data-ai-quota-fill="gemini" style="width: 0%"></div>
+                        </div>
+                        <span class="ai-quota-mono" data-ai-quota-value="gemini">--/-- req</span>
+                    </div>
+                </article>
+
+                <!-- 2. GROQ (SVG Chip / Pulso Geométrico Oficial — #d6ca6f) -->
+                <article class="ai-status-card" data-ai-card="groq">
+                    <div class="ai-card-line-1">
+                        <div class="ai-card-identity">
+                            <span class="ai-brand-svg groq-svg" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                                    <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"></path>
+                                    <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"></circle>
+                                </svg>
+                            </span>
+                            <h4>Groq</h4>
+                        </div>
+                        <span class="ai-exec-badge neutral" data-ai-badge="groq" data-live-timer-platform="groq">Pronto</span>
+                    </div>
+
+                    <div class="ai-card-line-2">
+                        <div class="ai-quota-bar" aria-hidden="true">
+                            <div class="ai-quota-fill" data-ai-quota-fill="groq" style="width: 0%"></div>
+                        </div>
+                        <span class="ai-quota-mono" data-ai-quota-value="groq">--/-- req</span>
+                    </div>
+                </article>
+
+                <!-- 3. OPENROUTER (SVG Nós / Rotas Conectadas Oficial — #9985ff) -->
+                <article class="ai-status-card" data-ai-card="openrouter">
+                    <div class="ai-card-line-1">
+                        <div class="ai-card-identity">
+                            <span class="ai-brand-svg openrouter-svg" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="5" cy="12" r="2.5" fill="currentColor"></circle>
+                                    <circle cx="19" cy="6" r="2.5" fill="currentColor"></circle>
+                                    <circle cx="19" cy="18" r="2.5" fill="currentColor"></circle>
+                                    <path d="M7.5 11L16.5 6.8M7.5 13L16.5 17.2"></path>
+                                </svg>
+                            </span>
+                            <h4>OpenRouter</h4>
+                        </div>
+                        <span class="ai-exec-badge neutral" data-ai-badge="openrouter" data-live-timer-platform="openrouter">Pronto</span>
+                    </div>
+
+                    <div class="ai-card-line-2">
+                        <div class="ai-quota-bar" aria-hidden="true">
+                            <div class="ai-quota-fill" data-ai-quota-fill="openrouter" style="width: 0%"></div>
+                        </div>
+                        <span class="ai-quota-mono" data-ai-quota-value="openrouter">--/-- req</span>
+                    </div>
+                </article>
+
+            </div>
+
+        </aside>
 
     </div>
 

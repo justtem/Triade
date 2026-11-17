@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AIPlatform } from "./shared/debate-types.js";
+import { ALL_PLATFORMS, type AIPlatform } from "./shared/debate-types.js";
 import {
   applyLimitSignalToDebates,
   createDebateSession,
@@ -27,6 +27,8 @@ import {
   resumeDebateSession,
   submitDebateTaskResponse
 } from "./debate/debate-engine.js";
+import { kickRunner, startRunner } from "./debate/runner.js";
+import { getProvidersStatus } from "./providers/registry.js";
 
 // ============================================
 // CONFIGURAÇÃO
@@ -51,11 +53,15 @@ const SERVER_DEDUP_WINDOW_MS = 30_000;
 const MOZ_EXTENSION_ORIGIN_REGEX =
   /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Fontes de eventos de limite enviados pela extensão (opcional, legado).
 const VALID_SOURCES = new Set<string>([
   "chatgpt",
   "claude",
   "gemini"
 ]);
+
+// Participantes aceitos nos debates (automáticos e manuais).
+const VALID_PARTICIPANTS = new Set<string>(ALL_PLATFORMS);
 
 const VALID_SEVERITIES = new Set<string>([
   "warning",
@@ -630,12 +636,23 @@ async function main(): Promise<void> {
             (d) => d.status === "running"
           ).length;
 
+          // Trava de segurança: a extensão de navegador (legado) usa o token e
+          // lia as tarefas pendentes para automatizar o ChatGPT/Claude pela
+          // interface web, o que pode violar os termos de uso. Só o painel
+          // (mesma origem) recebe as tarefas pendentes.
+          const visibleDebates = isDashboardRequest(request)
+            ? debates
+            : debates.map((debate) => ({
+                ...debate,
+                tasks: debate.tasks.filter((task) => task.status !== "pending")
+              }));
+
           sendJson(response, 200, {
             status: "online",
             totalEvents: events.length,
             latestEvents: events.slice(-20),
             activeDebatesCount,
-            debates
+            debates: visibleDebates
           }, origin);
         } catch (error) {
           console.error(
@@ -645,6 +662,37 @@ async function main(): Promise<void> {
 
           sendJson(response, 500, {
             error: "Não foi possível ler o histórico ou estado."
+          }, origin);
+        }
+
+        return;
+      }
+
+      // ----------------------------------------
+      // PROVEDORES (API) E USO DIÁRIO
+      // ----------------------------------------
+
+      if (
+        request.method === "GET" &&
+        url.pathname === "/providers"
+      ) {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, {
+            error: "Não autorizado."
+          }, origin);
+
+          return;
+        }
+
+        try {
+          sendJson(response, 200, {
+            providers: await getProvidersStatus()
+          }, origin);
+        } catch (error) {
+          console.error("[AI Council] Erro ao ler provedores:", error);
+
+          sendJson(response, 500, {
+            error: "Não foi possível ler o estado dos provedores."
           }, origin);
         }
 
@@ -700,7 +748,7 @@ async function main(): Promise<void> {
           const rawParticipants = Array.isArray(payload.participants)
             ? payload.participants.filter(
                 (p): p is AIPlatform =>
-                  typeof p === "string" && VALID_SOURCES.has(p)
+                  typeof p === "string" && VALID_PARTICIPANTS.has(p)
               )
             : [];
 
@@ -710,7 +758,11 @@ async function main(): Promise<void> {
               topic: typeof payload.topic === "string" ? payload.topic : "",
               rules: typeof payload.rules === "string" ? payload.rules : undefined,
               participants: rawParticipants,
-              totalRounds: Number(payload.totalRounds) || 2
+              totalRounds: Number(payload.totalRounds) || 2,
+              focus:
+                payload.focus === "backend" || payload.focus === "frontend"
+                  ? payload.focus
+                  : "geral"
             });
 
             console.log(
@@ -718,6 +770,9 @@ async function main(): Promise<void> {
               session.id,
               session.title
             );
+
+            // Os assentos automáticos começam a responder imediatamente.
+            kickRunner();
 
             sendJson(response, 201, {
               created: true,
@@ -785,6 +840,9 @@ async function main(): Promise<void> {
               content
             });
 
+            // Se a próxima etapa tiver assentos automáticos, o runner assume.
+            kickRunner();
+
             sendJson(response, 200, {
               updated: true,
               debate: updated
@@ -809,6 +867,8 @@ async function main(): Promise<void> {
 
           if (action === "resume") {
             const updated = await resumeDebateSession(debateId);
+
+            kickRunner();
 
             sendJson(response, 200, {
               updated: true,
@@ -975,6 +1035,9 @@ async function main(): Promise<void> {
     console.log(
       `AI Council Usage Monitor ativo em http://${HOST}:${PORT}`
     );
+
+    // Assentos automáticos (Gemini, Groq, OpenRouter) respondem sozinhos.
+    startRunner();
   });
 }
 

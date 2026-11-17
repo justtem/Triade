@@ -1,14 +1,5 @@
 
 {
-  "manifest_version": 3,
-  "name": "AI Council Usage Monitor",
-  "version": "0.2.0",
-  "description": "Monitor local de avisos de utilização das IAs.",
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "ai-council-monitor@local"
-    }
-  },
   "host_permissions": [
     "http://127.0.0.1/*"
   ],

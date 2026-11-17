@@ -1,0 +1,17 @@
+{
+  "gemini": {
+    "day": "2026-11-17",
+    "requests": 30,
+    "tokens": 56103
+  },
+  "groq": {
+    "day": "2026-11-17",
+    "requests": 20,
+    "tokens": 33594
+  },
+  "openrouter": {
+    "day": "2026-11-17",
+    "requests": 31,
+    "tokens": 42202
+  }
+}

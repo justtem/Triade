@@ -6,9 +6,12 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "monitor": "tsx src/monitor.ts"
+    "start": "node dist/monitor.js",
+    "dev": "tsx watch src/monitor.ts",
+    "monitor": "tsx src/monitor.ts",
+    "test:providers": "tsx scripts/test-providers.ts",
+    "test:providers:dry": "tsx scripts/test-providers.ts --dry",
+    "list-models": "tsx scripts/list-free-models.ts"
   },
   "keywords": [],
   "author": "",
