@@ -14,11 +14,13 @@ import {
   rm
 } from "node:fs/promises";
 
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import { dirname, resolve, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
-import { ALL_PLATFORMS, type AIPlatform } from "./shared/debate-types.js";
+import { ALL_PLATFORMS, type AIPlatform, type DebateSession } from "./shared/debate-types.js";
 import {
   applyLimitSignalToDebates,
   createDebateSession,
@@ -40,11 +42,55 @@ const EVENTS_FILE = resolve(DATA_DIR, "monitor-events.json");
 const PUBLIC_DIR = resolve(ROOT_DIR, "public");
 
 const HOST = "127.0.0.1";
-const PORT = 4317;
+const LISTEN_HOST = process.env.HOST?.trim() || "0.0.0.0";
+const PORT = Number(process.env.PORT) || 4317;
 
 const DASHBOARD_ORIGIN = `http://${HOST}:${PORT}`;
 
 const TOKEN = process.env.MONITOR_TOKEN;
+const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD?.trim() || "aicouncil2026";
+const REQUIRE_PASSWORD_LOCAL = process.env.REQUIRE_PASSWORD_LOCAL === "true";
+
+function getExpectedSessionToken(): string {
+  return createHmac("sha256", TOKEN ?? "ai-council-fallback-secret")
+    .update(`ai-council-session:${ACCESS_PASSWORD}`)
+    .digest("hex");
+}
+
+function safeCompareString(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  if (!cookieHeader) return {};
+  const out: Record<string, string> = {};
+  for (const part of cookieHeader.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx > 0) {
+      const k = part.slice(0, idx).trim();
+      const v = part.slice(idx + 1).trim();
+      out[k] = decodeURIComponent(v);
+    }
+  }
+  return out;
+}
+
+function getLocalWifiAddresses(): string[] {
+  const nets = networkInterfaces();
+  const ips: string[] = [];
+  for (const list of Object.values(nets)) {
+    if (!list) continue;
+    for (const net of list) {
+      if (net.family === "IPv4" && !net.internal) {
+        ips.push(net.address);
+      }
+    }
+  }
+  return ips;
+}
 
 const MAX_BODY_SIZE = 65_536;
 const MAX_HISTORY = 200;
@@ -281,19 +327,78 @@ function sendJson(
   data: unknown,
   origin?: string
 ): void {
+  const rawBody = Buffer.from(JSON.stringify(data), "utf8");
+  const acceptEncoding = response.req?.headers["accept-encoding"];
+  const useGzip =
+    rawBody.byteLength > 1024 &&
+    typeof acceptEncoding === "string" &&
+    acceptEncoding.includes("gzip");
+  const payload = useGzip ? gzipSync(rawBody) : rawBody;
+
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
+    ...(useGzip
+      ? {
+          "Content-Encoding": "gzip",
+          "Vary": isMozExtensionOrigin(origin)
+            ? "Origin, Accept-Encoding"
+            : "Accept-Encoding"
+        }
+      : {}),
 
     ...(isMozExtensionOrigin(origin)
       ? {
           "Access-Control-Allow-Origin": origin,
-          "Vary": "Origin"
+          ...(!useGzip ? { "Vary": "Origin" } : {})
         }
       : {})
   });
 
-  response.end(JSON.stringify(data));
+  response.end(payload);
+}
+
+function slimDebateForDashboard(
+  debate: DebateSession,
+  includePendingTasks: boolean
+): unknown {
+  return {
+    ...debate,
+    tasks: (includePendingTasks
+      ? debate.tasks
+      : debate.tasks.filter((task) => task.status !== "pending")
+    ).map((task) => {
+      const keepPrompt =
+        includePendingTasks &&
+        task.status === "pending" &&
+        task.seat === "manual";
+      return {
+        id: task.id,
+        round: task.round,
+        stage: task.stage,
+        platform: task.platform,
+        status: task.status,
+        createdAt: task.createdAt,
+        ...(task.completedAt ? { completedAt: task.completedAt } : {}),
+        ...(task.seat ? { seat: task.seat } : {}),
+        ...(task.role ? { role: task.role } : {}),
+        ...(task.attempts !== undefined ? { attempts: task.attempts } : {}),
+        ...(task.lastError ? { lastError: task.lastError } : {}),
+        prompt: keepPrompt ? task.prompt : ""
+      };
+    }),
+    responses: debate.responses.map((resp) => ({
+      id: resp.id,
+      taskId: resp.taskId,
+      round: resp.round,
+      stage: resp.stage,
+      platform: resp.platform,
+      content: resp.content,
+      submittedAt: resp.submittedAt,
+      ...(resp.model ? { model: resp.model } : {}),
+      ...(resp.tokens !== undefined ? { tokens: resp.tokens } : {})
+    }))
+  };
 }
 
 // ============================================
@@ -415,43 +520,108 @@ async function readRequestBody(
 // ============================================
 
 function isAllowedOrigin(
-  origin: string | undefined
+  origin: string | undefined,
+  request: IncomingMessage
 ): boolean {
   if (!origin) return true;
 
-  if (origin === DASHBOARD_ORIGIN) {
+  if (
+    origin === DASHBOARD_ORIGIN ||
+    origin === `http://localhost:${PORT}`
+  ) {
     return true;
+  }
+
+  // Permite acesso same-origin via Wi-Fi local (192.168.x.x) ou túnel HTTPS (Cloudflare / localhost.run / ngrok)
+  const host =
+    (typeof request.headers["x-forwarded-host"] === "string"
+      ? request.headers["x-forwarded-host"].split(",")[0]?.trim()
+      : undefined) || request.headers.host;
+
+  if (host) {
+    if (origin === `http://${host}` || origin === `https://${host}`) {
+      return true;
+    }
   }
 
   return isMozExtensionOrigin(origin);
 }
 
 // ============================================
-// AUTORIZAÇÃO DO DASHBOARD / TOKEN
+// AUTORIZAÇÃO DO DASHBOARD / SENHA REMOTA / TOKEN
 // ============================================
+
+function isDirectLocalPCRequest(
+  request: IncomingMessage
+): boolean {
+  const host = request.headers.host;
+  const remoteAddr = request.socket.remoteAddress ?? "";
+  const isLoopbackAddr =
+    remoteAddr === "127.0.0.1" ||
+    remoteAddr === "::1" ||
+    remoteAddr === "::ffff:127.0.0.1";
+
+  const hasProxyHeaders = Boolean(
+    request.headers["cf-connecting-ip"] ||
+      request.headers["x-forwarded-for"] ||
+      request.headers["x-forwarded-host"] ||
+      request.headers["x-forwarded-proto"] ||
+      request.headers["true-client-ip"]
+  );
+
+  const isLocalHostHeader =
+    host === `${HOST}:${PORT}` || host === `localhost:${PORT}`;
+
+  return isLoopbackAddr && isLocalHostHeader && !hasProxyHeaders;
+}
+
+function hasValidRemoteSession(request: IncomingMessage): boolean {
+  const expectedSession = getExpectedSessionToken();
+
+  const headerSession = request.headers["x-ai-council-session"];
+  if (
+    typeof headerSession === "string" &&
+    safeCompareString(headerSession.trim(), expectedSession)
+  ) {
+    return true;
+  }
+
+  const cookies = parseCookies(request.headers.cookie);
+  if (
+    cookies.ai_council_session &&
+    safeCompareString(cookies.ai_council_session, expectedSession)
+  ) {
+    return true;
+  }
+
+  const headerPass = request.headers["x-ai-council-password"];
+  if (
+    typeof headerPass === "string" &&
+    safeCompareString(headerPass.trim(), ACCESS_PASSWORD)
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 function isDashboardRequest(
   request: IncomingMessage
 ): boolean {
-  const origin = request.headers.origin;
-  const fetchSite = request.headers["sec-fetch-site"];
-  const host = request.headers.host;
-
-  return (
-    host === `${HOST}:${PORT}` &&
-    fetchSite === "same-origin" &&
-    (
-      origin === undefined ||
-      origin === DASHBOARD_ORIGIN
-    )
-  );
+  if (!REQUIRE_PASSWORD_LOCAL && isDirectLocalPCRequest(request)) {
+    return true;
+  }
+  return hasValidRemoteSession(request);
 }
 
 function isAuthorizedLocalClient(
   request: IncomingMessage
 ): boolean {
   const suppliedToken = request.headers["x-ai-council-token"];
-  const authorizedByToken = suppliedToken === TOKEN;
+  const authorizedByToken =
+    typeof suppliedToken === "string" &&
+    TOKEN !== undefined &&
+    safeCompareString(suppliedToken, TOKEN);
   const authorizedByDashboard = isDashboardRequest(request);
 
   return authorizedByToken || authorizedByDashboard;
@@ -492,16 +662,28 @@ async function serveDashboard(
 
   try {
     const content = await readFile(filePath);
+    const acceptEncoding = response.req?.headers["accept-encoding"];
+    const useGzip =
+      content.byteLength > 1024 &&
+      typeof acceptEncoding === "string" &&
+      acceptEncoding.includes("gzip");
+    const payload = useGzip ? gzipSync(content) : content;
 
     response.writeHead(200, {
       "Content-Type":
         MIME_TYPES[extname(filePath)] ??
         "application/octet-stream",
       "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff"
+      "X-Content-Type-Options": "nosniff",
+      ...(useGzip
+        ? {
+            "Content-Encoding": "gzip",
+            "Vary": "Accept-Encoding"
+          }
+        : {})
     });
 
-    response.end(content);
+    response.end(payload);
   } catch {
     sendJson(response, 404, {
       error: "Arquivo não encontrado."
@@ -530,7 +712,7 @@ async function main(): Promise<void> {
       // VALIDAÇÃO DA ORIGEM
       // ----------------------------------------
 
-      if (!isAllowedOrigin(origin)) {
+      if (!isAllowedOrigin(origin, request)) {
         sendJson(response, 403, {
           error: "Origem não autorizada."
         });
@@ -611,6 +793,81 @@ async function main(): Promise<void> {
       }
 
       // ----------------------------------------
+      // AUTENTICAÇÃO POR SENHA (CELULAR / HTTPS)
+      // ----------------------------------------
+
+      if (
+        request.method === "GET" &&
+        url.pathname === "/auth/status"
+      ) {
+        sendJson(response, 200, {
+          authenticated: isDashboardRequest(request),
+          isRemote: !isDirectLocalPCRequest(request)
+        }, origin);
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/auth/login"
+      ) {
+        let payload: unknown;
+        try {
+          const body = await readRequestBody(request);
+          payload = JSON.parse(body);
+        } catch {
+          sendJson(response, 400, {
+            error: "Corpo da requisição inválido."
+          }, origin);
+          return;
+        }
+
+        const password =
+          isRecord(payload) && typeof payload.password === "string"
+            ? payload.password.trim()
+            : "";
+
+        const validPassword =
+          (password.length > 0 && safeCompareString(password, ACCESS_PASSWORD)) ||
+          (password.length > 0 && TOKEN !== undefined && safeCompareString(password, TOKEN));
+
+        if (!validPassword) {
+          sendJson(response, 401, {
+            authenticated: false,
+            error: "Senha incorreta. Confira ACCESS_PASSWORD no arquivo .env."
+          }, origin);
+          return;
+        }
+
+        const sessionToken = getExpectedSessionToken();
+        response.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": `ai_council_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+        });
+        response.end(
+          JSON.stringify({
+            authenticated: true,
+            sessionToken
+          })
+        );
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/auth/logout"
+      ) {
+        response.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": "ai_council_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+        });
+        response.end(JSON.stringify({ authenticated: false }));
+        return;
+      }
+
+      // ----------------------------------------
       // STATUS, HISTÓRICO E DEBATES
       // ----------------------------------------
 
@@ -620,7 +877,8 @@ async function main(): Promise<void> {
       ) {
         if (!isAuthorizedLocalClient(request)) {
           sendJson(response, 401, {
-            error: "Não autorizado."
+            error: "Senha de acesso necessária.",
+            requiresPassword: true
           }, origin);
 
           return;
@@ -640,12 +898,10 @@ async function main(): Promise<void> {
           // lia as tarefas pendentes para automatizar o ChatGPT/Claude pela
           // interface web, o que pode violar os termos de uso. Só o painel
           // (mesma origem) recebe as tarefas pendentes.
-          const visibleDebates = isDashboardRequest(request)
-            ? debates
-            : debates.map((debate) => ({
-                ...debate,
-                tasks: debate.tasks.filter((task) => task.status !== "pending")
-              }));
+          const includePending = isDashboardRequest(request);
+          const visibleDebates = debates.map((debate) =>
+            slimDebateForDashboard(debate, includePending)
+          );
 
           sendJson(response, 200, {
             status: "online",
@@ -715,7 +971,17 @@ async function main(): Promise<void> {
         if (request.method === "GET") {
           try {
             const debates = await listDebateSessions();
-            sendJson(response, 200, { debates }, origin);
+            const includePending = isDashboardRequest(request);
+            sendJson(
+              response,
+              200,
+              {
+                debates: debates.map((d) =>
+                  slimDebateForDashboard(d, includePending)
+                )
+              },
+              origin
+            );
           } catch (error) {
             console.error("[AI Council] Erro ao listar debates:", error);
             sendJson(response, 500, {
@@ -776,7 +1042,7 @@ async function main(): Promise<void> {
 
             sendJson(response, 201, {
               created: true,
-              debate: session
+              debate: slimDebateForDashboard(session, true)
             }, origin);
           } catch (error) {
             sendJson(response, 400, {
@@ -1031,10 +1297,19 @@ async function main(): Promise<void> {
     }
   );
 
-  server.listen(PORT, HOST, () => {
-    console.log(
-      `AI Council Usage Monitor ativo em http://${HOST}:${PORT}`
-    );
+  server.listen(PORT, LISTEN_HOST, () => {
+    const wifiIps = getLocalWifiAddresses();
+    console.log("==========================================================");
+    console.log(`AI Council ativo!`);
+    console.log(`• No PC (Local):       http://${HOST}:${PORT}`);
+    if (wifiIps.length > 0) {
+      for (const ip of wifiIps) {
+        console.log(`• No Celular (Wi-Fi):  http://${ip}:${PORT}`);
+      }
+    }
+    console.log(`• À distância (HTTPS): execute 'npm.cmd run tunnel' em outro terminal`);
+    console.log(`• Senha no celular:    ${ACCESS_PASSWORD} (configurável em ACCESS_PASSWORD no .env)`);
+    console.log("==========================================================");
 
     // Assentos automáticos (Gemini, Groq, OpenRouter) respondem sozinhos.
     startRunner();

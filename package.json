@@ -9,6 +9,7 @@
     "start": "node dist/monitor.js",
     "dev": "tsx watch src/monitor.ts",
     "monitor": "tsx src/monitor.ts",
+    "tunnel": "tsx scripts/tunnel.ts",
     "test:providers": "tsx scripts/test-providers.ts",
     "test:providers:dry": "tsx scripts/test-providers.ts --dry",
     "list-models": "tsx scripts/list-free-models.ts"

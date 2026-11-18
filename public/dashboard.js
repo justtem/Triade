@@ -43,6 +43,38 @@ const FOCUS_LABELS = {
   frontend: "Frontend (sem cara de IA)"
 };
 
+// Templates rápidos para o Carrossel Horizontal do Zero State
+const ZERO_STATE_BLUEPRINTS = [
+  {
+    tag: "BACKEND // ARQUITETURA",
+    title: "Microsserviços vs. Monolito Modular",
+    topic:
+      "Compare arquitetura de microsserviços e monolito modular para uma fintech com 50 mil usuários ativos e equipe de 8 devs. Aponte trade-offs reais, custos e recomende a melhor decisão prática.",
+    focus: "backend"
+  },
+  {
+    tag: "FULL-STACK // CÓDIGO",
+    title: "CRUD RESTful Enxuto e Seguro",
+    topic:
+      "Implemente um CRUD completo de cadastro, atualização e exclusão com backend enxuto, banco SQLite/H2 e frontend HTML/JS puro, priorizando segurança, validação e zero complexidade desnecessária.",
+    focus: "backend"
+  },
+  {
+    tag: "FRONTEND // DESIGN SYSTEM",
+    title: "Arquitetura UI sem Aparência Genérica",
+    topic:
+      "Defina tokens CSS, tipografia técnica, hierarquia de componentes e animações scroll-linked para um dashboard técnico de engenharia sem visual clichê de IA.",
+    focus: "frontend"
+  },
+  {
+    tag: "SEGURANÇA // AUDITORIA",
+    title: "Hardening de API Node.js + Rate Limit",
+    topic:
+      "Liste as 5 vulnerabilidades mais críticas em APIs Node.js/TypeScript modernas e entregue middlewares concretos de validação, proteção contra injeção, rate-limiting e tratamento de erros.",
+    focus: "backend"
+  }
+];
+
 // Ícones SVG Monoline
 const SVG_ICONS = {
   clipboard: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
@@ -64,6 +96,7 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const draftResponsesByTaskId = new Map();
 const collapsedStageKeys = new Set();
 const collapsedResponseIds = new Set();
+const stackedRoundKeys = new Set(); // Permite alternar Horizontal Scroll <-> Empilhado por rodada
 const localTaskStartMs = new Map();
 
 let currentView = "chat"; // "chat" | "dashboard" | "history"
@@ -74,10 +107,15 @@ let latestEvents = [];
 let latestProviders = [];
 let lastDebatesSignature = "";
 let lastRenderedChatSignature = "";
+let lastZeroShowcaseSignature = "";
+let scrollFocusedPlatform = null;
 
 // Estado otimista imediato enquanto a requisição POST /debates está sendo enviada
 let optimisticSubmission = null;
 let refreshTimerId = null;
+let isRefreshing = false;
+let pendingImmediateRefresh = false;
+let scrollRevealObserver = null;
 
 // ============================================================================
 // FORMATAÇÃO DE DATAS E CRONÔMETROS DE ALTA PRECISÃO
@@ -173,6 +211,515 @@ function getDebateTotalDurationSec(debate) {
     return Math.max(0.1, (endMs - startMs) / 1000);
   }
   return null;
+}
+
+// ============================================================================
+// MOTOR DE ANIMAÇÕES: SCROLL-TRIGGER, SCROLL-LINKED, PARALLAX & HORIZONTAL SCROLL
+// ============================================================================
+
+function initScrollTriggerObserver() {
+  if (!("IntersectionObserver" in window)) return;
+
+  scrollRevealObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-revealed");
+        }
+      }
+    },
+    {
+      threshold: 0.08,
+      rootMargin: "0px 0px -16px 0px"
+    }
+  );
+
+  observeScrollRevealElements();
+}
+
+function observeScrollRevealElements(root = document) {
+  const elements = Array.from(root.querySelectorAll("[data-scroll-reveal]"));
+  elements.forEach((el, idx) => {
+    if (!el.style.getPropertyValue("--reveal-delay")) {
+      el.style.setProperty("--reveal-delay", `${Math.min(idx * 45, 240)}ms`);
+    }
+    if (scrollRevealObserver) {
+      scrollRevealObserver.observe(el);
+    } else {
+      el.classList.add("is-revealed");
+    }
+  });
+}
+
+// Estado de Parallax (Scroll + Mouse)
+let parallaxScrollY = 0;
+let parallaxScrollX = 0;
+let parallaxMouseX = 0;
+let parallaxMouseY = 0;
+let parallaxRafPending = false;
+
+function scheduleParallaxRender() {
+  if (parallaxRafPending) return;
+  parallaxRafPending = true;
+  requestAnimationFrame(() => {
+    parallaxRafPending = false;
+    const gridLayer = $("#parallax-grid-layer");
+    const nodesLayer = $("#parallax-nodes-layer");
+
+    if (gridLayer) {
+      const gx = (-parallaxScrollX * 0.18 + parallaxMouseX * 10).toFixed(1);
+      const gy = (-parallaxScrollY * 0.22 + parallaxMouseY * 10).toFixed(1);
+      gridLayer.style.transform = `translate3d(${gx}px, ${gy}px, 0)`;
+    }
+
+    if (nodesLayer) {
+      const nx = (-parallaxScrollX * 0.35 + parallaxMouseX * -22).toFixed(1);
+      const ny = (-parallaxScrollY * 0.45 + parallaxMouseY * -22).toFixed(1);
+      nodesLayer.style.transform = `translate3d(${nx}px, ${ny}px, 0)`;
+    }
+
+    // Parallax em camadas nas palavras do Display Headline no Zero State
+    for (const word of $$(".parallax-word")) {
+      const depth = Number(word.getAttribute("data-parallax-depth")) || 1;
+      const wx = (parallaxMouseX * 14 * depth).toFixed(1);
+      const wy = (parallaxMouseY * 9 * depth - parallaxScrollY * 0.08 * depth).toFixed(1);
+      word.style.setProperty("--px", `${wx}px`);
+      word.style.setProperty("--py", `${wy}px`);
+    }
+  });
+}
+
+/**
+ * Conecta física de Horizontal Scroll Híbrido (Wheel-to-Horizontal com inércia +
+ * Pointer Drag + Setas + Progresso Scroll-Linked + Escala 3D nos cards)
+ */
+function attachHorizontalScrollPhysics(viewportEl, options = {}) {
+  if (!viewportEl || viewportEl.dataset.hScrollBound === "true") return;
+  viewportEl.dataset.hScrollBound = "true";
+
+  let targetScrollLeft = viewportEl.scrollLeft;
+  let isAnimatingWheel = false;
+  let isPointerDown = false;
+  let startX = 0;
+  let startScrollLeft = 0;
+  let hasDragged = false;
+
+  const updateHorizontalScrollLinkedState = () => {
+    const maxScroll = Math.max(0, viewportEl.scrollWidth - viewportEl.clientWidth);
+    const current = viewportEl.scrollLeft;
+    const ratio = maxScroll > 0 ? Math.min(1, Math.max(0, current / maxScroll)) : 1;
+
+    if (options.progressFillEl) {
+      const pct = maxScroll > 0 ? Math.max(15, Math.round(ratio * 100)) : 100;
+      options.progressFillEl.style.width = `${pct}%`;
+    }
+
+    // Parallax horizontal conectado ao scroll da trilha
+    parallaxScrollX = current;
+    scheduleParallaxRender();
+
+    // Efeito Scroll-Linked de escala e foco nos cards da trilha horizontal
+    const cards = Array.from(viewportEl.querySelectorAll(options.cardSelector || ".ai-response-card, .zero-h-card"));
+    if (cards.length === 0) return;
+
+    const viewportRect = viewportEl.getBoundingClientRect();
+    const viewportCenter = viewportRect.left + viewportRect.width / 2;
+
+    let closestCard = null;
+    let minDistance = Infinity;
+
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect();
+      const cardCenter = rect.left + rect.width / 2;
+      const dist = Math.abs(viewportCenter - cardCenter);
+      const normDist = Math.min(1, dist / Math.max(1, viewportRect.width * 0.65));
+
+      const scale = (1 - normDist * 0.032).toFixed(4);
+      const offsetY = (normDist * 4).toFixed(1);
+      card.style.setProperty("--card-h-scale", scale);
+      card.style.setProperty("--card-h-y", `${offsetY}px`);
+
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestCard = card;
+      }
+    }
+
+    for (const card of cards) {
+      card.classList.toggle("is-h-centered", card === closestCard && cards.length > 1);
+    }
+
+    if (closestCard && options.onCenteredCardChange) {
+      options.onCenteredCardChange(closestCard);
+    }
+  };
+
+  const animateWheelStep = () => {
+    const diff = targetScrollLeft - viewportEl.scrollLeft;
+    if (Math.abs(diff) < 0.8) {
+      viewportEl.scrollLeft = targetScrollLeft;
+      isAnimatingWheel = false;
+      updateHorizontalScrollLinkedState();
+      return;
+    }
+    viewportEl.scrollLeft += diff * 0.24;
+    updateHorizontalScrollLinkedState();
+    requestAnimationFrame(animateWheelStep);
+  };
+
+  // Conversão Híbrida Inteligente de Wheel Vertical -> Horizontal Scroll
+  viewportEl.addEventListener(
+    "wheel",
+    (e) => {
+      if (options.isStacked && options.isStacked()) return;
+
+      const maxScroll = viewportEl.scrollWidth - viewportEl.clientWidth;
+      if (maxScroll <= 4) return;
+
+      // Se o cursor estiver dentro de um corpo de resposta ou código que pode rolar verticalmente, respeita a leitura interna
+      const scrollableInner = e.target.closest(".ai-response-body, .code-block-pre, .prompt-preview");
+      if (scrollableInner && scrollableInner.scrollHeight > scrollableInner.clientHeight + 4) {
+        const atTop = scrollableInner.scrollTop <= 0;
+        const atBottom =
+          scrollableInner.scrollTop + scrollableInner.clientHeight >=
+          scrollableInner.scrollHeight - 2;
+        if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) {
+          return;
+        }
+      }
+
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (Math.abs(delta) < 1) return;
+
+      const currentBase = isAnimatingWheel ? targetScrollLeft : viewportEl.scrollLeft;
+      const goingRight = delta > 0;
+      const goingLeft = delta < 0;
+
+      const canGoRight = currentBase < maxScroll - 2;
+      const canGoLeft = currentBase > 2;
+
+      if ((goingRight && canGoRight) || (goingLeft && canGoLeft)) {
+        e.preventDefault();
+        targetScrollLeft = Math.max(0, Math.min(maxScroll, currentBase + delta * 1.15));
+        if (!isAnimatingWheel) {
+          isAnimatingWheel = true;
+          requestAnimationFrame(animateWheelStep);
+        }
+      }
+    },
+    { passive: false }
+  );
+
+  // Drag com mouse / touch
+  viewportEl.addEventListener("pointerdown", (e) => {
+    if (options.isStacked && options.isStacked()) return;
+    if (e.target.closest("button, a, input, textarea, select, code, pre")) return;
+
+    isPointerDown = true;
+    hasDragged = false;
+    isAnimatingWheel = false;
+    startX = e.clientX;
+    startScrollLeft = viewportEl.scrollLeft;
+    targetScrollLeft = startScrollLeft;
+    viewportEl.classList.add("is-dragging");
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!isPointerDown) return;
+    const dx = e.clientX - startX;
+    if (Math.abs(dx) > 5) {
+      hasDragged = true;
+    }
+    viewportEl.scrollLeft = startScrollLeft - dx;
+    targetScrollLeft = viewportEl.scrollLeft;
+    updateHorizontalScrollLinkedState();
+  });
+
+  window.addEventListener("pointerup", () => {
+    if (!isPointerDown) return;
+    isPointerDown = false;
+    viewportEl.classList.remove("is-dragging");
+  });
+
+  viewportEl.addEventListener(
+    "click",
+    (e) => {
+      if (hasDragged) {
+        e.preventDefault();
+        e.stopPropagation();
+        hasDragged = false;
+      }
+    },
+    true
+  );
+
+  viewportEl.addEventListener("scroll", () => {
+    if (!isAnimatingWheel) {
+      targetScrollLeft = viewportEl.scrollLeft;
+    }
+    updateHorizontalScrollLinkedState();
+  });
+
+  if (options.prevBtn) {
+    options.prevBtn.addEventListener("click", () => {
+      const step = Math.max(280, Math.round(viewportEl.clientWidth * 0.72));
+      targetScrollLeft = Math.max(0, viewportEl.scrollLeft - step);
+      if (!isAnimatingWheel) {
+        isAnimatingWheel = true;
+        requestAnimationFrame(animateWheelStep);
+      }
+    });
+  }
+
+  if (options.nextBtn) {
+    options.nextBtn.addEventListener("click", () => {
+      const maxScroll = Math.max(0, viewportEl.scrollWidth - viewportEl.clientWidth);
+      const step = Math.max(280, Math.round(viewportEl.clientWidth * 0.72));
+      targetScrollLeft = Math.min(maxScroll, viewportEl.scrollLeft + step);
+      if (!isAnimatingWheel) {
+        isAnimatingWheel = true;
+        requestAnimationFrame(animateWheelStep);
+      }
+    });
+  }
+
+  // Inicializa estado visual após layout
+  requestAnimationFrame(updateHorizontalScrollLinkedState);
+}
+
+// ============================================================================
+// MINI-MAPA DE RODADAS E TIMELINE SCROLL-LINKED DO CHAT
+// ============================================================================
+
+function buildChatRoundMinimap(debate) {
+  const minimap = $("#chat-round-minimap");
+  const stepsContainer = $("#minimap-steps");
+  if (!minimap || !stepsContainer) return;
+
+  if (!debate && !optimisticSubmission) {
+    minimap.hidden = true;
+    stepsContainer.replaceChildren();
+    return;
+  }
+
+  minimap.hidden = false;
+  stepsContainer.replaceChildren();
+
+  const targetDebate = debate || {
+    totalRounds: optimisticSubmission?.totalRounds || 2,
+    conclusion: null
+  };
+
+  const steps = [{ id: "step-user", label: "Problema" }];
+  for (let r = 1; r <= targetDebate.totalRounds; r++) {
+    steps.push({ id: `step-round-${r}`, label: `Rodada ${r}` });
+  }
+  steps.push({ id: "step-synthesis", label: "Síntese" });
+
+  steps.forEach((st, idx) => {
+    if (idx > 0) {
+      const conn = document.createElement("span");
+      conn.className = "minimap-connector";
+      conn.textContent = "→";
+      stepsContainer.appendChild(conn);
+    }
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `minimap-step-btn${idx === 0 ? " is-current" : ""}`;
+    btn.setAttribute("data-minimap-target", st.id);
+    btn.textContent = st.label;
+
+    btn.addEventListener("click", () => {
+      const sectionEl = document.getElementById(st.id);
+      const chatScroll = $("#chat-scroll-area");
+      if (sectionEl && chatScroll) {
+        chatScroll.scrollTo({
+          top: Math.max(0, sectionEl.offsetTop - 16),
+          behavior: "smooth"
+        });
+      }
+    });
+
+    stepsContainer.appendChild(btn);
+  });
+}
+
+function updateChatScrollLinkedEffects() {
+  const chatScroll = $("#chat-scroll-area");
+  const threadEl = $("#chat-thread");
+  const composerDock = $("#composer-dock");
+  if (!chatScroll) return;
+
+  const scrollTop = chatScroll.scrollTop;
+  const maxScroll = Math.max(0, chatScroll.scrollHeight - chatScroll.clientHeight);
+  const ratio = maxScroll > 0 ? Math.min(1, Math.max(0, scrollTop / maxScroll)) : 0;
+  const pct = Math.round(ratio * 100);
+
+  // 0. Compactação "Floating Pill" do Composer durante o scroll das respostas/códigos
+  if (composerDock) {
+    const hasOpenDebate = Boolean(getActiveOrSelectedDebate() || optimisticSubmission);
+    const shouldCompact = hasOpenDebate && scrollTop > 32 && maxScroll > 48;
+    composerDock.classList.toggle("is-scroll-compact", shouldCompact);
+  }
+
+  // 1. Atualiza Parallax vertical
+  parallaxScrollY = scrollTop;
+  scheduleParallaxRender();
+
+  // 2. Atualiza barra de progresso Scroll-Linked do Mini-Mapa e Timeline do Chat
+  const progressBar = $("#chat-scroll-progress-bar");
+  const pctLabel = $("#minimap-scroll-pct");
+  if (progressBar) {
+    progressBar.style.width = `${pct}%`;
+  }
+  if (pctLabel) {
+    pctLabel.textContent = `${pct}%`;
+  }
+  if (threadEl) {
+    threadEl.style.setProperty("--chat-timeline-progress", `${Math.max(8, pct)}%`);
+  }
+
+  // 3. Scroll-Spy nas seções do debate para iluminar o nó ativo no Mini-Mapa
+  const sections = $$("[data-minimap-section]");
+  if (sections.length > 0) {
+    let activeSectionId = sections[0].id;
+    const triggerLine = scrollTop + chatScroll.clientHeight * 0.28;
+
+    for (const sec of sections) {
+      if (sec.offsetTop <= triggerLine) {
+        activeSectionId = sec.id;
+      }
+    }
+
+    for (const btn of $$("[data-minimap-target]")) {
+      const isMatch = btn.getAttribute("data-minimap-target") === activeSectionId;
+      btn.classList.toggle("is-current", isMatch);
+    }
+
+    // Sincroniza a IA em foco na seção ativa com o Sticky Dock da Barra Lateral Direita
+    const activeSecEl = document.getElementById(activeSectionId);
+    const centeredCard = activeSecEl?.querySelector(".ai-response-card.is-h-centered, .ai-response-card");
+    const focusedPlat = centeredCard?.getAttribute("data-response-platform") || null;
+    setScrollFocusedAiInRightDock(focusedPlat);
+  } else {
+    setScrollFocusedAiInRightDock(null);
+  }
+}
+
+function setScrollFocusedAiInRightDock(platformId) {
+  if (scrollFocusedPlatform === platformId) return;
+  scrollFocusedPlatform = platformId;
+
+  for (const plat of AUTO_PLATFORM_IDS) {
+    const card = document.querySelector(`[data-ai-card="${plat}"]`);
+    if (!card) continue;
+    const isFocused = plat === platformId && !card.classList.contains("is-thinking");
+    card.classList.toggle("is-scroll-focused", isFocused);
+  }
+}
+
+// ============================================================================
+// CARROSSEL HORIZONTAL DO ZERO STATE (TEMPLATES + SESSÕES RECENTES)
+// ============================================================================
+
+function renderZeroStateHorizontalShowcase() {
+  const track = $("#zero-h-track");
+  const viewport = $("#zero-h-viewport");
+  const progressFill = $("#zero-h-progress-fill");
+  const prevBtn = $("#zero-h-prev");
+  const nextBtn = $("#zero-h-next");
+  if (!track || !viewport) return;
+
+  const recentSignature = JSON.stringify(
+    latestDebates.slice(0, 4).map((d) => ({ id: d.id, title: d.title, status: d.status }))
+  );
+  if (recentSignature === lastZeroShowcaseSignature && track.children.length > 0) {
+    return;
+  }
+  lastZeroShowcaseSignature = recentSignature;
+  track.replaceChildren();
+
+  // 1. Cards de Debates Recentes (se existirem)
+  for (const debate of latestDebates.slice(0, 3)) {
+    const card = document.createElement("article");
+    card.className = "zero-h-card";
+
+    const top = document.createElement("div");
+    top.className = "zero-h-card-top";
+
+    const tag = document.createElement("span");
+    tag.className = "zero-h-tag tag-recent";
+    tag.textContent =
+      debate.status === "running"
+        ? `ATIVO • R${debate.currentRound}/${debate.totalRounds}`
+        : `SESSÃO • ${debate.totalRounds} RODADAS`;
+
+    const arrow = document.createElement("span");
+    arrow.className = "cta-arrow";
+    arrow.textContent = "→";
+
+    top.append(tag, arrow);
+
+    const h4 = document.createElement("h4");
+    h4.textContent = debate.title;
+
+    const p = document.createElement("p");
+    p.textContent = debate.topic;
+
+    card.append(top, h4, p);
+    card.addEventListener("click", () => selectDebate(debate.id));
+    track.appendChild(card);
+  }
+
+  // 2. Cards de Blueprints Técnicos Rápidos
+  for (const bp of ZERO_STATE_BLUEPRINTS) {
+    const card = document.createElement("article");
+    card.className = "zero-h-card";
+
+    const top = document.createElement("div");
+    top.className = "zero-h-card-top";
+
+    const tag = document.createElement("span");
+    tag.className = "zero-h-tag";
+    tag.textContent = bp.tag;
+
+    const arrow = document.createElement("span");
+    arrow.className = "cta-arrow";
+    arrow.textContent = "↗";
+
+    top.append(tag, arrow);
+
+    const h4 = document.createElement("h4");
+    h4.textContent = bp.title;
+
+    const p = document.createElement("p");
+    p.textContent = bp.topic;
+
+    card.append(top, h4, p);
+    card.addEventListener("click", () => {
+      const titleInput = $("#debate-title");
+      const topicInput = $("#debate-topic");
+      const focusSelect = $("#debate-focus");
+
+      if (titleInput) titleInput.value = bp.title;
+      if (focusSelect) focusSelect.value = bp.focus;
+      if (topicInput) {
+        topicInput.value = bp.topic;
+        topicInput.style.height = "auto";
+        topicInput.style.height = `${Math.min(180, topicInput.scrollHeight)}px`;
+        topicInput.focus();
+      }
+    });
+    track.appendChild(card);
+  }
+
+  attachHorizontalScrollPhysics(viewport, {
+    progressFillEl: progressFill,
+    prevBtn,
+    nextBtn,
+    cardSelector: ".zero-h-card"
+  });
 }
 
 // ============================================================================
@@ -514,18 +1061,74 @@ function setServerStatus(online) {
   setText("#server-status", online ? "Servidor online" : "Servidor offline");
 }
 
+function getStoredSessionToken() {
+  try {
+    return localStorage.getItem("ai-council-session-token") || "";
+  } catch {
+    return "";
+  }
+}
+
+function setStoredSessionToken(token) {
+  try {
+    if (token) {
+      localStorage.setItem("ai-council-session-token", token);
+    } else {
+      localStorage.removeItem("ai-council-session-token");
+    }
+  } catch {
+    // Ignora
+  }
+}
+
+function showAuthLockOverlay(message = "") {
+  const overlay = $("#auth-lock-overlay");
+  const errEl = $("#auth-lock-error");
+  const input = $("#auth-password-input");
+  if (overlay && overlay.hidden) {
+    overlay.hidden = false;
+    setTimeout(() => input?.focus(), 60);
+  }
+  if (errEl && message) {
+    errEl.textContent = message;
+  }
+}
+
+function hideAuthLockOverlay() {
+  const overlay = $("#auth-lock-overlay");
+  const errEl = $("#auth-lock-error");
+  if (overlay) overlay.hidden = true;
+  if (errEl) errEl.textContent = "";
+}
+
 async function fetchJson(endpoint, options = {}) {
-  const response = await fetch(endpoint, {
-    method: options.method || "GET",
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(options.headers || {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    cache: "no-store"
-  });
+  const sessionToken = getStoredSessionToken();
+  const method = options.method || "GET";
+  const timeoutMs = options.timeoutMs || (method === "GET" ? 15000 : 25000);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(sessionToken ? { "X-AI-Council-Session": sessionToken } : {}),
+        ...(options.headers || {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      cache: "no-store",
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && endpoint !== "/auth/login") {
+    showAuthLockOverlay();
+  }
   if (!response.ok) {
     throw new Error(data.error || `Erro HTTP ${response.status}`);
   }
@@ -572,8 +1175,14 @@ function switchView(targetView) {
     section.hidden = !isMatch;
   }
 
+  const minimap = $("#chat-round-minimap");
+  if (minimap) {
+    minimap.hidden = targetView !== "chat" || (!getActiveOrSelectedDebate() && !optimisticSubmission);
+  }
+
   updateStageTopbar();
   closeMobileDrawers();
+  observeScrollRevealElements();
 }
 
 function selectDebate(debateId) {
@@ -594,6 +1203,8 @@ function startNewDebateView() {
   selectedDebateId = null;
   optimisticSubmission = null;
   lastRenderedChatSignature = "";
+  $("#composer-dock")?.classList.remove("is-scroll-compact");
+  setScrollFocusedAiInRightDock(null);
   switchView("chat");
   renderSidebarDebatesList();
   renderChatStage();
@@ -648,7 +1259,6 @@ function updateStageTopbar() {
     return;
   }
 
-  // View === "chat"
   if (optimisticSubmission) {
     titleEl.textContent = optimisticSubmission.title;
     const runningBadge = document.createElement("span");
@@ -771,6 +1381,33 @@ function renderSidebarDebatesList() {
 // PALCO CENTRAL: CONSTRUÇÃO DO FLUXO DE MENSAGENS DO CHAT DE DEBATE
 // ============================================================================
 
+function formatCleanErrorText(rawMessage) {
+  const str = String(rawMessage || "").trim();
+  if (!str) return "Falha temporária no provedor.";
+
+  // Detecta se a mensagem contém JSON bruto como {"error":{"code":503,"message":"..."}}
+  if (str.includes("{") && str.includes("}")) {
+    if (/503|high demand|UNAVAILABLE|overloaded/i.test(str)) {
+      return str.replace(
+        /\(\{[\s\S]*?\}\)/g,
+        "(alta demanda temporária no servidor da IA — código 503)"
+      );
+    }
+    if (/429|rate limit|quota/i.test(str)) {
+      return str.replace(
+        /\(\{[\s\S]*?\}\)/g,
+        "(limite de requisições temporariamente atingido — código 429)"
+      );
+    }
+    const msgMatch = str.match(/"message"\s*:\s*"([^"]+)"/);
+    if (msgMatch && msgMatch[1]) {
+      return str.replace(/\(\{[\s\S]*?\}\)/g, `(${msgMatch[1]})`);
+    }
+  }
+
+  return str;
+}
+
 function saveCurrentDraftsFromDom() {
   const inputs = $$(".task-response-input[data-task-id]");
   for (const input of inputs) {
@@ -784,6 +1421,9 @@ function saveCurrentDraftsFromDom() {
 function buildUserPromptMessage(debate) {
   const userCard = document.createElement("article");
   userCard.className = "chat-user-message";
+  userCard.id = "step-user";
+  userCard.setAttribute("data-minimap-section", "step-user");
+  userCard.setAttribute("data-scroll-reveal", "");
 
   const header = document.createElement("div");
   header.className = "chat-user-header";
@@ -838,11 +1478,11 @@ function buildReasoningBlockForStage(debate, stageKey, roundNumber, stageType, s
 
   const block = document.createElement("div");
   block.className = "thinking-reasoning-block";
+  block.setAttribute("data-scroll-reveal", "");
   if (isStageRunning) {
     block.classList.add("is-active");
   }
 
-  // Rodadas concluídas recolhem por padrão; rodadas ativas abrem por padrão
   const isCollapsed = isStageRunning
     ? collapsedStageKeys.has(stageKey)
     : !collapsedStageKeys.has(`open_${stageKey}`);
@@ -972,13 +1612,7 @@ function buildReasoningBlockForStage(debate, stageKey, roundNumber, stageType, s
 
     const nameEl = document.createElement("span");
     nameEl.className = "thinking-step-name";
-    const baseName = PLATFORMS[task.platform] || task.platform;
-    const modelSuffix = resp?.model
-      ? ` (${resp.model})`
-      : task.seat === "auto"
-        ? " (auto)"
-        : " (manual)";
-    nameEl.textContent = `${baseName}${modelSuffix}`;
+    nameEl.textContent = PLATFORMS[task.platform] || task.platform;
 
     const roleEl = document.createElement("span");
     roleEl.className = "thinking-step-role";
@@ -1004,7 +1638,7 @@ function buildReasoningBlockForStage(debate, stageKey, roundNumber, stageType, s
       stepStatus.setAttribute("data-live-task-start", String(startMs));
       stepStatus.setAttribute("data-live-task-prefix", prefix);
     } else if (task.lastError) {
-      stepStatus.textContent = `Falha: ${task.lastError}`;
+      stepStatus.textContent = `Falha: ${formatCleanErrorText(task.lastError)}`;
     } else {
       stepStatus.textContent = "Pausado";
     }
@@ -1033,6 +1667,7 @@ function buildPendingManualTasksForStage(debate, stageTasks) {
   for (const task of actionableTasks) {
     const taskBox = document.createElement("div");
     taskBox.className = "debate-task-box";
+    taskBox.setAttribute("data-scroll-reveal", "");
 
     const taskTop = document.createElement("div");
     taskTop.className = "debate-task-top";
@@ -1044,7 +1679,7 @@ function buildPendingManualTasksForStage(debate, stageTasks) {
     if (task.seat === "auto") {
       const autoNote = document.createElement("div");
       autoNote.className = "task-auto-note";
-      autoNote.textContent = `Automático (API) — última falha: ${task.lastError}`;
+      autoNote.textContent = `Última falha: ${formatCleanErrorText(task.lastError)}`;
       taskTop.appendChild(taskTitle);
       taskBox.append(taskTop, autoNote);
       tasksGrid.appendChild(taskBox);
@@ -1108,6 +1743,9 @@ function buildResponseCard(debate, resp) {
 
   const card = document.createElement("article");
   card.className = "ai-response-card";
+  card.id = `resp-card-${resp.id}`;
+  card.setAttribute("data-response-platform", resp.platform);
+  card.setAttribute("data-scroll-reveal", "");
   if (collapsedResponseIds.has(resp.id)) {
     card.classList.add("is-collapsed");
   }
@@ -1132,13 +1770,6 @@ function buildResponseCard(debate, resp) {
   nameEl.className = "ai-response-name";
   nameEl.textContent = PLATFORMS[resp.platform] || resp.platform;
   titleRow.appendChild(nameEl);
-
-  if (resp.model) {
-    const modelBadge = document.createElement("span");
-    modelBadge.className = "ai-response-model";
-    modelBadge.textContent = resp.model;
-    titleRow.appendChild(modelBadge);
-  }
 
   if (durationSec !== null) {
     const thoughtBadge = document.createElement("span");
@@ -1201,11 +1832,139 @@ function buildResponseCard(debate, resp) {
   return card;
 }
 
+/**
+ * Constrói a trilha de Horizontal Scroll para comparar as respostas das IAs na rodada
+ */
+function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses) {
+  const roundKey = `${debate.id}_r${roundNum}`;
+  const isStacked = stackedRoundKeys.has(roundKey);
+
+  const wrapper = document.createElement("div");
+  wrapper.className = `round-horizontal-wrapper${isStacked ? " is-stacked" : ""}`;
+
+  // Barra de cabeçalho da trilha horizontal com pulo rápido por IA, barra scroll-linked e alternância de visão
+  const hHeader = document.createElement("div");
+  hHeader.className = "h-scroll-header";
+
+  const leftGroup = document.createElement("div");
+  leftGroup.className = "h-scroll-ai-Tabs";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "h-scroll-eyebrow";
+  eyebrow.textContent = `RODADA ${roundNum} // COMPARATIVO (${roundResponses.length} IAs)`;
+  leftGroup.appendChild(eyebrow);
+
+  const jumpBtns = [];
+  const viewport = document.createElement("div");
+  viewport.className = "round-horizontal-viewport";
+
+  const respList = document.createElement("div");
+  respList.className = `round-responses-list${roundResponses.length === 1 ? " single-item" : ""}`;
+
+  roundResponses.forEach((resp, idx) => {
+    const cardEl = buildResponseCard(debate, resp);
+    respList.appendChild(cardEl);
+
+    if (roundResponses.length > 1) {
+      const jumpBtn = document.createElement("button");
+      jumpBtn.type = "button";
+      jumpBtn.className = `h-scroll-ai-jump${idx === 0 ? " is-active" : ""}`;
+      jumpBtn.setAttribute("data-jump-platform", resp.platform);
+      jumpBtn.textContent = `${PLATFORM_MONOGRAMS[resp.platform] || resp.platform}`;
+      jumpBtn.title = `Deslizar para ${PLATFORMS[resp.platform] || resp.platform}`;
+
+      jumpBtn.addEventListener("click", () => {
+        if (wrapper.classList.contains("is-stacked")) {
+          cardEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        } else {
+          viewport.scrollTo({
+            left: cardEl.offsetLeft - 4,
+            behavior: "smooth"
+          });
+        }
+      });
+
+      jumpBtns.push({ btn: jumpBtn, card: cardEl, platform: resp.platform });
+      leftGroup.appendChild(jumpBtn);
+    }
+  });
+
+  const controls = document.createElement("div");
+  controls.className = "h-scroll-controls";
+
+  const progressTrack = document.createElement("div");
+  progressTrack.className = "h-scroll-mini-progress";
+  const progressFill = document.createElement("div");
+  progressFill.className = "h-scroll-mini-fill";
+  progressTrack.appendChild(progressFill);
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "h-scroll-arrow";
+  prevBtn.textContent = "←";
+  prevBtn.title = "IA anterior";
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "h-scroll-arrow";
+  nextBtn.textContent = "→";
+  nextBtn.title = "Próxima IA";
+
+  const modeBtn = document.createElement("button");
+  modeBtn.type = "button";
+  modeBtn.className = "h-scroll-mode-btn";
+  modeBtn.textContent = isStacked ? "⇄ Horizontal" : "☰ Empilhar";
+  modeBtn.title = "Alternar entre Horizontal Scroll e Lista Vertical";
+
+  modeBtn.addEventListener("click", () => {
+    const nowStacked = wrapper.classList.toggle("is-stacked");
+    if (nowStacked) {
+      stackedRoundKeys.add(roundKey);
+      modeBtn.textContent = "⇄ Horizontal";
+    } else {
+      stackedRoundKeys.delete(roundKey);
+      modeBtn.textContent = "☰ Empilhar";
+    }
+  });
+
+  if (roundResponses.length > 1) {
+    controls.append(progressTrack, prevBtn, nextBtn, modeBtn);
+  }
+
+  hHeader.append(leftGroup, controls);
+  viewport.appendChild(respList);
+  wrapper.append(hHeader, viewport);
+
+  if (roundResponses.length > 1) {
+    attachHorizontalScrollPhysics(viewport, {
+      progressFillEl: progressFill,
+      prevBtn,
+      nextBtn,
+      cardSelector: ".ai-response-card",
+      isStacked: () => wrapper.classList.contains("is-stacked"),
+      onCenteredCardChange: (centeredCard) => {
+        const plat = centeredCard.getAttribute("data-response-platform");
+        for (const item of jumpBtns) {
+          item.btn.classList.toggle("is-active", item.card === centeredCard);
+        }
+        if (AUTO_PLATFORM_IDS.includes(plat)) {
+          setScrollFocusedAiInRightDock(plat);
+        }
+      }
+    });
+  }
+
+  return wrapper;
+}
+
 function buildConclusionCard(debate) {
   if (!debate.conclusion) return null;
 
   const conclusionBox = document.createElement("section");
   conclusionBox.className = "debate-conclusion-box";
+  conclusionBox.id = "step-synthesis";
+  conclusionBox.setAttribute("data-minimap-section", "step-synthesis");
+  conclusionBox.setAttribute("data-scroll-reveal", "");
 
   const header = document.createElement("div");
   header.className = "conclusion-header";
@@ -1235,7 +1994,7 @@ function buildConclusionCard(debate) {
   if (synthResp) {
     const relatorBadge = document.createElement("span");
     relatorBadge.className = "tag-badge tag-neutral";
-    relatorBadge.textContent = `Relator: ${PLATFORMS[synthResp.platform] || synthResp.platform}${synthResp.model ? ` (${synthResp.model})` : ""}`;
+    relatorBadge.textContent = `Relator: ${PLATFORMS[synthResp.platform] || synthResp.platform}`;
     metaRow.appendChild(relatorBadge);
   }
 
@@ -1279,8 +2038,14 @@ function renderOptimisticChatThread(threadEl) {
     responses: []
   };
 
+  buildChatRoundMinimap(fakeDebate);
   threadEl.appendChild(buildUserPromptMessage(fakeDebate));
-  threadEl.appendChild(
+
+  const roundSection = document.createElement("section");
+  roundSection.className = "chat-round-section";
+  roundSection.id = "step-round-1";
+  roundSection.setAttribute("data-minimap-section", "step-round-1");
+  roundSection.appendChild(
     buildReasoningBlockForStage(
       fakeDebate,
       "optimistic_r1",
@@ -1290,6 +2055,8 @@ function renderOptimisticChatThread(threadEl) {
       []
     )
   );
+  threadEl.appendChild(roundSection);
+  observeScrollRevealElements(threadEl);
 }
 
 function renderChatStage() {
@@ -1311,6 +2078,8 @@ function renderChatStage() {
     threadEl.hidden = true;
     threadEl.replaceChildren();
     lastRenderedChatSignature = "";
+    buildChatRoundMinimap(null);
+    renderZeroStateHorizontalShowcase();
     return;
   }
 
@@ -1336,6 +2105,8 @@ function renderChatStage() {
   lastRenderedChatSignature = signature;
   threadEl.replaceChildren();
 
+  buildChatRoundMinimap(debate);
+
   // 1. Mensagem do Usuário
   threadEl.appendChild(buildUserPromptMessage(debate));
 
@@ -1343,9 +2114,10 @@ function renderChatStage() {
   if (debate.pauseInfo) {
     const pauseBanner = document.createElement("div");
     pauseBanner.className = "debate-pause-banner";
+    pauseBanner.setAttribute("data-scroll-reveal", "");
 
     const pauseText = document.createElement("span");
-    pauseText.textContent = `${debate.pauseInfo.message} (${formatDate(debate.pauseInfo.pausedAt)})`;
+    pauseText.textContent = `${formatCleanErrorText(debate.pauseInfo.message)} (${formatDate(debate.pauseInfo.pausedAt)})`;
     pauseBanner.appendChild(pauseText);
 
     const resumeBtn = document.createElement("button");
@@ -1358,7 +2130,7 @@ function renderChatStage() {
     threadEl.appendChild(pauseBanner);
   }
 
-  // 3. Rodadas 1 .. N
+  // 3. Rodadas 1 .. N (com Horizontal Scroll nas respostas de cada rodada)
   const tasks = Array.isArray(debate.tasks) ? debate.tasks : [];
   const responses = Array.isArray(debate.responses) ? debate.responses : [];
 
@@ -1377,6 +2149,8 @@ function renderChatStage() {
 
     const roundSection = document.createElement("section");
     roundSection.className = "chat-round-section";
+    roundSection.id = `step-round-${roundNum}`;
+    roundSection.setAttribute("data-minimap-section", `step-round-${roundNum}`);
 
     if (roundTasks.length > 0) {
       roundSection.appendChild(
@@ -1397,12 +2171,9 @@ function renderChatStage() {
     }
 
     if (roundResponses.length > 0) {
-      const respList = document.createElement("div");
-      respList.className = "round-responses-list";
-      for (const resp of roundResponses) {
-        respList.appendChild(buildResponseCard(debate, resp));
-      }
-      roundSection.appendChild(respList);
+      roundSection.appendChild(
+        buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses)
+      );
     }
 
     threadEl.appendChild(roundSection);
@@ -1414,16 +2185,19 @@ function renderChatStage() {
 
   if (synthTasks.length > 0) {
     const synthStageKey = `${debate.id}_synthesis`;
-    threadEl.appendChild(
-      buildReasoningBlockForStage(
-        debate,
-        synthStageKey,
-        debate.totalRounds,
-        "synthesis",
-        synthTasks,
-        synthResponses
-      )
+    const synthReasoning = buildReasoningBlockForStage(
+      debate,
+      synthStageKey,
+      debate.totalRounds,
+      "synthesis",
+      synthTasks,
+      synthResponses
     );
+    if (!debate.conclusion) {
+      synthReasoning.id = "step-synthesis";
+      synthReasoning.setAttribute("data-minimap-section", "step-synthesis");
+    }
+    threadEl.appendChild(synthReasoning);
 
     const synthManualEl = buildPendingManualTasksForStage(debate, synthTasks);
     if (synthManualEl) {
@@ -1435,11 +2209,125 @@ function renderChatStage() {
   if (conclusionCard) {
     threadEl.appendChild(conclusionCard);
   }
+
+  observeScrollRevealElements(threadEl);
+  requestAnimationFrame(updateChatScrollLinkedEffects);
 }
 
 // ============================================================================
-// COLUNA 3: DOCK COMPACTO DAS 3 IAs AUTOMÁTICAS (GEMINI, GROQ, OPENROUTER)
+// COLUNA 3: DOCK STICKY DAS 3 IAs AUTOMÁTICAS + FEED DE TELEMETRIA DE USO
 // ============================================================================
+
+function renderRightPanelTelemetryFeed(refDebate) {
+  const feedEl = $("#ai-usage-telemetry-feed");
+  if (!feedEl) return;
+
+  feedEl.replaceChildren();
+
+  // 1. Resumo Consolidado de Cotas Diárias (3 IAs Automáticas)
+  let totalReqToday = 0;
+  let totalReqCap = 0;
+  let totalTokensToday = 0;
+
+  for (const plat of AUTO_PLATFORM_IDS) {
+    const p = latestProviders.find((item) => item.id === plat);
+    if (p?.usage) {
+      totalReqToday += p.usage.requestsToday || 0;
+      totalReqCap += p.usage.requestsDailyCap || 0;
+      totalTokensToday += p.usage.tokensToday || 0;
+    }
+  }
+
+  const quotaTitle = document.createElement("span");
+  quotaTitle.className = "telemetry-section-title";
+  quotaTitle.textContent = "TELEMETRIA DE COTA // HOJE";
+  feedEl.appendChild(quotaTitle);
+
+  const summaryBox = document.createElement("div");
+  summaryBox.className = "telemetry-box";
+  summaryBox.innerHTML = `
+    <div class="telemetry-row">
+      <span>Req. Automáticas</span>
+      <strong>${totalReqToday}/${totalReqCap || "--"} req</strong>
+    </div>
+    <div class="telemetry-row">
+      <span>Tokens Hoje</span>
+      <strong>${totalTokensToday.toLocaleString("pt-BR")} tok</strong>
+    </div>
+    <div class="telemetry-row">
+      <span>Trava UsageGate</span>
+      <strong>90% (Custo Zero)</strong>
+    </div>
+  `;
+  feedEl.appendChild(summaryBox);
+
+  // 2. Detalhamento Técnico por Provedor Automático (RPM / Tokens)
+  for (const plat of AUTO_PLATFORM_IDS) {
+    const p = latestProviders.find((item) => item.id === plat);
+    const usage = p?.usage;
+    if (!usage) continue;
+
+    const pBox = document.createElement("div");
+    pBox.className = "telemetry-box";
+    const pct = Math.min(
+      100,
+      Math.round((usage.requestsToday / Math.max(1, usage.requestsDailyCap)) * 100)
+    );
+    pBox.innerHTML = `
+      <div class="telemetry-row">
+        <span>${PLATFORMS[plat]} (${pct}%)</span>
+        <strong>RPM máx: ${usage.requestsPerMinuteCap}</strong>
+      </div>
+      <div class="telemetry-row">
+        <span>Tokens dia</span>
+        <strong>${(usage.tokensToday || 0).toLocaleString("pt-BR")}${usage.tokensDailyCap ? ` / ${usage.tokensDailyCap.toLocaleString("pt-BR")}` : ""}</strong>
+      </div>
+    `;
+    feedEl.appendChild(pBox);
+  }
+
+  // 3. Log Interativo de Chamadas do Debate Ativo (clicar foca a resposta no chat!)
+  if (refDebate && Array.isArray(refDebate.responses) && refDebate.responses.length > 0) {
+    const logTitle = document.createElement("span");
+    logTitle.className = "telemetry-section-title";
+    logTitle.textContent = "CHAMADAS DA SESSÃO // CLICK TO FOCUS";
+    feedEl.appendChild(logTitle);
+
+    const autoResponses = refDebate.responses.filter((r) =>
+      AUTO_PLATFORM_IDS.includes(r.platform)
+    );
+
+    for (const resp of autoResponses) {
+      const task = (refDebate.tasks || []).find((t) => t.id === resp.taskId);
+      const durSec = getCompletedTaskDurationSec(task, resp);
+
+      const logItem = document.createElement("div");
+      logItem.className = "telemetry-log-item";
+      logItem.innerHTML = `
+        <div class="telemetry-log-top">
+          <span>${PLATFORMS[resp.platform]} • R${resp.round}</span>
+          <span>${durSec ? formatSecondsCompact(durSec) : "OK"}</span>
+        </div>
+        <div class="telemetry-log-sub">
+          <span>${escapeHtml(STAGE_LABELS[resp.stage] || "Debate")}</span>
+          <span>${resp.tokens ? `${resp.tokens} tok` : ""}</span>
+        </div>
+      `;
+
+      logItem.addEventListener("click", () => {
+        const cardEl = document.getElementById(`resp-card-${resp.id}`);
+        if (cardEl) {
+          cardEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+          setScrollFocusedAiInRightDock(resp.platform);
+        } else if (resp.stage === "synthesis") {
+          document.getElementById("step-synthesis")?.scrollIntoView({ behavior: "smooth" });
+        }
+      });
+
+      feedEl.appendChild(logItem);
+    }
+  }
+}
 
 function updateRightAiPanel() {
   const refDebate = optimisticSubmission
@@ -1467,7 +2355,7 @@ function updateRightAiPanel() {
   const roundIndicator = $("#ai-panel-round-indicator");
   if (roundIndicator) {
     if (!refDebate) {
-      roundIndicator.textContent = "Em repouso";
+      roundIndicator.textContent = "Em repouso • Sticky Dock";
     } else if (refDebate.status === "running") {
       roundIndicator.textContent = `Ativo • R${refDebate.currentRound}/${refDebate.totalRounds}`;
     } else if (refDebate.status === "completed") {
@@ -1483,9 +2371,20 @@ function updateRightAiPanel() {
   const mobileStrip = $("#mobile-ai-strip");
   if (mobileStrip) {
     mobileStrip.replaceChildren();
+
+    const histChip = document.createElement("button");
+    histChip.type = "button";
+    histChip.className = "mobile-ai-chip mobile-history-chip";
+    histChip.textContent = `Histórico (${latestDebates.length})`;
+    histChip.addEventListener("click", () => {
+      const debatesSec = document.querySelector('[data-sidebar-section="debates"]');
+      debatesSec?.classList.remove("is-collapsed");
+      $("#left-sidebar")?.classList.add("is-open");
+      $("#mobile-backdrop")?.classList.add("is-visible");
+    });
+    mobileStrip.appendChild(histChip);
   }
 
-  // Itera apenas sobre as 3 IAs automáticas presentes no dock lateral direito
   for (const platform of AUTO_PLATFORM_IDS) {
     const card = document.querySelector(`[data-ai-card="${platform}"]`);
     const badge = document.querySelector(`[data-ai-badge="${platform}"]`);
@@ -1494,9 +2393,13 @@ function updateRightAiPanel() {
 
     if (!card || !badge) continue;
 
-    // 1. Limite compacto (Linha 2): apenas reqHoje/reqMax req + micro-barra 2px
     const providerInfo = latestProviders.find((p) => p.id === platform);
     const usage = providerInfo?.usage;
+    const reqShort = usage
+      ? `${usage.requestsToday}/${usage.requestsDailyCap} req`
+      : providerInfo && !providerInfo.ready
+        ? "sem chave"
+        : "0/-- req";
 
     if (usage) {
       if (quotaValue) {
@@ -1517,7 +2420,6 @@ function updateRightAiPanel() {
       if (quotaFill) quotaFill.style.width = "0%";
     }
 
-    // 2. Estado de Execução na Linha 1 (Pronto | Pensando 00:00.0s | ✔ Concluído • Xs)
     card.classList.remove("is-thinking", "is-completed");
     badge.removeAttribute("data-live-start-ms");
 
@@ -1550,8 +2452,14 @@ function updateRightAiPanel() {
       }
     }
 
+    const openRightDrawerOnMobile = () => {
+      $("#right-ai-panel")?.classList.add("is-open");
+      $("#mobile-backdrop")?.classList.add("is-visible");
+    };
+
     if (execState === "thinking" && activeTask) {
       card.classList.add("is-thinking");
+      card.classList.remove("is-scroll-focused");
       const startMs = getTaskStartMs(activeTask, refDebate);
       const elapsedSec = (Date.now() - startMs) / 1000;
 
@@ -1560,11 +2468,14 @@ function updateRightAiPanel() {
       badge.setAttribute("data-live-start-ms", String(startMs));
 
       if (mobileStrip) {
-        const chip = document.createElement("span");
+        const chip = document.createElement("button");
+        chip.type = "button";
         chip.className = "mobile-ai-chip is-thinking";
-        chip.textContent = `${PLATFORMS[platform]} ${formatSecondsPadded(elapsedSec)}`;
+        chip.textContent = `${PLATFORMS[platform]} ${formatSecondsPadded(elapsedSec)} (${reqShort})`;
         chip.setAttribute("data-mobile-live-start-ms", String(startMs));
         chip.setAttribute("data-mobile-monogram", PLATFORMS[platform]);
+        chip.setAttribute("data-mobile-req", reqShort);
+        chip.addEventListener("click", openRightDrawerOnMobile);
         mobileStrip.appendChild(chip);
       }
     } else if (execState === "completed" && latestCompletedTask) {
@@ -1573,12 +2484,14 @@ function updateRightAiPanel() {
       const durText = durSec ? formatSecondsCompact(durSec) : "OK";
 
       badge.className = "ai-exec-badge completed";
-      badge.textContent = `✔ Concluído • ${durText}`;
+      badge.textContent = `✔ ${durText}`;
 
       if (mobileStrip) {
-        const chip = document.createElement("span");
+        const chip = document.createElement("button");
+        chip.type = "button";
         chip.className = "mobile-ai-chip";
-        chip.textContent = `${PLATFORMS[platform]} ✔ ${durText}`;
+        chip.textContent = `${PLATFORMS[platform]} ✔ ${durText} (${reqShort})`;
+        chip.addEventListener("click", openRightDrawerOnMobile);
         mobileStrip.appendChild(chip);
       }
     } else {
@@ -1592,13 +2505,17 @@ function updateRightAiPanel() {
       }
 
       if (mobileStrip) {
-        const chip = document.createElement("span");
+        const chip = document.createElement("button");
+        chip.type = "button";
         chip.className = "mobile-ai-chip";
-        chip.textContent = `${PLATFORMS[platform]} • ${badge.textContent}`;
+        chip.textContent = `${PLATFORMS[platform]} • ${reqShort}`;
+        chip.addEventListener("click", openRightDrawerOnMobile);
         mobileStrip.appendChild(chip);
       }
     }
   }
+
+  renderRightPanelTelemetryFeed(refDebate);
 }
 
 // Loop de 100ms para atualizar todos os cronômetros ao vivo sem reconstruir o DOM
@@ -1630,8 +2547,11 @@ function tickLiveTimers() {
   for (const el of $$("[data-mobile-live-start-ms]")) {
     const startMs = Number(el.getAttribute("data-mobile-live-start-ms"));
     const monogram = el.getAttribute("data-mobile-monogram") || "AI";
+    const reqShort = el.getAttribute("data-mobile-req") || "";
     if (Number.isFinite(startMs) && startMs > 0) {
-      el.textContent = `${monogram} ${formatSecondsPadded((now - startMs) / 1000)}`;
+      el.textContent = reqShort
+        ? `${monogram} ${formatSecondsPadded((now - startMs) / 1000)} (${reqShort})`
+        : `${monogram} ${formatSecondsPadded((now - startMs) / 1000)}`;
     }
   }
 }
@@ -1806,6 +2726,7 @@ function updateHistory(sortedEvents) {
 
     const row = document.createElement("div");
     row.className = "history-row";
+    row.setAttribute("data-scroll-reveal", "");
 
     const platformCol = document.createElement("span");
     platformCol.className = "history-platform";
@@ -1830,6 +2751,8 @@ function updateHistory(sortedEvents) {
     row.append(platformCol, messageCol, dateCol, badgeCol);
     historyList.appendChild(row);
   }
+
+  observeScrollRevealElements(historyList);
 }
 
 function updateDashboardDebatesSummary(debates, activeDebatesCount) {
@@ -1874,6 +2797,7 @@ function updateDashboardDebatesSummary(debates, activeDebatesCount) {
   for (const debate of listDebates) {
     const row = document.createElement("article");
     row.className = "dashboard-debate-row";
+    row.setAttribute("data-scroll-reveal", "");
 
     const info = document.createElement("div");
     info.className = "dashboard-debate-info";
@@ -1896,6 +2820,8 @@ function updateDashboardDebatesSummary(debates, activeDebatesCount) {
     row.addEventListener("click", () => selectDebate(debate.id));
     container.appendChild(row);
   }
+
+  observeScrollRevealElements(container);
 }
 
 // ============================================================================
@@ -1996,6 +2922,7 @@ async function handleCreateDebate(event) {
       for (const t of result.debate.tasks || []) {
         localTaskStartMs.set(t.id, Date.now());
       }
+      upsertDebateSessionLocally(result.debate);
     }
 
     if (feedback) {
@@ -2004,7 +2931,11 @@ async function handleCreateDebate(event) {
 
     lastDebatesSignature = "";
     lastRenderedChatSignature = "";
-    await refreshDashboard();
+    renderSidebarDebatesList();
+    updateStageTopbar();
+    renderChatStage();
+    updateRightAiPanel();
+    void refreshDashboard();
   } catch (error) {
     optimisticSubmission = null;
     renderChatStage();
@@ -2015,6 +2946,16 @@ async function handleCreateDebate(event) {
     }
   } finally {
     if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+function upsertDebateSessionLocally(debateSession) {
+  if (!debateSession || !debateSession.id) return;
+  const existingIdx = latestDebates.findIndex((d) => d.id === debateSession.id);
+  if (existingIdx >= 0) {
+    latestDebates[existingIdx] = debateSession;
+  } else {
+    latestDebates = [debateSession, ...latestDebates];
   }
 }
 
@@ -2037,7 +2978,7 @@ async function handleSubmitTaskResponse(
       buttonElement.textContent = "Salvando...";
     }
 
-    await fetchJson(`/debates/${debateId}/respond`, {
+    const res = await fetchJson(`/debates/${debateId}/respond`, {
       method: "POST",
       body: {
         taskId,
@@ -2045,10 +2986,16 @@ async function handleSubmitTaskResponse(
       }
     });
 
+    if (res?.debate) {
+      upsertDebateSessionLocally(res.debate);
+    }
+
     draftResponsesByTaskId.delete(taskId);
     lastDebatesSignature = "";
     lastRenderedChatSignature = "";
-    await refreshDashboard();
+    renderChatStage();
+    updateRightAiPanel();
+    void refreshDashboard();
   } catch (error) {
     alert(
       error instanceof Error
@@ -2064,16 +3011,23 @@ async function handleSubmitTaskResponse(
 
 async function handlePauseDebate(debateId) {
   try {
-    await fetchJson(`/debates/${debateId}/pause`, {
+    const res = await fetchJson(`/debates/${debateId}/pause`, {
       method: "POST",
       body: {
         reason: "Debate pausado manualmente pelo painel. Estado integralmente preservado."
       }
     });
 
+    if (res?.debate) {
+      upsertDebateSessionLocally(res.debate);
+    }
+
     lastDebatesSignature = "";
     lastRenderedChatSignature = "";
-    await refreshDashboard();
+    updateStageTopbar();
+    renderChatStage();
+    updateRightAiPanel();
+    void refreshDashboard();
   } catch (error) {
     alert(error instanceof Error ? error.message : "Falha ao pausar o debate.");
   }
@@ -2086,18 +3040,24 @@ async function handleResumeDebate(debateId) {
       body: {}
     });
 
-    if (res?.debate?.tasks) {
-      const now = Date.now();
-      for (const t of res.debate.tasks) {
-        if (t.status === "pending") {
-          localTaskStartMs.set(t.id, now);
+    if (res?.debate) {
+      upsertDebateSessionLocally(res.debate);
+      if (res.debate.tasks) {
+        const now = Date.now();
+        for (const t of res.debate.tasks) {
+          if (t.status === "pending") {
+            localTaskStartMs.set(t.id, now);
+          }
         }
       }
     }
 
     lastDebatesSignature = "";
     lastRenderedChatSignature = "";
-    await refreshDashboard();
+    updateStageTopbar();
+    renderChatStage();
+    updateRightAiPanel();
+    void refreshDashboard();
   } catch (error) {
     alert(error instanceof Error ? error.message : "Falha ao retomar o debate.");
   }
@@ -2160,16 +3120,32 @@ function updateDashboard(data, providers) {
 }
 
 async function refreshDashboard() {
-  try {
-    const [health, status, providersData] = await Promise.all([
-      fetchJson("/health"),
-      fetchJson("/status"),
-      fetchJson("/providers").catch(() => null)
-    ]);
+  if (isRefreshing) {
+    pendingImmediateRefresh = true;
+    return;
+  }
 
-    if (health.status && String(health.status).toLowerCase() !== "online") {
-      throw new Error("Servidor não está online.");
-    }
+  isRefreshing = true;
+  if (refreshTimerId) {
+    clearTimeout(refreshTimerId);
+    refreshTimerId = null;
+  }
+
+  try {
+    // Dispara /providers de forma independente para preencher as cotas (req) imediatamente
+    const providersPromise = fetchJson("/providers")
+      .then((providersData) => {
+        if (Array.isArray(providersData?.providers)) {
+          latestProviders = providersData.providers;
+          updateProviderCards(latestProviders);
+          updateRightAiPanel();
+        }
+        return providersData;
+      })
+      .catch(() => null);
+
+    const status = await fetchJson("/status");
+    const providersData = await providersPromise;
 
     setServerStatus(true);
     updateDashboard(status, providersData?.providers);
@@ -2179,7 +3155,15 @@ async function refreshDashboard() {
     setCardsUnknownOnError();
     setText("#monitor-status", "Estado desconhecido: sem conexão");
   } finally {
-    scheduleNextRefresh();
+    isRefreshing = false;
+    if (pendingImmediateRefresh) {
+      pendingImmediateRefresh = false;
+      setTimeout(() => {
+        void refreshDashboard();
+      }, 250);
+    } else {
+      scheduleNextRefresh();
+    }
   }
 }
 
@@ -2196,13 +3180,12 @@ function updateClock() {
 }
 
 // ============================================================================
-// INICIALIZAÇÃO DE EVENTOS DE UI E PERSISTÊNCIA DE PAINÉIS RETRÁTEIS
+// INICIALIZAÇÃO DE EVENTOS DE UI, STICKY DOCK & PARALLAX
 // ============================================================================
 
 function initializeCollapsibleLayout() {
   const appShell = $("#app-shell");
 
-  // Restaura preferências salvas de colapso das barras laterais
   try {
     if (localStorage.getItem("ai-council-left-collapsed") === "true") {
       appShell?.classList.add("is-left-collapsed");
@@ -2211,7 +3194,7 @@ function initializeCollapsibleLayout() {
       appShell?.classList.add("is-right-collapsed");
     }
   } catch {
-    // Ignora caso localStorage esteja bloqueado
+    // Ignora
   }
 
   $("#toggle-left-sidebar")?.addEventListener("click", () => {
@@ -2234,7 +3217,6 @@ function initializeCollapsibleLayout() {
     }
   });
 
-  // Seções colapsáveis dentro da Sidebar Esquerda
   for (const toggleBtn of $$("[data-toggle-section]")) {
     const sectionKey = toggleBtn.getAttribute("data-toggle-section");
     const sectionEl = document.querySelector(`[data-sidebar-section="${sectionKey}"]`);
@@ -2264,16 +3246,89 @@ function initializeCollapsibleLayout() {
   }
 }
 
+function initializeParallaxAndStickyAnimations() {
+  const mainStage = $("#main-stage");
+  const chatScroll = $("#chat-scroll-area");
+  const dashScroll = $("#dashboard-scroll-area");
+  const histScroll = $("#history-scroll-area");
+  const rightScroll = $("#right-panel-scroll");
+
+  // 1. Parallax por movimento do cursor no Palco Central
+  mainStage?.addEventListener("pointermove", (e) => {
+    const rect = mainStage.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    parallaxMouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+    parallaxMouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+    scheduleParallaxRender();
+  });
+
+  // 2. Scroll-Linked e Parallax no Chat e nas Abas
+  chatScroll?.addEventListener("scroll", updateChatScrollLinkedEffects, { passive: true });
+
+  dashScroll?.addEventListener(
+    "scroll",
+    () => {
+      parallaxScrollY = dashScroll.scrollTop;
+      scheduleParallaxRender();
+    },
+    { passive: true }
+  );
+
+  histScroll?.addEventListener(
+    "scroll",
+    () => {
+      parallaxScrollY = histScroll.scrollTop;
+      scheduleParallaxRender();
+    },
+    { passive: true }
+  );
+
+  // 3. Animação de Sticky Stack ao rolar a Barra Lateral Direita (#right-panel-scroll)
+  rightScroll?.addEventListener(
+    "scroll",
+    () => {
+      rightScroll.classList.toggle("is-scrolled", rightScroll.scrollTop > 8);
+    },
+    { passive: true }
+  );
+
+  // 4. Física Magnética (Sticky Cursor) nos 3 Cards de IAs Automáticas da Barra Lateral
+  for (const plat of AUTO_PLATFORM_IDS) {
+    const card = document.querySelector(`[data-ai-card="${plat}"]`);
+    if (!card) continue;
+
+    card.addEventListener("pointermove", (e) => {
+      const rect = card.getBoundingClientRect();
+      const relY = (e.clientY - rect.top) / Math.max(1, rect.height) - 0.5;
+      card.style.setProperty("--mag-y", `${(relY * 2.5).toFixed(1)}px`);
+    });
+
+    card.addEventListener("pointerleave", () => {
+      card.style.setProperty("--mag-y", "0px");
+    });
+
+    // Clicar no card da IA na barra lateral desliza para a resposta mais recente dela no chat
+    card.addEventListener("click", () => {
+      const cardsInChat = $$(`.ai-response-card[data-response-platform="${plat}"]`);
+      if (cardsInChat.length > 0) {
+        const latestCard = cardsInChat[cardsInChat.length - 1];
+        latestCard.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        setScrollFocusedAiInRightDock(plat);
+      }
+    });
+  }
+}
+
 function initializeUiBindings() {
   initializeCollapsibleLayout();
+  initScrollTriggerObserver();
+  initializeParallaxAndStickyAnimations();
 
-  // 1. Formulário do Composer
   const createForm = $("#create-debate-form");
   if (createForm) {
     createForm.addEventListener("submit", handleCreateDebate);
   }
 
-  // 2. Textarea do Composer: Enter envia, Shift+Enter quebra linha + auto-resize
   const topicTextarea = $("#debate-topic");
   if (topicTextarea) {
     topicTextarea.addEventListener("keydown", (e) => {
@@ -2289,7 +3344,6 @@ function initializeUiBindings() {
     });
   }
 
-  // 3. Pills de seleção de IAs participantes no Composer
   for (const checkbox of $$('input[name="participants"]')) {
     const syncPill = () => {
       const label = checkbox.closest(".participant-pill");
@@ -2301,7 +3355,6 @@ function initializeUiBindings() {
     syncPill();
   }
 
-  // 4. Botão + Opções avançadas no Composer
   const advBtn = $("#toggle-advanced-btn");
   const advPanel = $("#composer-advanced");
   if (advBtn && advPanel) {
@@ -2316,10 +3369,8 @@ function initializeUiBindings() {
     });
   }
 
-  // 5. Botão + Novo Debate na Sidebar
   $("#btn-new-debate")?.addEventListener("click", startNewDebateView);
 
-  // 6. Abas de Navegação do Sistema na Sidebar
   for (const navBtn of $$("[data-view-target]")) {
     navBtn.addEventListener("click", () => {
       const target = navBtn.getAttribute("data-view-target") || "chat";
@@ -2327,12 +3378,12 @@ function initializeUiBindings() {
     });
   }
 
-  // 7. Drawers Mobile / Tablet
   const leftSidebar = $("#left-sidebar");
   const rightPanel = $("#right-ai-panel");
   const backdrop = $("#mobile-backdrop");
 
   $("#open-left-drawer")?.addEventListener("click", () => {
+    document.querySelector('[data-sidebar-section="debates"]')?.classList.remove("is-collapsed");
     leftSidebar?.classList.add("is-open");
     backdrop?.classList.add("is-visible");
   });
@@ -2346,12 +3397,69 @@ function initializeUiBindings() {
 
   $("#close-right-drawer")?.addEventListener("click", closeMobileDrawers);
   backdrop?.addEventListener("click", closeMobileDrawers);
+
+  // Autenticação por senha para celular / acesso remoto HTTPS
+  const authForm = $("#auth-login-form");
+  const authInput = $("#auth-password-input");
+  const authError = $("#auth-lock-error");
+  const authSubmit = $("#auth-submit-btn");
+  const lockBtn = $("#btn-lock-session");
+
+  if (lockBtn) {
+    const isLocalHost =
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "localhost";
+    lockBtn.hidden = isLocalHost && !getStoredSessionToken();
+  }
+
+  authForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const password = (authInput?.value || "").trim();
+    if (!password) {
+      if (authError) authError.textContent = "Digite a senha de acesso.";
+      authInput?.focus();
+      return;
+    }
+
+    try {
+      if (authSubmit) authSubmit.disabled = true;
+      if (authError) authError.textContent = "Verificando...";
+
+      const res = await fetchJson("/auth/login", {
+        method: "POST",
+        body: { password }
+      });
+
+      if (res?.sessionToken) {
+        setStoredSessionToken(res.sessionToken);
+      }
+
+      if (authInput) authInput.value = "";
+      if (lockBtn) lockBtn.hidden = false;
+      hideAuthLockOverlay();
+      await refreshDashboard();
+    } catch (err) {
+      if (authError) {
+        authError.textContent =
+          err instanceof Error ? err.message : "Senha inválida.";
+      }
+    } finally {
+      if (authSubmit) authSubmit.disabled = false;
+    }
+  });
+
+  lockBtn?.addEventListener("click", async () => {
+    setStoredSessionToken("");
+    await fetchJson("/auth/logout", { method: "POST" }).catch(() => {});
+    showAuthLockOverlay("Sessão bloqueada neste dispositivo.");
+  });
 }
 
 function initializeDashboard() {
-  console.log("[AI Council] Intelligence Hub (Eraser Design System) iniciado.");
+  console.log("[AI Council] Intelligence Hub (Eraser + Advanced Scroll/Parallax Motion) iniciado.");
 
   initializeUiBindings();
+  renderZeroStateHorizontalShowcase();
   updateClock();
   void refreshDashboard();
 

@@ -499,6 +499,9 @@ export async function submitDebateTaskResponse(
     task.status = "completed";
     task.completedAt = now;
     delete task.lastError;
+    delete task.userPrompt;
+    delete task.systemPrompt;
+    task.prompt = "";
 
     const responseRecord: DebateResponse = {
       id: randomUUID(),
@@ -506,7 +509,7 @@ export async function submitDebateTaskResponse(
       round: task.round,
       stage: task.stage,
       platform: task.platform,
-      promptUsed: task.prompt,
+      promptUsed: "",
       content,
       submittedAt: now,
       ...(meta.model ? { model: meta.model } : {}),
