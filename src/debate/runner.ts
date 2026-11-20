@@ -30,6 +30,15 @@ import {
 
 import { classifyError, type ProviderMediaPart } from "../providers/types.js";
 import { isAutoPlatform, type DebateSession, type DebateTask } from "../shared/debate-types.js";
+import {
+  AUTO_VERDICT_MIN_QUOTA_RATIO,
+  generateTurnVerdict,
+  shouldTriggerAutoVerdict
+} from "./verdict.js";
+import {
+  extractAndSaveUserMemoryFromTurn,
+  mightContainPersonalMemory
+} from "./user-memory-extractor.js";
 
 const TICK_MS = 2_500;
 // Cada tarefa já faz até 2-3 tentativas HTTP dentro do provedor (e cada uma conta
@@ -47,6 +56,12 @@ const activeControllers = new Map<
 const retryNotBefore = new Map<string, number>();
 const memoryInFlight = new Set<string>();
 const memoryRetryNotBefore = new Map<string, number>();
+const autoVerdictInFlight = new Set<string>();
+const autoVerdictAttempted = new Set<string>();
+const MAX_AUTO_VERDICT_HISTORY = 200;
+const userMemoryInFlight = new Set<string>();
+const userMemoryAttempted = new Set<string>();
+const MAX_USER_MEMORY_HISTORY = 300;
 
 /**
  * Cancela instantaneamente todas as requisições HTTP/stream em andamento de uma
@@ -326,6 +341,67 @@ async function runMemoryCompaction(job: PendingMemoryCompaction): Promise<void> 
   }
 }
 
+async function runAutoVerdict(debateId: string, turnId: string): Promise<void> {
+  const key = `${debateId}:${turnId}`;
+  if (autoVerdictInFlight.has(key) || autoVerdictAttempted.has(key)) return;
+  autoVerdictInFlight.add(key);
+  if (autoVerdictAttempted.size >= MAX_AUTO_VERDICT_HISTORY) {
+    const oldest = autoVerdictAttempted.values().next().value;
+    if (oldest) autoVerdictAttempted.delete(oldest);
+  }
+  autoVerdictAttempted.add(key);
+
+  try {
+    const { verdict } = await generateTurnVerdict(debateId, {
+      turnId,
+      minRemainingQuotaRatio: AUTO_VERDICT_MIN_QUOTA_RATIO
+    });
+    console.log(
+      `[AI Council] Veredito Automático concluído (Juiz: ${verdict.judgePlatform}, recomendada: ${verdict.winner})`
+    );
+  } catch (error) {
+    // Best-effort silencioso: nunca pausa o chat nem exibe erro intrusivo
+    console.log(
+      "[AI Council] Veredito Automático ignorado:",
+      error instanceof Error ? error.message.slice(0, 140) : error
+    );
+  } finally {
+    autoVerdictInFlight.delete(key);
+  }
+}
+
+async function runUserMemoryExtraction(
+  session: DebateSession,
+  turnId: string
+): Promise<void> {
+  const key = `${session.id}:${turnId}`;
+  if (userMemoryInFlight.has(key) || userMemoryAttempted.has(key)) return;
+  userMemoryInFlight.add(key);
+  if (userMemoryAttempted.size >= MAX_USER_MEMORY_HISTORY) {
+    const oldest = userMemoryAttempted.values().next().value;
+    if (oldest) userMemoryAttempted.delete(oldest);
+  }
+  userMemoryAttempted.add(key);
+
+  try {
+    const turn = session.turns?.find((t) => t.id === turnId);
+    if (!turn) return;
+    const outcome = await extractAndSaveUserMemoryFromTurn(session, turn);
+    if (outcome && (outcome.addedCount > 0 || outcome.removedCount > 0)) {
+      console.log(
+        `[AI Council] Memória pessoal automática atualizada (+${outcome.addedCount} / -${outcome.removedCount} fatos).`
+      );
+    }
+  } catch (error) {
+    console.log(
+      "[AI Council] Extração de memória pessoal ignorada:",
+      error instanceof Error ? error.message.slice(0, 120) : error
+    );
+  } finally {
+    userMemoryInFlight.delete(key);
+  }
+}
+
 // ---------------------------------------------------------------
 // Varredura
 // ---------------------------------------------------------------
@@ -371,30 +447,47 @@ async function processOnce(): Promise<boolean> {
     }
   }
 
-  // Em segundo plano, compacta turnos antigos (> 3) em Memória Compartilhada
-  // enquanto o usuário lê, para não atrasar a próxima mensagem.
+  // Em segundo plano, dispara Veredito Automático (opt-in, best-effort com trava >= 15% cota)
+  // e compacta turnos antigos (> 3) em Memória Compartilhada.
   for (const summary of summaries.slice(0, 5)) {
     if (summary.status !== "completed" || (summary.engineVersion ?? 0) < 2) {
       continue;
     }
-    if (
-      summary.turnCount <= RECENT_FULL_TURNS ||
-      (summary.sharedMemoryTurns ?? 0) >= summary.turnCount - RECENT_FULL_TURNS
-    ) {
-      continue;
-    }
-    if (
-      memoryInFlight.has(summary.id) ||
-      (memoryRetryNotBefore.get(summary.id) ?? 0) > now
-    ) {
-      continue;
-    }
+
+    const needsMemoryCheck =
+      summary.turnCount > RECENT_FULL_TURNS &&
+      (summary.sharedMemoryTurns ?? 0) < summary.turnCount - RECENT_FULL_TURNS &&
+      !memoryInFlight.has(summary.id) &&
+      (memoryRetryNotBefore.get(summary.id) ?? 0) <= now;
+
     const session = await getDebateSessionById(summary.id);
     if (!session) continue;
-    const job = getPendingMemoryCompaction(session);
-    if (job) {
-      void runMemoryCompaction(job);
-      break;
+
+    const latestTurn = session.turns?.at(-1);
+    if (latestTurn && shouldTriggerAutoVerdict(session, latestTurn)) {
+      const verdictKey = `${session.id}:${latestTurn.id}`;
+      if (!autoVerdictInFlight.has(verdictKey) && !autoVerdictAttempted.has(verdictKey)) {
+        void runAutoVerdict(session.id, latestTurn.id);
+      }
+    }
+
+    if (
+      latestTurn &&
+      latestTurn.status === "completed" &&
+      mightContainPersonalMemory(latestTurn.prompt)
+    ) {
+      const memKey = `${session.id}:${latestTurn.id}`;
+      if (!userMemoryInFlight.has(memKey) && !userMemoryAttempted.has(memKey)) {
+        void runUserMemoryExtraction(session, latestTurn.id);
+      }
+    }
+
+    if (needsMemoryCheck) {
+      const job = getPendingMemoryCompaction(session);
+      if (job) {
+        void runMemoryCompaction(job);
+        break;
+      }
     }
   }
 

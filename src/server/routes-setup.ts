@@ -1,0 +1,274 @@
+import { tmpdir } from "node:os";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+import { emitProvidersUpdated } from "../debate/stream-hub.js";
+import { reinitProviders } from "../providers/registry.js";
+import { applyNtfsOwnerOnlyPermissions } from "../security/data-protection.js";
+import type { AutoPlatform } from "../shared/debate-types.js";
+import { DEFAULT_WEAK_PASSWORD, type AuthManager } from "./auth.js";
+import {
+  getSetupMissingProviders,
+  isValidApiKeyValue,
+  maskApiKey,
+  PROVIDER_ENV_KEYS,
+  PROVIDER_KEY_URLS,
+  upsertEnvFile,
+  validateProviderApiKey,
+  type KeyValidationResult,
+  type KeyValidatorFn
+} from "./env-config.js";
+import { isRecord, readRequestBody, sendJson } from "./http-utils.js";
+
+const REQUIRED_PROVIDERS: AutoPlatform[] = ["gemini", "groq", "openrouter"];
+
+function buildSetupProvidersPayload() {
+  return {
+    gemini: {
+      configured: isValidApiKeyValue(process.env.GEMINI_API_KEY),
+      maskedKey: maskApiKey(process.env.GEMINI_API_KEY),
+      keyUrl: PROVIDER_KEY_URLS.gemini
+    },
+    groq: {
+      configured: isValidApiKeyValue(process.env.GROQ_API_KEY),
+      maskedKey: maskApiKey(process.env.GROQ_API_KEY),
+      keyUrl: PROVIDER_KEY_URLS.groq
+    },
+    openrouter: {
+      configured: isValidApiKeyValue(process.env.OPENROUTER_API_KEY),
+      maskedKey: maskApiKey(process.env.OPENROUTER_API_KEY),
+      keyUrl: PROVIDER_KEY_URLS.openrouter
+    }
+  };
+}
+
+export interface SetupRouteOptions {
+  envPath: string;
+  validateKeyFn?: KeyValidatorFn;
+}
+
+/**
+ * Rotas de Setup Guiado (/setup/status e /setup/save).
+ * SEGURANÇA: restritas 100% a requisições diretas do próprio PC (localhost / 127.0.0.1 / ::1).
+ * Nunca acessíveis remotamente via celular, Wi-Fi externo ou Tailscale, e nunca retornam chaves completas.
+ */
+export async function handleSetupRoutes(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  origin: string | undefined,
+  auth: AuthManager,
+  options: SetupRouteOptions
+): Promise<boolean> {
+  if (url.pathname !== "/setup/status" && url.pathname !== "/setup/save") {
+    return false;
+  }
+
+  // Trava rigorosa: somente PC local direto (sem proxy, sem LAN, sem Tailscale)
+  if (!auth.isDirectLocalPCRequest(request)) {
+    sendJson(
+      response,
+      403,
+      {
+        error:
+          "Configuração de chaves permitida somente diretamente no PC local (http://127.0.0.1:4317)."
+      },
+      origin
+    );
+    return true;
+  }
+
+  if (request.method === "GET" && url.pathname === "/setup/status") {
+    const missing = getSetupMissingProviders();
+    sendJson(
+      response,
+      200,
+      {
+        isLocal: true,
+        setupComplete: missing.length === 0,
+        missingProviders: missing,
+        providers: buildSetupProvidersPayload(),
+        accessPassword: {
+          configured: !auth.isUsingWeakDefaultPassword(),
+          isWeakDefault: auth.isUsingWeakDefaultPassword()
+        }
+      },
+      origin
+    );
+    return true;
+  }
+
+  if (request.method === "POST" && url.pathname === "/setup/save") {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await readRequestBody(request));
+    } catch {
+      sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+      return true;
+    }
+
+    if (!isRecord(payload)) {
+      sendJson(response, 400, { error: "Dados de configuração inválidos." }, origin);
+      return true;
+    }
+
+    const incomingKeys: Record<AutoPlatform, string> = {
+      gemini:
+        typeof payload.geminiApiKey === "string" ? payload.geminiApiKey.trim() : "",
+      groq:
+        typeof payload.groqApiKey === "string" ? payload.groqApiKey.trim() : "",
+      openrouter:
+        typeof payload.openrouterApiKey === "string"
+          ? payload.openrouterApiKey.trim()
+          : ""
+    };
+
+    const incomingPassword =
+      typeof payload.accessPassword === "string"
+        ? payload.accessPassword.trim()
+        : "";
+
+    if (incomingPassword) {
+      if (incomingPassword.length < 8) {
+        sendJson(
+          response,
+          400,
+          { error: "A senha de acesso remoto deve ter pelo menos 8 caracteres." },
+          origin
+        );
+        return true;
+      }
+      if (incomingPassword === DEFAULT_WEAK_PASSWORD) {
+        sendJson(
+          response,
+          400,
+          { error: "Escolha uma senha diferente da senha padrão." },
+          origin
+        );
+        return true;
+      }
+    }
+
+    // Resolve chaves efetivas: aceita manter chave já salva se o campo vier vazio na edição
+    const effectiveKeys: Record<AutoPlatform, string> = {
+      gemini: incomingKeys.gemini || (process.env.GEMINI_API_KEY?.trim() ?? ""),
+      groq: incomingKeys.groq || (process.env.GROQ_API_KEY?.trim() ?? ""),
+      openrouter:
+        incomingKeys.openrouter || (process.env.OPENROUTER_API_KEY?.trim() ?? "")
+    };
+
+    const validation: Record<AutoPlatform, KeyValidationResult> = {
+      gemini: { ok: false },
+      groq: { ok: false },
+      openrouter: { ok: false }
+    };
+
+    const missingBeforeTest: AutoPlatform[] = [];
+    for (const plat of REQUIRED_PROVIDERS) {
+      if (!isValidApiKeyValue(effectiveKeys[plat])) {
+        missingBeforeTest.push(plat);
+        validation[plat] = {
+          ok: false,
+          error: "Chave obrigatória para liberar o AI Council."
+        };
+      }
+    }
+
+    if (missingBeforeTest.length > 0) {
+      sendJson(
+        response,
+        400,
+        {
+          error: "Informe todas as 3 chaves (Gemini, Groq e OpenRouter) para continuar.",
+          validation
+        },
+        origin
+      );
+      return true;
+    }
+
+    const validator = options.validateKeyFn ?? validateProviderApiKey;
+
+    // Testa online todas as 3 chaves em paralelo (endpoints gratuitos, 0 tokens gastos)
+    const results = await Promise.all(
+      REQUIRED_PROVIDERS.map(async (plat) => {
+        const res = await validator(plat, effectiveKeys[plat]);
+        return [plat, res] as const;
+      })
+    );
+
+    let allValid = true;
+    for (const [plat, res] of results) {
+      validation[plat] = res;
+      if (!res.ok) allValid = false;
+    }
+
+    if (!allValid) {
+      sendJson(
+        response,
+        400,
+        {
+          error: "Uma ou mais chaves falharam na validação. Corrija os itens destacados.",
+          validation
+        },
+        origin
+      );
+      return true;
+    }
+
+    // Salva somente as chaves alteradas (ou todas as 3 garantidas) + senha se fornecida
+    const envUpdates: Record<string, string> = {};
+    for (const plat of REQUIRED_PROVIDERS) {
+      const envName = PROVIDER_ENV_KEYS[plat];
+      envUpdates[envName] = effectiveKeys[plat];
+    }
+    if (incomingPassword) {
+      envUpdates.ACCESS_PASSWORD = incomingPassword;
+    }
+
+    try {
+      await upsertEnvFile(options.envPath, envUpdates);
+      if (process.platform === "win32" && !options.envPath.startsWith(tmpdir())) {
+        await applyNtfsOwnerOnlyPermissions([options.envPath]).catch(() => {});
+      }
+    } catch (error) {
+      console.error("[AI Council] Falha ao gravar .env no setup:", error);
+      sendJson(
+        response,
+        500,
+        { error: "Não foi possível gravar o arquivo .env local." },
+        origin
+      );
+      return true;
+    }
+
+    // Hot-reload imediato em memória (sem precisar reiniciar o servidor!)
+    for (const [envKey, envVal] of Object.entries(envUpdates)) {
+      process.env[envKey] = envVal;
+    }
+    if (incomingPassword) {
+      auth.updateAccessPassword(incomingPassword);
+    }
+    reinitProviders();
+    emitProvidersUpdated();
+
+    sendJson(
+      response,
+      200,
+      {
+        saved: true,
+        setupComplete: true,
+        validation,
+        providers: buildSetupProvidersPayload(),
+        accessPassword: {
+          configured: !auth.isUsingWeakDefaultPassword(),
+          isWeakDefault: auth.isUsingWeakDefaultPassword()
+        }
+      },
+      origin
+    );
+    return true;
+  }
+
+  sendJson(response, 405, { error: "Método não permitido." }, origin);
+  return true;
+}

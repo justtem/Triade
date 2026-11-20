@@ -196,6 +196,22 @@ export interface TurnVerdict {
   generatedAt: string;
 }
 
+export type AutoRouteCategory =
+  | "pdf"
+  | "image"
+  | "long_context"
+  | "complex_council"
+  | "debate"
+  | "quick"
+  | "quota_fallback";
+
+export interface AutoRouteDecision {
+  participants: AutoPlatform[];
+  reason: string;
+  category: AutoRouteCategory;
+  skippedForQuota?: AutoPlatform[];
+}
+
 export interface ChatTurn {
   id: string;
   index: number;
@@ -213,6 +229,8 @@ export interface ChatTurn {
   webSearchMode?: WebSearchMode;
   webSources?: WebSource[];
   projectContext?: ProjectContextUsed;
+  autoRoute?: AutoRouteDecision;
+  autoVerdict?: boolean;
   verdict?: TurnVerdict;
   conclusion?: string;
   createdAt: string;
@@ -310,6 +328,8 @@ export interface CreateDebateInput {
   webSources?: WebSource[];
   projectId?: string;
   resolvedProjectContext?: ResolvedProjectContext;
+  autoRoute?: AutoRouteDecision;
+  autoVerdict?: boolean;
 }
 
 export interface ContinueDebateInput {
@@ -324,6 +344,16 @@ export interface ContinueDebateInput {
   attachments?: ChatAttachment[];
   webSources?: WebSource[];
   resolvedProjectContext?: ResolvedProjectContext;
+  autoRoute?: AutoRouteDecision;
+  autoVerdict?: boolean;
+}
+
+export interface EditTurnInput {
+  message: string;
+  participants?: AIPlatform[];
+  webSources?: WebSource[];
+  resolvedProjectContext?: ResolvedProjectContext | null;
+  autoRoute?: AutoRouteDecision;
 }
 
 export interface SubmitResponseInput {

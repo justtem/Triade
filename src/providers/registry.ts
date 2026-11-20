@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { budgetForPlatform } from "../shared/context-budget.js";
 import type { AutoPlatform } from "../shared/debate-types.js";
+import { isValidApiKeyValue } from "../server/env-config.js";
 import { makeGemini } from "./gemini.js";
 import { makeOpenAICompat } from "./openai-compat.js";
 import type { Provider } from "./types.js";
@@ -78,7 +79,7 @@ function initGemini(): void {
   configuredModels.set("gemini", models);
 
   const apiKey = envString("GEMINI_API_KEY");
-  if (!apiKey) {
+  if (!isValidApiKeyValue(apiKey)) {
     issues.set("gemini", "GEMINI_API_KEY ausente no .env.");
     return;
   }
@@ -119,7 +120,7 @@ function initGroq(): void {
   configuredModels.set("groq", models);
 
   const apiKey = envString("GROQ_API_KEY");
-  if (!apiKey) {
+  if (!isValidApiKeyValue(apiKey)) {
     issues.set("groq", "GROQ_API_KEY ausente no .env.");
     return;
   }
@@ -163,7 +164,7 @@ function initOpenRouter(): void {
   configuredModels.set("openrouter", models);
 
   const apiKey = envString("OPENROUTER_API_KEY");
-  if (!apiKey) {
+  if (!isValidApiKeyValue(apiKey)) {
     issues.set("openrouter", "OPENROUTER_API_KEY ausente no .env.");
     return;
   }
@@ -216,6 +217,16 @@ export function initProviders(): void {
   initGemini();
   initGroq();
   initOpenRouter();
+}
+
+/** Recarrega imediatamente os provedores após salvar novas chaves no Setup guiado (hot-reload). */
+export function reinitProviders(): void {
+  providers.clear();
+  gates.clear();
+  issues.clear();
+  configuredModels.clear();
+  initialized = false;
+  initProviders();
 }
 
 export function getProvider(id: AutoPlatform): Provider | null {

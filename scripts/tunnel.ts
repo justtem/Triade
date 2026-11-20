@@ -2,7 +2,6 @@ import "dotenv/config";
 import { spawn } from "node:child_process";
 
 const PORT = Number(process.env.PORT) || 4317;
-const PASSWORD = process.env.ACCESS_PASSWORD?.trim() || "aicouncil2026";
 
 // Remove códigos ANSI que limpam a tela (\x1b[2J, \x1b[H, \x1bc, etc.)
 function stripAnsi(input: string): string {
@@ -13,16 +12,17 @@ function stripAnsi(input: string): string {
 }
 
 console.log("==========================================================");
-console.log("AI COUNCIL — TÚNEL HTTPS REMOTO PARA CELULAR");
+console.log("AI COUNCIL — TÚNEL HTTPS TEMPORÁRIO (localhost.run)");
 console.log("==========================================================");
+console.log("[SEGURANÇA] Para uso diário privado, prefira Tailscale Serve.");
 console.log(`Conectando túnel HTTPS para http://127.0.0.1:${PORT} ...`);
-console.log(`Senha para desbloquear no celular: ${PASSWORD}`);
+console.log("Desbloqueie no celular com a senha definida em ACCESS_PASSWORD no .env.");
 console.log("Aguarde 3 segundos enquanto o link HTTPS é gerado...\n");
 
 const sshArgs = [
   "-T",
   "-o",
-  "StrictHostKeyChecking=no",
+  "StrictHostKeyChecking=accept-new",
   "-o",
   "ServerAliveInterval=30",
   "-o",
@@ -55,9 +55,9 @@ function handleOutput(chunk: Buffer): void {
     if (match && match[0] !== printedUrl) {
       printedUrl = match[0];
       console.log("==========================================================");
-      console.log("✅ LINK HTTPS PRONTO PARA ABRIR NO CELULAR:");
-      console.log(`👉  ${printedUrl}`);
-      console.log(`🔒  Senha no site: ${PASSWORD}`);
+      console.log("LINK HTTPS PRONTO PARA ABRIR NO CELULAR:");
+      console.log(`  ${printedUrl}`);
+      console.log("  Autenticação: utilize sua senha ACCESS_PASSWORD do arquivo .env");
       console.log("==========================================================");
       console.log("(Mantenha este terminal aberto enquanto estiver usando no celular)\n");
     } else if (/permission denied|error:|failed/i.test(trimmed)) {

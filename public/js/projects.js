@@ -12,11 +12,11 @@ import { fetchJson, loadProjects, refreshDashboard } from "./api.js";
 import { escapeHtml } from "./markdown.js";
 
 const PROJECT_COLOR_HEX = {
-  iris: "#8D86F0",
-  sky: "#85C6FA",
-  saffron: "#F6E287",
-  rose: "#ED6C93",
-  emerald: "#4ADE80"
+  iris: "#9985ff",
+  sky: "#94dbff",
+  saffron: "#d6ca6f",
+  rose: "#ffa3c2",
+  emerald: "#e3e3e3"
 };
 
 export function getProjectColorHex(colorKey) {
@@ -144,30 +144,15 @@ export function renderProjectsSidebar() {
     dot.style.background = getProjectColorHex(proj.color);
     dot.setAttribute("aria-hidden", "true");
 
-    const nameGroup = document.createElement("span");
-    nameGroup.className = "project-nav-text";
-
     const nameSpan = document.createElement("span");
     nameSpan.className = "project-nav-name";
     nameSpan.textContent = proj.name;
-
-    const metaParts = [];
-    const fileCount = Array.isArray(proj.files) ? proj.files.length : 0;
-    if (fileCount > 0) metaParts.push(`${fileCount} arq`);
-    if (proj.linkedFolderPath) metaParts.push("pasta");
-    if (proj.instructions?.trim()) metaParts.push("regras");
-
-    const subSpan = document.createElement("span");
-    subSpan.className = "project-nav-sub";
-    subSpan.textContent = metaParts.join(" · ") || "sem arquivos";
-
-    nameGroup.append(nameSpan, subSpan);
 
     const chatCount = document.createElement("span");
     chatCount.className = "project-nav-count";
     chatCount.textContent = String(chatCountByProject.get(proj.id) || 0);
 
-    selectBtn.append(dot, nameGroup, chatCount);
+    selectBtn.append(dot, nameSpan, chatCount);
     selectBtn.addEventListener("click", () => selectProjectFilter(proj.id));
 
     const editBtn = document.createElement("button");

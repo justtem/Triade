@@ -6,6 +6,7 @@ import {
   RESPONSE_MODE_STORAGE_KEY,
   INTERACTION_MODE_STORAGE_KEY,
   SINGLE_AI_STORAGE_KEY,
+  AUTO_ROUTE_STORAGE_KEY,
   RESPONSE_MODE_LABELS,
   INTERACTION_MODE_LABELS,
   $,
@@ -24,12 +25,24 @@ import { fetchJson, loadPromptTemplates, refreshDashboard } from "./api.js";
 import { escapeHtml } from "./markdown.js";
 import { openImageLightbox } from "./motion.js";
 import { updateRightAiPanel } from "./telemetry.js";
+import { promptPrivacyShieldDecision } from "./user-memory.js";
 
 export function getSelectedParticipants() {
   return $$('input[name="participants"]:checked').map((cb) => cb.value);
 }
 
 export function getActiveResponderInfo() {
+  if (state.isAutoRouteMode) {
+    return {
+      key: "auto",
+      shortLabel: "Auto",
+      fullLabel: "Auto (Roteador Inteligente)",
+      isSingle: false,
+      isTrio: false,
+      isAuto: true
+    };
+  }
+
   const selected = getSelectedParticipants();
   const isTrio =
     selected.length === AUTO_PLATFORM_IDS.length &&
@@ -42,7 +55,8 @@ export function getActiveResponderInfo() {
       shortLabel: PLATFORMS[id] || id,
       fullLabel: PLATFORMS[id] || id,
       isSingle: true,
-      isTrio: false
+      isTrio: false,
+      isAuto: false
     };
   }
 
@@ -52,7 +66,8 @@ export function getActiveResponderInfo() {
       shortLabel: "Trio",
       fullLabel: "Trio (Gemini, Groq, OpenRouter)",
       isSingle: false,
-      isTrio: true
+      isTrio: true,
+      isAuto: false
     };
   }
 
@@ -61,30 +76,37 @@ export function getActiveResponderInfo() {
     shortLabel: `${selected.length} IAs`,
     fullLabel: selected.map((id) => PLATFORMS[id] || id).join(", ") || "Conselho",
     isSingle: false,
-    isTrio: false
+    isTrio: false,
+    isAuto: false
   };
 }
 
 export function syncAiSelectionUi() {
   const checkedValues = getSelectedParticipants();
-  const isSingle = state.isSingleAiMode || checkedValues.length === 1;
+  const isAuto = Boolean(state.isAutoRouteMode);
+  const isSingle = !isAuto && (state.isSingleAiMode || checkedValues.length === 1);
   const isTrio =
+    !isAuto &&
     !state.isSingleAiMode &&
     checkedValues.length === AUTO_PLATFORM_IDS.length &&
     AUTO_PLATFORM_IDS.every((id) => checkedValues.includes(id));
 
   const pillsGroup = $(".participant-pills");
   if (pillsGroup) {
-    pillsGroup.classList.toggle("is-single-mode", state.isSingleAiMode);
+    pillsGroup.classList.toggle("is-single-mode", !isAuto && state.isSingleAiMode);
+    pillsGroup.classList.toggle("is-auto-mode", isAuto);
   }
 
   for (const cb of $$('input[name="participants"]')) {
-    cb.closest(".participant-pill")?.classList.toggle("is-selected", cb.checked);
+    cb.closest(".participant-pill")?.classList.toggle("is-selected", !isAuto && cb.checked);
   }
 
   for (const btn of $$("#ai-preset-toggle .mode-seg-btn")) {
     const preset = btn.getAttribute("data-ai-preset");
-    const active = (preset === "single" && isSingle) || (preset === "trio" && isTrio);
+    const active =
+      (preset === "auto" && isAuto) ||
+      (preset === "single" && isSingle) ||
+      (preset === "trio" && isTrio);
     btn.classList.toggle("is-active", active);
     btn.setAttribute("aria-pressed", String(active));
   }
@@ -103,10 +125,25 @@ export function syncAiSelectionUi() {
   for (const item of $$(".topbar-ai-option")) {
     const optVal = item.getAttribute("data-ai-switch");
     const isMatch =
+      (optVal === "auto" && info.isAuto) ||
       (optVal === "trio" && info.isTrio) ||
       (info.isSingle && optVal === info.key);
     item.classList.toggle("is-active", isMatch);
   }
+}
+
+export function setAutoRouteMode(enabled = true) {
+  const next = Boolean(enabled);
+  state.isAutoRouteMode = next;
+  saveStoredOption(AUTO_ROUTE_STORAGE_KEY, next ? "on" : "off");
+  if (next) {
+    state.isSingleAiMode = false;
+    for (const cb of $$('input[name="participants"]')) {
+      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+    }
+  }
+  syncAiSelectionUi();
+  syncComposerModeUi();
 }
 
 export function setSelectedParticipants(platformIds, options = {}) {
@@ -116,6 +153,11 @@ export function setSelectedParticipants(platformIds, options = {}) {
     options.singleMode !== undefined
       ? Boolean(options.singleMode)
       : targetIds.length === 1;
+
+  if (!options.preserveAuto) {
+    state.isAutoRouteMode = false;
+    saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
+  }
 
   state.isSingleAiMode = nextSingle;
   const finalIds = nextSingle ? [targetIds[0]] : targetIds;
@@ -161,6 +203,10 @@ export function syncComposerWithDebate(debate) {
   }
 
   state.lastSyncedComposerDebateId = debate.id;
+  if (lastTurn?.autoRoute) {
+    setAutoRouteMode(true);
+    return;
+  }
   setSelectedParticipants(participants, {
     singleMode: participants.length === 1
   });
@@ -177,6 +223,13 @@ export function syncComposerModeUi() {
   for (const btn of $$("#interaction-mode-toggle .mode-seg-btn")) {
     const mode = btn.getAttribute("data-interaction-mode");
     const active = mode === state.selectedInteractionMode;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+
+  for (const btn of $$("#auto-verdict-toggle .mode-seg-btn")) {
+    const val = btn.getAttribute("data-auto-verdict");
+    const active = val === state.selectedAutoVerdict;
     btn.classList.toggle("is-active", active);
     btn.setAttribute("aria-pressed", String(active));
   }
@@ -199,7 +252,7 @@ export function syncComposerModeUi() {
     webBtn.setAttribute("aria-pressed", String(isWebAuto));
     const span = webBtn.querySelector("span");
     if (span) {
-      span.textContent = isWebAuto ? "Web: Auto" : "Web: Off";
+      span.textContent = isWebAuto ? "Web" : "Web off";
     }
   }
 
@@ -207,6 +260,18 @@ export function syncComposerModeUi() {
   const isContinuing = Boolean(activeDebate);
   const isRunningActive = Boolean(activeDebate && activeDebate.status === "running");
   const responder = getActiveResponderInfo();
+
+  const summaryEl = $("#composer-config-summary");
+  if (summaryEl) {
+    const modeShort =
+      state.selectedInteractionMode === "debate"
+        ? `Debate ${$("#debate-rounds")?.value || 2}x`
+        : state.selectedResponseMode === "prompt_markdown"
+          ? "Prompt MD"
+          : "Normal";
+    const verdictSuffix = state.selectedAutoVerdict === "on" ? " · Veredito" : "";
+    summaryEl.textContent = `${responder.shortLabel} · ${modeShort}${verdictSuffix}`;
+  }
   const submitBtn = $("#composer-submit-btn");
   const submitSpan = $("#composer-submit-btn span:first-child");
   const submitArrow = $("#composer-submit-btn .cta-arrow");
@@ -306,16 +371,22 @@ export async function handleCreateDebate(event) {
   }
 
   const checkboxes = $$('input[name="participants"]:checked');
-  const participants = checkboxes.map((cb) => cb.value);
+  const participants = state.isAutoRouteMode
+    ? [...AUTO_PLATFORM_IDS]
+    : checkboxes.map((cb) => cb.value);
 
-  if (state.selectedInteractionMode === "debate" && participants.length < 2) {
+  if (
+    !state.isAutoRouteMode &&
+    state.selectedInteractionMode === "debate" &&
+    participants.length < 2
+  ) {
     if (feedback) {
       feedback.textContent = "Debate exige ao menos 2 IAs.";
     }
     return;
   }
 
-  if (participants.length < 1) {
+  if (!state.isAutoRouteMode && participants.length < 1) {
     if (feedback) {
       feedback.textContent = "Selecione ao menos 1 IA.";
     }
@@ -373,42 +444,82 @@ export async function handleCreateDebate(event) {
           : "Enviando...";
     }
 
-    const result = currentDebate
-      ? await fetchJson(`/debates/${currentDebate.id}/message`, {
-          method: "POST",
-          timeoutMs: 32000,
-          body: {
-            message: topicValue,
-            rules: rules || undefined,
-            participants,
-            totalRounds,
-            focus,
-            responseMode: state.selectedResponseMode,
-            interactionMode: state.selectedInteractionMode,
-            webSearchMode: state.selectedWebSearchMode,
-            attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
-          }
-        })
-      : await fetchJson("/debates", {
-          method: "POST",
-          timeoutMs: 32000,
-          body: {
-            title: finalTitle,
-            topic: topicValue,
-            rules: rules || undefined,
-            participants,
-            totalRounds,
-            focus,
-            responseMode: state.selectedResponseMode,
-            interactionMode: state.selectedInteractionMode,
-            webSearchMode: state.selectedWebSearchMode,
-            projectId:
-              state.activeNewChatProjectId ||
-              state.selectedProjectFilterId ||
-              undefined,
-            attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
-          }
-        });
+    const routingMode = state.isAutoRouteMode ? "auto" : "manual";
+    const autoVerdict = state.selectedAutoVerdict === "on";
+
+    const sendRequest = (privacyAction) =>
+      currentDebate
+        ? fetchJson(`/debates/${currentDebate.id}/message`, {
+            method: "POST",
+            timeoutMs: 32000,
+            body: {
+              message: topicValue,
+              rules: rules || undefined,
+              participants,
+              routingMode,
+              autoVerdict,
+              totalRounds,
+              focus,
+              responseMode: state.selectedResponseMode,
+              interactionMode: state.selectedInteractionMode,
+              webSearchMode: state.selectedWebSearchMode,
+              attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
+              ...(privacyAction ? { privacyAction } : {})
+            }
+          })
+        : fetchJson("/debates", {
+            method: "POST",
+            timeoutMs: 32000,
+            body: {
+              title: finalTitle,
+              topic: topicValue,
+              rules: rules || undefined,
+              participants,
+              routingMode,
+              autoVerdict,
+              totalRounds,
+              focus,
+              responseMode: state.selectedResponseMode,
+              interactionMode: state.selectedInteractionMode,
+              webSearchMode: state.selectedWebSearchMode,
+              projectId:
+                state.activeNewChatProjectId ||
+                state.selectedProjectFilterId ||
+                undefined,
+              attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
+              ...(privacyAction ? { privacyAction } : {})
+            }
+          });
+
+    let result;
+    try {
+      result = await sendRequest(undefined);
+    } catch (firstErr) {
+      if (
+        firstErr?.status === 409 &&
+        firstErr?.data?.code === "PRIVACY_SHIELD_WARNING"
+      ) {
+        state.optimisticSubmission = null;
+        uiHooks.renderChatStage();
+        updateRightAiPanel();
+        if (feedback) feedback.textContent = "";
+
+        const decision = await promptPrivacyShieldDecision(firstErr.data.findings);
+        if (decision === "cancel") {
+          topicInput?.focus();
+          return;
+        }
+        if (feedback) {
+          feedback.textContent =
+            decision === "mask"
+              ? "Mascarando dados sensíveis e enviando..."
+              : "Enviando...";
+        }
+        result = await sendRequest(decision);
+      } else {
+        throw firstErr;
+      }
+    }
 
     state.optimisticSubmission = null;
     state.pendingAttachments = [];
@@ -432,7 +543,18 @@ export async function handleCreateDebate(event) {
     }
 
     if (feedback) {
-      feedback.textContent = "";
+      const shieldInfo = result?.privacyShield;
+      const autoMasked =
+        (Number(shieldInfo?.attachmentsMaskedCount) || 0) +
+        (Number(shieldInfo?.projectMaskedCount) || 0);
+      if (shieldInfo?.promptMasked || autoMasked > 0) {
+        feedback.textContent =
+          autoMasked > 0
+            ? `Escudo de Privacidade protegeu ${autoMasked} dado(s) em anexos/projeto.`
+            : "Escudo de Privacidade mascarou os dados sensíveis antes do envio.";
+      } else {
+        feedback.textContent = "";
+      }
     }
 
     state.lastDebatesSignature = "";
