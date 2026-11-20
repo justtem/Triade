@@ -8,8 +8,25 @@ import {
 
 const MAX_RETRY_AFTER_MS = 30_000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(
+      new ProviderError("aborted", "Geração interrompida pelo usuário.")
+    );
+  }
+  return new Promise((resolveSleep, rejectSleep) => {
+    const onAbort = () => {
+      clearTimeout(timerId);
+      rejectSleep(
+        new ProviderError("aborted", "Geração interrompida pelo usuário.")
+      );
+    };
+    const timerId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolveSleep();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** Estimativa conservadora (≈3 caracteres por token) do consumo de uma chamada. */
@@ -26,6 +43,7 @@ export interface ModelCallResult {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  groundingSources?: Array<{ title: string; url: string }>;
 }
 
 /**
@@ -54,14 +72,21 @@ export async function runWithFallback(args: {
   let lastError: ProviderError | null = null;
 
   for (let attempt = 0; attempt < maxHttpAttempts; attempt++) {
+    if (request.signal?.aborted) {
+      throw new ProviderError("aborted", "Geração interrompida pelo usuário.");
+    }
     if (attempt > 0) {
       request.onReset?.();
     }
     const model = models[attempt % models.length] as string;
-    const ticket = await gate.acquire(estimate);
+    const ticket = await gate.acquire(estimate, request.signal);
 
     try {
       const result = await call(model);
+      if (request.signal?.aborted) {
+        ticket.settle(result.totalTokens ?? 0);
+        throw new ProviderError("aborted", "Geração interrompida pelo usuário.");
+      }
       const text = result.text.trim();
 
       ticket.settle(result.totalTokens ?? estimate);
@@ -74,15 +99,25 @@ export async function runWithFallback(args: {
           model,
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
-          totalTokens: result.totalTokens
+          totalTokens: result.totalTokens,
+          ...(result.groundingSources && result.groundingSources.length > 0
+            ? { groundingSources: result.groundingSources }
+            : {})
         };
       }
     } catch (error) {
       ticket.settle(0);
+      if (request.signal?.aborted) {
+        throw new ProviderError("aborted", "Geração interrompida pelo usuário.");
+      }
       const classified = classifyError(error);
       lastError = classified;
 
-      if (classified.kind === "auth" || classified.kind === "quota_exhausted") {
+      if (
+        classified.kind === "aborted" ||
+        classified.kind === "auth" ||
+        classified.kind === "quota_exhausted"
+      ) {
         throw classified;
       }
 
@@ -102,7 +137,7 @@ export async function runWithFallback(args: {
               ? 1_500 * (attempt + 1)
               : 300;
 
-        await sleep(delay);
+        await sleep(delay, request.signal);
       }
     }
   }

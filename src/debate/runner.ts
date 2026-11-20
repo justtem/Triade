@@ -4,6 +4,7 @@ import {
   getDebateSessionById,
   getPendingMemoryCompaction,
   listDebateSummaries,
+  mergeTurnWebSources,
   PLATFORM_NAMES,
   recordTaskFailure,
   RECENT_FULL_TURNS,
@@ -15,6 +16,7 @@ import {
 import {
   emitProvidersUpdated,
   endTaskStream,
+  getActiveStreams,
   pushTaskStreamDelta,
   resetTaskStream,
   startTaskStream
@@ -26,8 +28,8 @@ import {
   initProviders
 } from "../providers/registry.js";
 
-import { classifyError } from "../providers/types.js";
-import { isAutoPlatform, type DebateTask } from "../shared/debate-types.js";
+import { classifyError, type ProviderMediaPart } from "../providers/types.js";
+import { isAutoPlatform, type DebateSession, type DebateTask } from "../shared/debate-types.js";
 
 const TICK_MS = 2_500;
 // Cada tarefa já faz até 2-3 tentativas HTTP dentro do provedor (e cada uma conta
@@ -38,9 +40,45 @@ const MEMORY_RETRY_COOLDOWN_MS = 120_000;
 const MAX_CHAINED_PASSES = 12;
 
 const inFlight = new Set<string>();
+const activeControllers = new Map<
+  string,
+  { debateId: string; controller: AbortController; partialText: string }
+>();
 const retryNotBefore = new Map<string, number>();
 const memoryInFlight = new Set<string>();
 const memoryRetryNotBefore = new Map<string, number>();
+
+/**
+ * Cancela instantaneamente todas as requisições HTTP/stream em andamento de uma
+ * conversa via AbortController e devolve o texto parcial já gerado por cada task.
+ */
+export function abortDebateTasks(debateId: string): Map<string, string> {
+  const partials = new Map<string, string>();
+
+  for (const stream of getActiveStreams(debateId)) {
+    if (stream.content && stream.content.trim().length > 0) {
+      partials.set(stream.taskId, stream.content);
+    }
+    endTaskStream(debateId, stream.taskId);
+  }
+
+  for (const [taskId, entry] of activeControllers.entries()) {
+    if (entry.debateId !== debateId) continue;
+    const prev = partials.get(taskId) ?? "";
+    if (entry.partialText.length > prev.length) {
+      partials.set(taskId, entry.partialText);
+    }
+    try {
+      entry.controller.abort();
+    } catch {
+      // Ignora erro de aborto duplicado
+    }
+    endTaskStream(debateId, taskId);
+    activeControllers.delete(taskId);
+  }
+
+  return partials;
+}
 
 let timer: NodeJS.Timeout | undefined;
 let ticking = false;
@@ -50,7 +88,34 @@ let rerunRequested = false;
 // Execução de uma tarefa automática
 // ---------------------------------------------------------------
 
-async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
+function extractTaskMedia(session: DebateSession | null, task: DebateTask): ProviderMediaPart[] {
+  if (!session || task.stage !== "initial_response") return [];
+  const turn =
+    (task.turnId ? session.turns?.find((t) => t.id === task.turnId) : undefined) ??
+    session.turns?.at(-1);
+  if (!turn?.attachments?.length) return [];
+
+  return turn.attachments
+    .filter(
+      (att): att is typeof att & { kind: "image" | "pdf"; mimeType: string; dataBase64: string } =>
+        (att.kind === "image" || att.kind === "pdf") &&
+        typeof att.mimeType === "string" &&
+        typeof att.dataBase64 === "string" &&
+        att.dataBase64.length > 0
+    )
+    .map((att) => ({
+      name: att.name,
+      kind: att.kind,
+      mimeType: att.mimeType,
+      dataBase64: att.dataBase64
+    }));
+}
+
+async function runTask(
+  debateId: string,
+  task: DebateTask,
+  session: DebateSession | null = null
+): Promise<boolean> {
   inFlight.add(task.id);
 
   try {
@@ -75,6 +140,9 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
 
     let result;
     let streamStarted = false;
+    const controller = new AbortController();
+    const controllerEntry = { debateId, controller, partialText: "" };
+    activeControllers.set(task.id, controllerEntry);
 
     try {
       startTaskStream({
@@ -88,12 +156,38 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
       });
       streamStarted = true;
 
+      const media = extractTaskMedia(session, task);
+      const activeTurn =
+        (task.turnId ? session?.turns?.find((t) => t.id === task.turnId) : undefined) ??
+        session?.turns?.at(-1);
+      // Só aciona o Google Search Grounding nativo do Gemini se explicitamente habilitado no .env
+      // (no Free Tier do AI Studio o tool googleSearch tem cota muito menor que a busca gratuita local)
+      const allowGeminiGrounding = process.env.GEMINI_WEB_GROUNDING === "true";
+      const enableWebGrounding =
+        allowGeminiGrounding &&
+        platform === "gemini" &&
+        task.stage === "initial_response" &&
+        activeTurn?.webSearchMode !== "off" &&
+        (activeTurn?.webSources?.length ?? 0) === 0 &&
+        media.length === 0;
+
       result = await provider.generate({
         system: task.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
         user: task.userPrompt ?? task.prompt,
         maxTokens: task.maxTokens ?? 1100,
-        onDelta: (delta) => pushTaskStreamDelta(debateId, task.id, delta),
-        onReset: () => resetTaskStream(debateId, task.id)
+        signal: controller.signal,
+        ...(enableWebGrounding ? { enableWebGrounding: true } : {}),
+        ...(media.length > 0 ? { media } : {}),
+        onDelta: (delta) => {
+          if (controller.signal.aborted) return;
+          controllerEntry.partialText += delta;
+          pushTaskStreamDelta(debateId, task.id, delta);
+        },
+        onReset: () => {
+          if (controller.signal.aborted) return;
+          controllerEntry.partialText = "";
+          resetTaskStream(debateId, task.id);
+        }
       });
     } catch (error) {
       if (streamStarted) {
@@ -101,6 +195,13 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
       }
       emitProvidersUpdated();
       const failure = classifyError(error);
+
+      if (controller.signal.aborted || failure.kind === "aborted") {
+        console.log(
+          `[AI Council] ${label} interrompido manualmente pelo usuário (${controllerEntry.partialText.length} chars parciais).`
+        );
+        return false;
+      }
 
       if (failure.kind === "rate_limit" || failure.kind === "quota_exhausted") {
         const { pausedDebateIds } = await applyLimitSignalToDebates(
@@ -137,6 +238,13 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
       return false;
     }
 
+    if (controller.signal.aborted) {
+      if (streamStarted) {
+        endTaskStream(debateId, task.id);
+      }
+      return false;
+    }
+
     try {
       await submitDebateTaskResponse(
         debateId,
@@ -147,6 +255,9 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
           tokens: result.totalTokens
         }
       );
+      if (result.groundingSources && result.groundingSources.length > 0) {
+        await mergeTurnWebSources(debateId, task.turnId, result.groundingSources);
+      }
     } catch (error) {
       console.error(
         "[AI Council] Resposta recebida mas não registrada:",
@@ -166,6 +277,7 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
 
     return true;
   } finally {
+    activeControllers.delete(task.id);
     inFlight.delete(task.id);
   }
 }
@@ -251,7 +363,7 @@ async function processOnce(): Promise<boolean> {
 
     // Provedores diferentes em paralelo; cada um respeita o próprio UsageGate.
     const outcomes = await Promise.all(
-      pending.map((task) => runTask(session.id, task))
+      pending.map((task) => runTask(session.id, task, session))
     );
 
     if (outcomes.some(Boolean)) {

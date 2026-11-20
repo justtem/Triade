@@ -86,12 +86,73 @@ export interface DebateTask {
   lastError?: string;
   /** Quando true, concluir esta tarefa finaliza o turno sem gerar novas rodadas/síntese. */
   singleTaskOnly?: boolean;
+  /** Quando true, a tarefa foi interrompida manualmente pelo usuário (Stop). */
+  interrupted?: boolean;
 }
+
+export type AttachmentKind = "text" | "image" | "pdf";
 
 export interface ChatAttachment {
   name: string;
   content: string;
   size: number;
+  kind?: AttachmentKind;
+  mimeType?: string;
+  dataBase64?: string;
+}
+
+export interface PromptTemplate {
+  id: string;
+  tag: string;
+  title: string;
+  prompt: string;
+  rules?: string;
+  focus: DebateFocus;
+  responseMode: ResponseMode;
+  interactionMode: InteractionMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ProjectFileKind = "text" | "pdf";
+
+export interface ProjectFileMeta {
+  id: string;
+  name: string;
+  kind: ProjectFileKind;
+  mimeType?: string;
+  size: number;
+  charCount: number;
+  uploadedAt: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+  instructions: string;
+  linkedFolderPath?: string;
+  files: ProjectFileMeta[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectContextChunk {
+  sourceName: string;
+  origin: "upload" | "folder";
+  filePath?: string;
+  snippet: string;
+  score: number;
+}
+
+export interface ProjectContextUsed {
+  projectId: string;
+  projectName: string;
+  instructionsApplied: boolean;
+  mode: "full" | "bm25";
+  totalFilesScanned: number;
+  chunks: ProjectContextChunk[];
 }
 
 export interface DebateResponse {
@@ -106,6 +167,33 @@ export interface DebateResponse {
   submittedAt: string;
   model?: string;
   tokens?: number;
+  /** Quando true, representa o texto parcial preservado ao clicar em Parar. */
+  interrupted?: boolean;
+}
+
+export type WebSearchMode = "auto" | "off";
+
+export interface WebSource {
+  index: number;
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+  excerpt?: string;
+  origin: "url" | "search" | "grounding";
+  fetchedOk?: boolean;
+}
+
+export interface TurnVerdict {
+  judgePlatform: AutoPlatform;
+  judgeModel?: string;
+  winner: AIPlatform | "tie";
+  winnerReason: string;
+  consensus: string[];
+  divergences: string[];
+  practicalSummary: string;
+  tokens?: number;
+  generatedAt: string;
 }
 
 export interface ChatTurn {
@@ -122,6 +210,10 @@ export interface ChatTurn {
   currentStage: DebateStage;
   status: DebateStatus;
   attachments?: ChatAttachment[];
+  webSearchMode?: WebSearchMode;
+  webSources?: WebSource[];
+  projectContext?: ProjectContextUsed;
+  verdict?: TurnVerdict;
   conclusion?: string;
   createdAt: string;
   completedAt?: string;
@@ -163,6 +255,8 @@ export interface DebateSession {
   focus?: DebateFocus;
   responseMode?: ResponseMode;
   interactionMode?: InteractionMode;
+  pinned?: boolean;
+  projectId?: string;
   turns?: ChatTurn[];
   sharedMemory?: SharedMemoryState;
 
@@ -182,12 +276,24 @@ export interface DebateSummary {
   focus?: DebateFocus;
   responseMode?: ResponseMode;
   interactionMode?: InteractionMode;
+  pinned?: boolean;
+  projectId?: string;
   turnCount: number;
   sharedMemoryTurns?: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
   engineVersion?: number;
+}
+
+export interface ProjectResolvedChunk extends ProjectContextChunk {
+  content: string;
+}
+
+export interface ResolvedProjectContext {
+  meta: ProjectContextUsed;
+  instructions: string;
+  chunks: ProjectResolvedChunk[];
 }
 
 export interface CreateDebateInput {
@@ -199,7 +305,11 @@ export interface CreateDebateInput {
   focus?: DebateFocus;
   responseMode?: ResponseMode;
   interactionMode?: InteractionMode;
+  webSearchMode?: WebSearchMode;
   attachments?: ChatAttachment[];
+  webSources?: WebSource[];
+  projectId?: string;
+  resolvedProjectContext?: ResolvedProjectContext;
 }
 
 export interface ContinueDebateInput {
@@ -210,7 +320,10 @@ export interface ContinueDebateInput {
   focus?: DebateFocus;
   responseMode?: ResponseMode;
   interactionMode?: InteractionMode;
+  webSearchMode?: WebSearchMode;
   attachments?: ChatAttachment[];
+  webSources?: WebSource[];
+  resolvedProjectContext?: ResolvedProjectContext;
 }
 
 export interface SubmitResponseInput {

@@ -4,12 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#181818">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AI Council">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
     <title>AI Council — Intelligence Hub</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Oswald:wght@700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
-    <script src="dashboard.js" defer></script>
+    <link rel="stylesheet" href="styles.css?v=20261120d">
+    <script type="module" src="dashboard.js?v=20261120d"></script>
 </head>
 <body>
 
@@ -87,6 +95,196 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- MODAL: BIBLIOTECA DE PROMPTS / TEMPLATES EDITÁVEIS -->
+    <div class="memory-modal-overlay" id="templates-modal" hidden>
+        <div class="memory-modal-card templates-modal-card" role="dialog" aria-modal="true" aria-labelledby="templates-modal-title">
+            <div class="memory-modal-header">
+                <div class="memory-modal-title-group">
+                    <span class="eyebrow">BIBLIOTECA DE PROMPTS</span>
+                    <h3 id="templates-modal-title">Templates Salvos</h3>
+                </div>
+                <div class="templates-header-actions">
+                    <button type="button" class="btn-secondary" id="templates-new-btn">+ Novo Template</button>
+                    <button type="button" class="icon-btn" id="templates-modal-close" aria-label="Fechar">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="templates-modal-body">
+                <div class="templates-list-pane">
+                    <div class="templates-list" id="templates-modal-list" role="list"></div>
+                </div>
+
+                <form class="templates-editor-pane" id="template-editor-form" novalidate>
+                    <div class="templates-editor-heading">
+                        <span class="eyebrow" id="tpl-editor-mode-label">NOVO TEMPLATE</span>
+                        <button type="button" class="btn-ghost-pill" id="tpl-reset-btn" hidden>Cancelar edição</button>
+                    </div>
+
+                    <div class="templates-editor-row-2">
+                        <div class="form-group">
+                            <label for="tpl-title">Título</label>
+                            <input type="text" id="tpl-title" placeholder="Ex.: Revisão de Código" maxlength="90" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="tpl-tag">Categoria / Tag</label>
+                            <input type="text" id="tpl-tag" placeholder="Ex.: CÓDIGO // REVIEW" maxlength="40">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tpl-prompt">Prompt</label>
+                        <textarea id="tpl-prompt" rows="5" placeholder="Digite o prompt reutilizável que será inserido no chat..." required></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tpl-rules">Instruções extras (opcional)</label>
+                        <input type="text" id="tpl-rules" placeholder="Ex.: Responda em tópicos curtos, foque em segurança..." maxlength="300">
+                    </div>
+
+                    <div class="templates-editor-row-3">
+                        <div class="form-group">
+                            <label for="tpl-response-mode">Formato</label>
+                            <select id="tpl-response-mode">
+                                <option value="normal">Normal</option>
+                                <option value="prompt_markdown">Prompt MD</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="tpl-interaction-mode">Dinâmica</label>
+                            <select id="tpl-interaction-mode">
+                                <option value="direct">Direto</option>
+                                <option value="debate">Debate</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="tpl-focus">Foco</label>
+                            <select id="tpl-focus">
+                                <option value="geral">Geral</option>
+                                <option value="backend">Backend</option>
+                                <option value="frontend">Frontend</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="templates-editor-footer">
+                        <span class="form-feedback" id="templates-modal-feedback" role="status"></span>
+                        <button type="submit" class="btn-primary" id="tpl-save-btn">
+                            <span>Salvar Template</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: GERENCIAR PROJETO / CÉREBRO LOCAL -->
+    <div class="memory-modal-overlay" id="project-modal" hidden>
+        <div class="memory-modal-card project-modal-card" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
+            <div class="memory-modal-header">
+                <div class="memory-modal-title-group">
+                    <span class="eyebrow">CÉREBRO LOCAL // PROJETO</span>
+                    <h3 id="project-modal-title">Novo Projeto</h3>
+                </div>
+                <button type="button" class="icon-btn" id="project-modal-close" aria-label="Fechar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <form class="project-modal-form" id="project-editor-form" novalidate>
+                <div class="project-form-row-2">
+                    <div class="form-group">
+                        <label for="proj-name">Nome do Projeto</label>
+                        <input type="text" id="proj-name" placeholder="Ex.: Backend Fintech, TCC, Casa..." maxlength="80" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Cor na barra lateral</label>
+                        <input type="hidden" id="proj-color" value="iris">
+                        <div class="project-color-picker" role="radiogroup" aria-label="Cor do projeto">
+                            <button type="button" class="project-color-swatch is-selected" data-proj-color="iris" style="--swatch:#8D86F0" title="Íris"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="sky" style="--swatch:#85C6FA" title="Azul Sky"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="saffron" style="--swatch:#F6E287" title="Saffron"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="rose" style="--swatch:#ED6C93" title="Rose"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="emerald" style="--swatch:#4ADE80" title="Esmeralda"></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="proj-description">Descrição curta (opcional)</label>
+                    <input type="text" id="proj-description" placeholder="Ex.: API Node/TS com regras de negócio e contratos" maxlength="240">
+                </div>
+
+                <div class="form-group">
+                    <label for="proj-instructions">Instruções fixas do Projeto (enviadas automaticamente em todas as conversas)</label>
+                    <textarea id="proj-instructions" rows="4" placeholder="Ex.: Sempre responda usando TypeScript ESM, banco PostgreSQL, sem ORM pesado e seguindo padrões de segurança OWASP..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="proj-folder-path">Pasta local do PC vinculada (opcional · somente leitura)</label>
+                    <div class="project-folder-row">
+                        <input type="text" id="proj-folder-path" placeholder="Ex.: C:\Users\miguel\projetos\meu-app" maxlength="500">
+                        <button type="button" class="btn-secondary" id="proj-test-folder-btn">Testar Pasta</button>
+                    </div>
+                    <small class="project-folder-hint">
+                        Somente leitura. Bloqueia automaticamente <code>.env</code>, chaves (<code>*.key</code>, <code>*.pem</code>), <code>.git</code>, <code>node_modules</code>, <code>dist</code> e binários.
+                    </small>
+                    <div class="project-folder-feedback" id="proj-folder-feedback" role="status"></div>
+                </div>
+
+                <div class="project-files-section" id="project-files-section">
+                    <div class="project-files-header">
+                        <div>
+                            <label>Base de Arquivos do Projeto (PC &amp; Celular)</label>
+                            <small>PDFs (texto extraído automaticamente), Markdown, TXT, JSON, CSV e código.</small>
+                        </div>
+                        <button type="button" class="btn-secondary" id="proj-upload-btn">+ Enviar Arquivos</button>
+                        <input
+                            type="file"
+                            id="proj-file-input"
+                            multiple
+                            hidden
+                            accept=".pdf,.md,.txt,.ts,.tsx,.js,.jsx,.json,.yml,.yaml,.csv,.sql,.py,.java,.go,.rs,.html,.css,.xml,.sh,.ps1"
+                        >
+                    </div>
+                    <div class="project-files-list" id="project-files-list"></div>
+                </div>
+
+                <div class="memory-modal-footer project-modal-footer">
+                    <span class="form-feedback" id="project-modal-feedback" role="status"></span>
+                    <div class="memory-modal-actions">
+                        <button type="button" class="btn-ghost-pill btn-danger-ghost" id="proj-delete-btn" hidden>Excluir</button>
+                        <button type="button" class="btn-ghost-pill" id="proj-cancel-btn">Fechar</button>
+                        <button type="submit" class="btn-primary" id="proj-save-btn">
+                            <span>Criar Projeto</span>
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- LIGHTBOX PARA VISUALIZAR IMAGENS ANEXADAS NO CHAT -->
+    <div class="image-lightbox-overlay" id="image-lightbox-modal" hidden>
+        <button type="button" class="icon-btn image-lightbox-close" id="image-lightbox-close" aria-label="Fechar imagem">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </button>
+        <figure class="image-lightbox-figure">
+            <img id="image-lightbox-img" src="" alt="Imagem anexada">
+            <figcaption id="image-lightbox-caption"></figcaption>
+        </figure>
     </div>
 
     <div class="app-container" id="app-shell">
@@ -167,7 +365,25 @@
                 </nav>
             </div>
 
-            <!-- SEÇÃO COLAPSÁVEL 2: CONVERSAS / DEBATES -->
+            <!-- SEÇÃO COLAPSÁVEL 2: PROJETOS / PASTAS COM CÉREBRO LOCAL -->
+            <div class="sidebar-section sidebar-projects" data-sidebar-section="projects">
+                <div class="sidebar-section-header-row">
+                    <button type="button" class="sidebar-section-toggle" data-toggle-section="projects" aria-expanded="true">
+                        <span class="nav-label">PROJETOS</span>
+                        <div class="sidebar-toggle-right">
+                            <span class="sidebar-counter" id="sidebar-projects-count">0</span>
+                            <svg class="section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                        </div>
+                    </button>
+                    <button type="button" class="sidebar-project-add-btn" id="sidebar-new-project-btn" title="Criar novo Projeto com instruções fixas e arquivos locais">+ Novo</button>
+                </div>
+
+                <div class="projects-list sidebar-section-body" id="sidebar-projects-list" role="list"></div>
+            </div>
+
+            <!-- SEÇÃO COLAPSÁVEL 3: CONVERSAS / DEBATES -->
             <div class="sidebar-section sidebar-conversations" data-sidebar-section="debates">
                 <button type="button" class="sidebar-section-toggle" data-toggle-section="debates" aria-expanded="true">
                     <span class="nav-label">CONVERSAS / DEBATES</span>
@@ -178,6 +394,24 @@
                         </svg>
                     </div>
                 </button>
+
+                <div class="sidebar-search-wrap sidebar-section-body">
+                    <span class="sidebar-search-icon" aria-hidden="true">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="7"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                    </span>
+                    <input
+                        type="search"
+                        id="sidebar-search-input"
+                        class="sidebar-search-input"
+                        placeholder="Buscar conversas..."
+                        autocomplete="off"
+                        aria-label="Buscar conversas por título ou conteúdo"
+                    >
+                    <button type="button" class="sidebar-search-clear" id="sidebar-search-clear" aria-label="Limpar busca" hidden>×</button>
+                </div>
 
                 <div class="conversation-list sidebar-section-body" id="sidebar-debate-list" role="list">
                     <div class="sidebar-empty">
@@ -315,6 +549,9 @@
                                 <div class="h-scroll-header">
                                     <span class="h-scroll-eyebrow">BLUEPRINTS &amp; SESSÕES RÁPIDAS // HORIZONTAL SCROLL</span>
                                     <div class="h-scroll-controls">
+                                        <button type="button" class="btn-ghost-pill zero-manage-tpl-btn" id="zero-manage-templates-btn" title="Gerenciar biblioteca de templates">
+                                            <span>Templates</span>
+                                        </button>
                                         <div class="h-scroll-mini-progress" aria-hidden="true">
                                             <div class="h-scroll-mini-fill" id="zero-h-progress-fill"></div>
                                         </div>
@@ -335,9 +572,87 @@
 
                 </div>
 
+                <!-- BOTÃO FLUTUANTE DE AUTO-SCROLL INTELIGENTE (VISÍVEL SE HOUVER NOVA RESPOSTA ENQUANTO VOCÊ LÊ ACIMA) -->
+                <button type="button" class="scroll-to-latest-pill" id="scroll-to-latest-btn" hidden aria-label="Rolar para a nova resposta">
+                    <span class="scroll-pill-arrow" aria-hidden="true">↓</span>
+                    <span class="scroll-pill-text">Nova resposta</span>
+                </button>
+
+                <!-- MINI PLAYER FLUTUANTE DE VOZ NEURAL (EDGE TTS + MODO OUVIR CONSELHO) -->
+                <div class="voice-player-dock" id="voice-player-dock" hidden role="region" aria-label="Player de voz do AI Council">
+                    <div class="voice-player-bar">
+                        <div class="voice-player-identity">
+                            <span class="voice-player-icon" id="voice-player-icon" aria-hidden="true"></span>
+                            <div class="voice-player-titles">
+                                <strong id="voice-player-speaker">AI Council</strong>
+                                <small id="voice-player-meta">Voz neural</small>
+                            </div>
+                        </div>
+
+                        <div class="voice-player-progress-wrap">
+                            <div class="voice-player-progress" id="voice-player-progress" title="Clique para avançar ou voltar">
+                                <div class="voice-player-progress-fill" id="voice-player-progress-fill" style="width: 0%"></div>
+                            </div>
+                            <span class="voice-player-time" id="voice-player-time">0:00</span>
+                        </div>
+
+                        <div class="voice-player-controls">
+                            <button type="button" class="icon-btn voice-ctrl-btn" id="voice-player-playpause" title="Pausar / Continuar">❚❚</button>
+                            <button type="button" class="icon-btn voice-ctrl-btn" id="voice-player-next" title="Pular para próxima IA" hidden>⏭</button>
+                            <button type="button" class="btn-ghost-pill voice-speed-btn" id="voice-player-speed" title="Alterar velocidade de fala">1x</button>
+                            <button type="button" class="icon-btn voice-ctrl-btn" id="voice-player-settings" title="Personalizar voz de cada IA">⚙</button>
+                            <button type="button" class="icon-btn voice-ctrl-btn" id="voice-player-close" title="Parar e fechar player">×</button>
+                        </div>
+                    </div>
+
+                    <!-- POPOVER: PERSONALIZAR VOZ DE CADA IA -->
+                    <div class="voice-cast-popover" id="voice-cast-popover" hidden>
+                        <div class="voice-cast-header">
+                            <span class="eyebrow">VOZES NEURAIS POR IA</span>
+                        </div>
+                        <div class="voice-cast-grid">
+                            <label>
+                                <span>Gemini</span>
+                                <select id="voice-cast-gemini">
+                                    <option value="thalita">Thalita (Multilíngue)</option>
+                                    <option value="antonio">Antônio (Firme)</option>
+                                    <option value="francisca">Francisca (Expressiva)</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span>Groq</span>
+                                <select id="voice-cast-groq">
+                                    <option value="thalita">Thalita (Multilíngue)</option>
+                                    <option value="antonio">Antônio (Firme)</option>
+                                    <option value="francisca">Francisca (Expressiva)</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span>OpenRouter</span>
+                                <select id="voice-cast-openrouter">
+                                    <option value="thalita">Thalita (Multilíngue)</option>
+                                    <option value="antonio">Antônio (Firme)</option>
+                                    <option value="francisca">Francisca (Expressiva)</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span>Juiz / Veredito</span>
+                                <select id="voice-cast-judge">
+                                    <option value="thalita">Thalita (Multilíngue)</option>
+                                    <option value="antonio">Antônio (Firme)</option>
+                                    <option value="francisca">Francisca (Expressiva)</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- COMPOSER FIXO NA BASE: AI PROMPT PANEL ESTRITAMENTE ESSENCIAL -->
                 <div class="composer-dock" id="composer-dock">
                     <form id="create-debate-form" class="composer-card" novalidate>
+
+                        <!-- PÍLULA DO PROJETO ATIVO (CÉREBRO LOCAL) -->
+                        <div class="composer-project-bar" id="composer-project-bar" hidden></div>
 
                         <!-- ANEXOS DE ARQUIVO (PÍLULAS REMOVÍVEIS) -->
                         <div class="composer-attachments-bar" id="composer-attachments-bar" hidden></div>
@@ -346,8 +661,16 @@
                             id="composer-file-input"
                             multiple
                             hidden
-                            accept=".txt,.md,.js,.ts,.jsx,.tsx,.json,.html,.css,.java,.py,.sql,.yml,.yaml,.xml,.csv,.sh,.ps1,.c,.cpp,.h,.go,.rs,.php,.rb,.example"
+                            accept="image/png,image/jpeg,image/webp,image/gif,.pdf,.txt,.md,.js,.ts,.jsx,.tsx,.json,.html,.css,.java,.py,.sql,.yml,.yaml,.xml,.csv,.sh,.ps1,.c,.cpp,.h,.go,.rs,.php,.rb,.example"
                         >
+
+                        <!-- BARRA AO VIVO DE GRAVAÇÃO DE VOZ (SEGURAR PARA GRAVAR) -->
+                        <div class="voice-recording-banner" id="voice-recording-banner" hidden role="status" aria-live="polite">
+                            <span class="voice-rec-dot" aria-hidden="true"></span>
+                            <span class="voice-rec-label">Gravando</span>
+                            <span class="voice-rec-timer" id="voice-record-timer">00:00</span>
+                            <span class="voice-rec-hint" id="voice-record-hint">Arraste para cancelar</span>
+                        </div>
 
                         <!-- CAMPO PRINCIPAL DE TEXTO (AUTO-EXPANSÍVEL) -->
                         <div class="composer-input-wrap">
@@ -401,6 +724,12 @@
 
                                 <span class="controls-divider" aria-hidden="true"></span>
 
+                                <!-- Atalho Rápido de IAs: 1 IA | Trio -->
+                                <div class="mode-segmented-pill ai-preset-toggle" id="ai-preset-toggle" role="group" aria-label="Atalho de seleção de IAs">
+                                    <button type="button" class="mode-seg-btn" data-ai-preset="single" aria-pressed="false" title="Selecionar apenas 1 IA (modo Direto)">1 IA</button>
+                                    <button type="button" class="mode-seg-btn is-active" data-ai-preset="trio" aria-pressed="true" title="Selecionar o trio automático (Gemini + Groq + OpenRouter)">Trio</button>
+                                </div>
+
                                 <!-- Participantes -->
                                 <div class="participant-pills" role="group" aria-label="IAs">
                                     <label class="participant-pill is-selected" title="Gemini">
@@ -451,9 +780,25 @@
                                     </select>
                                 </div>
 
-                                <!-- Anexar arquivo -->
-                                <button type="button" class="btn-ghost-pill" id="composer-attach-btn" title="Anexar arquivo de texto ou código">
-                                    <span>+ Arquivo</span>
+                                <!-- Busca Web + Leitor de Links -->
+                                <button type="button" class="btn-ghost-pill btn-web-toggle is-web-active" id="composer-web-btn" aria-pressed="true" title="Busca na Web e leitura automática de links (Auto / Off)">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <circle cx="12" cy="12" r="9"></circle>
+                                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                                        <path d="M12 3a14 14 0 0 1 0 18"></path>
+                                        <path d="M12 3a14 14 0 0 0 0 18"></path>
+                                    </svg>
+                                    <span>Web: Auto</span>
+                                </button>
+
+                                <!-- Anexar imagem, PDF ou código -->
+                                <button type="button" class="btn-ghost-pill" id="composer-attach-btn" title="Anexar imagem, PDF ou código (ou cole print com Ctrl+V)">
+                                    <span>+ Anexar</span>
+                                </button>
+
+                                <!-- Biblioteca de Templates -->
+                                <button type="button" class="btn-ghost-pill" id="composer-templates-btn" title="Abrir biblioteca de prompts e templates salvos">
+                                    <span>Templates</span>
                                 </button>
 
                                 <!-- Opções Avançadas -->
@@ -464,6 +809,21 @@
 
                             <div class="composer-submit-group">
                                 <span id="debate-form-feedback" class="form-feedback" role="status" aria-live="polite"></span>
+                                <button
+                                    type="button"
+                                    class="btn-secondary composer-voice-btn"
+                                    id="composer-voice-btn"
+                                    aria-label="Segure para gravar mensagem de voz"
+                                    aria-pressed="false"
+                                    title="Segure para gravar e solte para transcrever e enviar (Groq Whisper)"
+                                >
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+                                        <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+                                        <line x1="12" y1="18" x2="12" y2="22"></line>
+                                        <line x1="8" y1="22" x2="16" y2="22"></line>
+                                    </svg>
+                                </button>
                                 <button type="submit" class="btn-primary composer-send-btn" id="composer-submit-btn">
                                     <span>Enviar</span>
                                     <span class="cta-arrow" aria-hidden="true">→</span>
@@ -782,15 +1142,14 @@
                         </div>
                     </article>
 
-                    <!-- 2. GROQ (SVG Chip / Pulso Geométrico Oficial — #d6ca6f) -->
+                    <!-- 2. GROQ (SVG Marca Geométrica Oficial — #d6ca6f) -->
                     <article class="ai-status-card" data-ai-card="groq" data-sticky-index="1">
                         <div class="ai-card-line-1">
                             <div class="ai-card-identity">
                                 <span class="ai-brand-svg groq-svg" aria-hidden="true">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="6" y="6" width="12" height="12" rx="2"></rect>
-                                        <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"></path>
-                                        <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"></circle>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="11.5" cy="10.5" r="6.5"></circle>
+                                        <path d="M18 10.5v7a4 4 0 0 1-4 4h-2.5"></path>
                                     </svg>
                                 </span>
                                 <h4>Groq</h4>
@@ -806,16 +1165,16 @@
                         </div>
                     </article>
 
-                    <!-- 3. OPENROUTER (SVG Nós / Rotas Conectadas Oficial — #9985ff) -->
+                    <!-- 3. OPENROUTER (SVG Rotas Divergentes Oficial — #9985ff) -->
                     <article class="ai-status-card" data-ai-card="openrouter" data-sticky-index="2">
                         <div class="ai-card-line-1">
                             <div class="ai-card-identity">
                                 <span class="ai-brand-svg openrouter-svg" aria-hidden="true">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <circle cx="5" cy="12" r="2.5" fill="currentColor"></circle>
-                                        <circle cx="19" cy="6" r="2.5" fill="currentColor"></circle>
-                                        <circle cx="19" cy="18" r="2.5" fill="currentColor"></circle>
-                                        <path d="M7.5 11L16.5 6.8M7.5 13L16.5 17.2"></path>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 12h4.5c2.5 0 3.5-5 6.5-5h6"></path>
+                                        <path d="M3 12h4.5c2.5 0 3.5 5 6.5 5h6"></path>
+                                        <polyline points="17 4 20 7 17 10"></polyline>
+                                        <polyline points="17 14 20 17 17 20"></polyline>
                                     </svg>
                                 </span>
                                 <h4>OpenRouter</h4>

@@ -24,24 +24,55 @@ import {
   ALL_PLATFORMS,
   type AIPlatform,
   type ChatAttachment,
-  type DebateSession
+  type DebateSession,
+  type WebSearchMode
 } from "./shared/debate-types.js";
+import { gatherWebContext } from "./web/web-context.js";
 import {
   applyLimitSignalToDebates,
+  assignDebateToProject,
+  clearDeletedProjectFromDebates,
   continueDebateSession,
   createDebateSession,
+  deleteDebateSession,
   getDebateSessionById,
   listDebateSummaries,
   pauseDebateManually,
   regenerateDebateResponse,
+  renameDebateSession,
   resumeDebateSession,
   reviewDebateResponseWithPlatform,
+  searchDebateSessions,
+  stopDebateGeneration,
   submitDebateTaskResponse,
+  togglePinDebateSession,
   updateSessionSharedMemoryManually
 } from "./debate/debate-engine.js";
-import { kickRunner, startRunner } from "./debate/runner.js";
+import {
+  addProjectFile,
+  createProject,
+  deleteProject,
+  getProjectById,
+  listProjects,
+  removeProjectFile,
+  updateProject
+} from "./persistence/project-store.js";
+import {
+  gatherProjectContext,
+  inspectLinkedFolder
+} from "./projects/project-rag.js";
+import {
+  createPromptTemplate,
+  deletePromptTemplate,
+  listPromptTemplates,
+  updatePromptTemplate
+} from "./persistence/template-store.js";
+import { abortDebateTasks, kickRunner, startRunner } from "./debate/runner.js";
+import { generateTurnVerdict } from "./debate/verdict.js";
 import { getActiveStreams, subscribeStreamHub } from "./debate/stream-hub.js";
 import { getProvidersStatus } from "./providers/registry.js";
+import { transcribeAudioWithGroq } from "./providers/whisper.js";
+import { synthesizeSpeechWithEdge } from "./providers/tts.js";
 
 // ============================================
 // CONFIGURAÇÃO
@@ -104,6 +135,7 @@ function getLocalWifiAddresses(): string[] {
 }
 
 const MAX_BODY_SIZE = 262_144;
+const MAX_MEDIA_BODY_SIZE = 10 * 1024 * 1024; // 10 MB para imagens/PDFs anexados
 const MAX_HISTORY = 200;
 const SERVER_DEDUP_WINDOW_MS = 30_000;
 
@@ -161,7 +193,11 @@ const EXPECTED_URL_BY_SOURCE: Record<
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8"
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/manifest+json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon"
 };
 
 // ============================================
@@ -383,7 +419,25 @@ function slimDebateForDashboard(
               ? {
                   attachments: turn.attachments.map((att) => ({
                     name: att.name,
-                    size: att.size
+                    size: att.size,
+                    ...(att.kind ? { kind: att.kind } : {}),
+                    ...(att.mimeType ? { mimeType: att.mimeType } : {}),
+                    ...(att.kind === "image" && att.dataBase64
+                      ? { dataBase64: att.dataBase64 }
+                      : {})
+                  }))
+                }
+              : {}),
+            ...(Array.isArray(turn.webSources) && turn.webSources.length > 0
+              ? {
+                  webSources: turn.webSources.map((src) => ({
+                    index: src.index,
+                    title: src.title,
+                    url: src.url,
+                    domain: src.domain,
+                    snippet: src.snippet,
+                    origin: src.origin,
+                    ...(src.fetchedOk !== undefined ? { fetchedOk: src.fetchedOk } : {})
                   }))
                 }
               : {})
@@ -519,7 +573,8 @@ function withEventLock<T>(
 // ============================================
 
 async function readRequestBody(
-  request: IncomingMessage
+  request: IncomingMessage,
+  maxBytes: number = MAX_BODY_SIZE
 ): Promise<string> {
   const chunks: Buffer[] = [];
   let totalSize = 0;
@@ -531,7 +586,7 @@ async function readRequestBody(
 
     totalSize += buffer.length;
 
-    if (totalSize > MAX_BODY_SIZE) {
+    if (totalSize > maxBytes) {
       throw new Error(
         "Corpo da requisição muito grande."
       );
@@ -659,18 +714,43 @@ function isAuthorizedLocalClient(
 // ARQUIVOS DO DASHBOARD
 // ============================================
 
+const STATIC_JS_MODULE_REGEX = /^\/js\/([a-z0-9_-]+)\.js$/;
+const STATIC_ICON_REGEX = /^\/icons\/([a-z0-9_-]+\.(?:svg|png|ico))$/;
+
+function resolveDashboardFilename(pathname: string): string | null {
+  const rootFiles: Record<string, string> = {
+    "/": "index.html",
+    "/index.html": "index.html",
+    "/offline.html": "offline.html",
+    "/styles.css": "styles.css",
+    "/dashboard.js": "dashboard.js",
+    "/manifest.json": "manifest.json",
+    "/sw.js": "sw.js",
+    "/favicon.ico": "icons/ai-council.ico"
+  };
+
+  if (rootFiles[pathname]) {
+    return rootFiles[pathname];
+  }
+
+  const jsMatch = pathname.match(STATIC_JS_MODULE_REGEX);
+  if (jsMatch?.[1]) {
+    return `js/${jsMatch[1]}.js`;
+  }
+
+  const iconMatch = pathname.match(STATIC_ICON_REGEX);
+  if (iconMatch?.[1]) {
+    return `icons/${iconMatch[1]}`;
+  }
+
+  return null;
+}
+
 async function serveDashboard(
   pathname: string,
   response: ServerResponse
 ): Promise<void> {
-  const files: Record<string, string> = {
-    "/": "index.html",
-    "/index.html": "index.html",
-    "/styles.css": "styles.css",
-    "/dashboard.js": "dashboard.js"
-  };
-
-  const filename = files[pathname];
+  const filename = resolveDashboardFilename(pathname);
 
   if (!filename) {
     sendJson(response, 404, {
@@ -690,19 +770,25 @@ async function serveDashboard(
 
   try {
     const content = await readFile(filePath);
+    const ext = extname(filePath);
     const acceptEncoding = response.req?.headers["accept-encoding"];
+    const compressible = ext !== ".png" && ext !== ".ico";
     const useGzip =
+      compressible &&
       content.byteLength > 1024 &&
       typeof acceptEncoding === "string" &&
       acceptEncoding.includes("gzip");
     const payload = useGzip ? gzipSync(content) : content;
 
     response.writeHead(200, {
-      "Content-Type":
-        MIME_TYPES[extname(filePath)] ??
-        "application/octet-stream",
-      "Cache-Control": "no-store",
+      "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
+      "Content-Length": String(payload.byteLength),
+      "Cache-Control":
+        ext === ".png" || ext === ".ico" || ext === ".svg"
+          ? "public, max-age=86400"
+          : "no-store",
       "X-Content-Type-Options": "nosniff",
+      ...(pathname === "/sw.js" ? { "Service-Worker-Allowed": "/" } : {}),
       ...(useGzip
         ? {
             "Content-Encoding": "gzip",
@@ -783,14 +869,7 @@ async function main(): Promise<void> {
       // DASHBOARD
       // ----------------------------------------
 
-      const dashboardFiles = new Set([
-        "/",
-        "/index.html",
-        "/styles.css",
-        "/dashboard.js"
-      ]);
-
-      if (dashboardFiles.has(url.pathname)) {
+      if (resolveDashboardFilename(url.pathname) !== null) {
         if (request.method !== "GET") {
           sendJson(response, 405, {
             error: "Método não permitido."
@@ -968,9 +1047,10 @@ async function main(): Promise<void> {
         }
 
         try {
-          const [events, summaries] = await Promise.all([
+          const [events, summaries, projects] = await Promise.all([
             readEvents(),
-            listDebateSummaries()
+            listDebateSummaries(),
+            listProjects()
           ]);
 
           const activeDebatesCount = summaries.filter(
@@ -983,12 +1063,14 @@ async function main(): Promise<void> {
               responseModes: true,
               multiTurn: true,
               streaming: true,
-              lightweightStatus: true
+              lightweightStatus: true,
+              projects: true
             },
             totalEvents: events.length,
             latestEvents: events.slice(-20),
             activeDebatesCount,
-            debates: summaries
+            debates: summaries,
+            projects
           }, origin);
         } catch (error) {
           console.error(
@@ -998,6 +1080,147 @@ async function main(): Promise<void> {
 
           sendJson(response, 500, {
             error: "Não foi possível ler o histórico ou estado."
+          }, origin);
+        }
+
+        return;
+      }
+
+      // ----------------------------------------
+      // TRANSCRIÇÃO DE VOZ (GROQ WHISPER)
+      // ----------------------------------------
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/audio/transcribe"
+      ) {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, {
+            error: "Não autorizado."
+          }, origin);
+          return;
+        }
+
+        let payload: unknown;
+        try {
+          const body = await readRequestBody(request, MAX_MEDIA_BODY_SIZE);
+          payload = JSON.parse(body);
+        } catch {
+          sendJson(response, 400, {
+            error: "Áudio inválido ou grande demais (máx. 10 MB)."
+          }, origin);
+          return;
+        }
+
+        if (!isRecord(payload) || typeof payload.audioBase64 !== "string") {
+          sendJson(response, 400, {
+            error: "Campo audioBase64 obrigatório."
+          }, origin);
+          return;
+        }
+
+        try {
+          const result = await transcribeAudioWithGroq({
+            audioBase64: payload.audioBase64,
+            mimeType:
+              typeof payload.mimeType === "string"
+                ? payload.mimeType
+                : undefined,
+            language:
+              typeof payload.language === "string"
+                ? payload.language
+                : "pt"
+          });
+
+          console.log(
+            `[AI Council] Voz transcrita (${result.model}): ${result.text.slice(0, 80)}`
+          );
+
+          sendJson(response, 200, {
+            text: result.text,
+            model: result.model
+          }, origin);
+        } catch (error) {
+          sendJson(response, 400, {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Falha ao transcrever o áudio."
+          }, origin);
+        }
+
+        return;
+      }
+
+      // ----------------------------------------
+      // SÍNTESE DE VOZ NEURAL POR IA (EDGE TTS)
+      // ----------------------------------------
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/audio/speak"
+      ) {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, {
+            error: "Não autorizado."
+          }, origin);
+          return;
+        }
+
+        let payload: unknown;
+        try {
+          const body = await readRequestBody(request, MAX_BODY_SIZE);
+          payload = JSON.parse(body);
+        } catch {
+          sendJson(response, 400, {
+            error: "Corpo da requisição inválido."
+          }, origin);
+          return;
+        }
+
+        if (!isRecord(payload) || typeof payload.text !== "string") {
+          sendJson(response, 400, {
+            error: "Campo text obrigatório."
+          }, origin);
+          return;
+        }
+
+        try {
+          const result = await synthesizeSpeechWithEdge({
+            text: payload.text,
+            persona:
+              typeof payload.persona === "string" ? payload.persona : undefined,
+            voiceKey:
+              typeof payload.voiceKey === "string"
+                ? payload.voiceKey
+                : undefined
+          });
+
+          const headers: Record<string, string> = {
+            "Content-Type": result.contentType,
+            "Content-Length": String(result.audioBuffer.byteLength),
+            "Cache-Control": "no-store",
+            "X-TTS-Voice": result.voice,
+            "X-TTS-Cached": result.cached ? "1" : "0",
+            "X-Content-Type-Options": "nosniff"
+          };
+          if (origin && isAllowedOrigin(origin, request)) {
+            headers["Access-Control-Allow-Origin"] = origin;
+            headers["Vary"] = "Origin";
+          }
+
+          response.writeHead(200, headers);
+          response.end(result.audioBuffer);
+        } catch (error) {
+          console.warn(
+            "[AI Council] Edge Neural TTS falhou:",
+            error instanceof Error ? error.message : error
+          );
+          sendJson(response, 502, {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Falha ao gerar áudio neural."
           }, origin);
         }
 
@@ -1032,6 +1255,466 @@ async function main(): Promise<void> {
           }, origin);
         }
 
+        return;
+      }
+
+      // ----------------------------------------
+      // PROJETOS / PASTAS COM CÉREBRO LOCAL (/projects)
+      // ----------------------------------------
+
+      if (url.pathname === "/projects") {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, { error: "Não autorizado." }, origin);
+          return;
+        }
+
+        if (request.method === "GET") {
+          try {
+            const projects = await listProjects();
+            sendJson(response, 200, { projects }, origin);
+          } catch (error) {
+            console.error("[AI Council] Erro ao listar projetos:", error);
+            sendJson(response, 500, { error: "Falha ao listar projetos." }, origin);
+          }
+          return;
+        }
+
+        if (request.method === "POST") {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(await readRequestBody(request));
+          } catch {
+            sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+            return;
+          }
+
+          if (!isRecord(payload)) {
+            sendJson(response, 400, { error: "Dados do projeto inválidos." }, origin);
+            return;
+          }
+
+          try {
+            const created = await createProject({
+              name: typeof payload.name === "string" ? payload.name : "",
+              description:
+                typeof payload.description === "string"
+                  ? payload.description
+                  : undefined,
+              color:
+                typeof payload.color === "string" ? payload.color : undefined,
+              instructions:
+                typeof payload.instructions === "string"
+                  ? payload.instructions
+                  : "",
+              linkedFolderPath:
+                typeof payload.linkedFolderPath === "string"
+                  ? payload.linkedFolderPath
+                  : undefined
+            });
+            const projects = await listProjects();
+            sendJson(response, 201, { created: true, project: created, projects }, origin);
+          } catch (error) {
+            sendJson(
+              response,
+              400,
+              {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Não foi possível criar o projeto."
+              },
+              origin
+            );
+          }
+          return;
+        }
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/projects/inspect-folder"
+      ) {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, { error: "Não autorizado." }, origin);
+          return;
+        }
+
+        let payload: unknown;
+        try {
+          payload = JSON.parse(await readRequestBody(request));
+        } catch {
+          sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+          return;
+        }
+
+        const folderPath =
+          isRecord(payload) && typeof payload.path === "string"
+            ? payload.path
+            : "";
+
+        try {
+          const inspection = await inspectLinkedFolder(folderPath);
+          sendJson(response, 200, { inspection }, origin);
+        } catch (error) {
+          sendJson(
+            response,
+            400,
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Falha ao inspecionar pasta."
+            },
+            origin
+          );
+        }
+        return;
+      }
+
+      const projectFileMatch = url.pathname.match(
+        /^\/projects\/([a-zA-Z0-9_-]{6,64})\/files(?:\/([a-zA-Z0-9_-]{6,64})(?:\/(delete))?)?$/
+      );
+
+      if (projectFileMatch) {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, { error: "Não autorizado." }, origin);
+          return;
+        }
+
+        const projectId = projectFileMatch[1] ?? "";
+        const fileId = projectFileMatch[2] ?? "";
+        const fileAction = projectFileMatch[3] ?? "";
+
+        if (!fileId && request.method === "POST") {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(await readRequestBody(request, MAX_MEDIA_BODY_SIZE));
+          } catch {
+            sendJson(
+              response,
+              400,
+              { error: "Arquivo inválido ou grande demais (máx. 10 MB)." },
+              origin
+            );
+            return;
+          }
+
+          if (!isRecord(payload)) {
+            sendJson(response, 400, { error: "Dados do arquivo inválidos." }, origin);
+            return;
+          }
+
+          try {
+            const { project, file } = await addProjectFile(projectId, {
+              name: typeof payload.name === "string" ? payload.name : "",
+              kind: payload.kind === "pdf" ? "pdf" : "text",
+              mimeType:
+                typeof payload.mimeType === "string" ? payload.mimeType : undefined,
+              content:
+                typeof payload.content === "string" ? payload.content : undefined,
+              dataBase64:
+                typeof payload.dataBase64 === "string"
+                  ? payload.dataBase64
+                  : undefined,
+              size: typeof payload.size === "number" ? payload.size : undefined
+            });
+            const projects = await listProjects();
+            sendJson(response, 201, { uploaded: true, file, project, projects }, origin);
+          } catch (error) {
+            sendJson(
+              response,
+              400,
+              {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Falha ao adicionar arquivo ao projeto."
+              },
+              origin
+            );
+          }
+          return;
+        }
+
+        if (
+          fileId &&
+          (request.method === "DELETE" ||
+            (request.method === "POST" && fileAction === "delete"))
+        ) {
+          try {
+            const project = await removeProjectFile(projectId, fileId);
+            if (!project) {
+              sendJson(response, 404, { error: "Arquivo não encontrado." }, origin);
+              return;
+            }
+            const projects = await listProjects();
+            sendJson(response, 200, { deleted: true, project, projects }, origin);
+          } catch (error) {
+            sendJson(
+              response,
+              500,
+              { error: "Falha ao remover arquivo do projeto." },
+              origin
+            );
+          }
+          return;
+        }
+      }
+
+      const projectItemMatch = url.pathname.match(
+        /^\/projects\/([a-zA-Z0-9_-]{6,64})(?:\/(update|delete))?$/
+      );
+
+      if (projectItemMatch) {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, { error: "Não autorizado." }, origin);
+          return;
+        }
+
+        const projectId = projectItemMatch[1] ?? "";
+        const subAction = projectItemMatch[2] ?? "";
+
+        if (!subAction && request.method === "GET") {
+          const project = await getProjectById(projectId);
+          if (!project) {
+            sendJson(response, 404, { error: "Projeto não encontrado." }, origin);
+            return;
+          }
+          sendJson(response, 200, { project }, origin);
+          return;
+        }
+
+        if (
+          request.method === "DELETE" ||
+          (request.method === "POST" && subAction === "delete")
+        ) {
+          try {
+            const deleted = await deleteProject(projectId);
+            if (!deleted) {
+              sendJson(response, 404, { error: "Projeto não encontrado." }, origin);
+              return;
+            }
+            await clearDeletedProjectFromDebates(projectId);
+            const projects = await listProjects();
+            sendJson(response, 200, { deleted: true, id: projectId, projects }, origin);
+          } catch (error) {
+            sendJson(response, 500, { error: "Falha ao excluir projeto." }, origin);
+          }
+          return;
+        }
+
+        if (
+          request.method === "PATCH" ||
+          (request.method === "POST" && subAction === "update")
+        ) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(await readRequestBody(request));
+          } catch {
+            sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+            return;
+          }
+          if (!isRecord(payload)) {
+            sendJson(response, 400, { error: "Dados do projeto inválidos." }, origin);
+            return;
+          }
+
+          try {
+            const updated = await updateProject(projectId, {
+              ...(typeof payload.name === "string" ? { name: payload.name } : {}),
+              ...(typeof payload.description === "string"
+                ? { description: payload.description }
+                : {}),
+              ...(typeof payload.color === "string" ? { color: payload.color } : {}),
+              ...(typeof payload.instructions === "string"
+                ? { instructions: payload.instructions }
+                : {}),
+              ...(typeof payload.linkedFolderPath === "string"
+                ? { linkedFolderPath: payload.linkedFolderPath }
+                : {})
+            });
+            const projects = await listProjects();
+            sendJson(response, 200, { updated: true, project: updated, projects }, origin);
+          } catch (error) {
+            const msg =
+              error instanceof Error ? error.message : "Erro ao atualizar projeto.";
+            sendJson(
+              response,
+              msg.includes("não encontrado") ? 404 : 400,
+              { error: msg },
+              origin
+            );
+          }
+          return;
+        }
+      }
+
+      // ----------------------------------------
+      // TEMPLATES DE PROMPT (/templates)
+      // ----------------------------------------
+
+      if (url.pathname === "/templates") {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, { error: "Não autorizado." }, origin);
+          return;
+        }
+
+        if (request.method === "GET") {
+          try {
+            const templates = await listPromptTemplates();
+            sendJson(response, 200, { templates }, origin);
+          } catch (error) {
+            console.error("[AI Council] Erro ao listar templates:", error);
+            sendJson(response, 500, { error: "Falha ao listar templates." }, origin);
+          }
+          return;
+        }
+
+        if (request.method === "POST") {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(await readRequestBody(request));
+          } catch {
+            sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+            return;
+          }
+
+          if (!isRecord(payload)) {
+            sendJson(response, 400, { error: "Dados do template inválidos." }, origin);
+            return;
+          }
+
+          try {
+            const created = await createPromptTemplate({
+              tag: typeof payload.tag === "string" ? payload.tag : undefined,
+              title: typeof payload.title === "string" ? payload.title : "",
+              prompt: typeof payload.prompt === "string" ? payload.prompt : "",
+              rules: typeof payload.rules === "string" ? payload.rules : undefined,
+              focus:
+                payload.focus === "backend" || payload.focus === "frontend"
+                  ? payload.focus
+                  : "geral",
+              responseMode:
+                payload.responseMode === "prompt_markdown"
+                  ? "prompt_markdown"
+                  : "normal",
+              interactionMode:
+                payload.interactionMode === "debate" ? "debate" : "direct"
+            });
+            sendJson(response, 201, { created: true, template: created }, origin);
+          } catch (error) {
+            sendJson(
+              response,
+              400,
+              {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Não foi possível salvar o template."
+              },
+              origin
+            );
+          }
+          return;
+        }
+      }
+
+      const templateItemMatch = url.pathname.match(
+        /^\/templates\/([a-zA-Z0-9_-]{4,64})(?:\/(update|delete))?$/
+      );
+
+      if (templateItemMatch) {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, { error: "Não autorizado." }, origin);
+          return;
+        }
+
+        const tplId = templateItemMatch[1] ?? "";
+        const subAction = templateItemMatch[2] ?? "";
+
+        if (
+          request.method === "DELETE" ||
+          (request.method === "POST" && subAction === "delete")
+        ) {
+          try {
+            const deleted = await deletePromptTemplate(tplId);
+            if (!deleted) {
+              sendJson(response, 404, { error: "Template não encontrado." }, origin);
+              return;
+            }
+            sendJson(response, 200, { deleted: true, id: tplId }, origin);
+          } catch (error) {
+            sendJson(response, 500, { error: "Falha ao excluir template." }, origin);
+          }
+          return;
+        }
+
+        if (
+          request.method === "PATCH" ||
+          (request.method === "POST" && subAction === "update")
+        ) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(await readRequestBody(request));
+          } catch {
+            sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+            return;
+          }
+          if (!isRecord(payload)) {
+            sendJson(response, 400, { error: "Dados do template inválidos." }, origin);
+            return;
+          }
+
+          try {
+            const updated = await updatePromptTemplate(tplId, {
+              tag: typeof payload.tag === "string" ? payload.tag : undefined,
+              title: typeof payload.title === "string" ? payload.title : "",
+              prompt: typeof payload.prompt === "string" ? payload.prompt : "",
+              rules: typeof payload.rules === "string" ? payload.rules : undefined,
+              focus:
+                payload.focus === "backend" || payload.focus === "frontend"
+                  ? payload.focus
+                  : "geral",
+              responseMode:
+                payload.responseMode === "prompt_markdown"
+                  ? "prompt_markdown"
+                  : "normal",
+              interactionMode:
+                payload.interactionMode === "debate" ? "debate" : "direct"
+            });
+            sendJson(response, 200, { updated: true, template: updated }, origin);
+          } catch (error) {
+            const msg =
+              error instanceof Error ? error.message : "Erro ao atualizar template.";
+            sendJson(
+              response,
+              msg.includes("não encontrado") ? 404 : 400,
+              { error: msg },
+              origin
+            );
+          }
+          return;
+        }
+      }
+
+      // ----------------------------------------
+      // BUSCA FULL-TEXT DE CONVERSAS (/debates/search)
+      // ----------------------------------------
+
+      if (request.method === "GET" && url.pathname === "/debates/search") {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, { error: "Não autorizado." }, origin);
+          return;
+        }
+
+        const q = (url.searchParams.get("q") ?? "").trim().slice(0, 120);
+        try {
+          const matchingIds = q ? await searchDebateSessions(q) : [];
+          sendJson(response, 200, { query: q, matchingIds }, origin);
+        } catch (error) {
+          console.error("[AI Council] Erro ao buscar conversas:", error);
+          sendJson(response, 500, { error: "Falha ao buscar conversas." }, origin);
+        }
         return;
       }
 
@@ -1080,6 +1763,101 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (debateDetailMatch && request.method === "PATCH") {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, {
+            error: "Não autorizado."
+          }, origin);
+          return;
+        }
+
+        const debateId = debateDetailMatch[1] ?? "";
+        let payload: unknown;
+        try {
+          const body = await readRequestBody(request);
+          payload = JSON.parse(body);
+        } catch {
+          sendJson(response, 400, {
+            error: "Corpo da requisição inválido."
+          }, origin);
+          return;
+        }
+
+        const pinnedValue =
+          isRecord(payload) && typeof payload.pinned === "boolean"
+            ? payload.pinned
+            : undefined;
+        const hasProjectField =
+          isRecord(payload) &&
+          Object.prototype.hasOwnProperty.call(payload, "projectId");
+        const projectIdValue =
+          hasProjectField && isRecord(payload) && typeof payload.projectId === "string"
+            ? payload.projectId
+            : null;
+        const title =
+          isRecord(payload) && typeof payload.title === "string"
+            ? payload.title
+            : "";
+
+        try {
+          const updated = hasProjectField && !title
+            ? await assignDebateToProject(debateId, projectIdValue)
+            : typeof pinnedValue === "boolean" && !title
+              ? await togglePinDebateSession(debateId, pinnedValue)
+              : await renameDebateSession(debateId, title);
+          sendJson(
+            response,
+            200,
+            {
+              updated: true,
+              debate: slimDebateForDashboard(updated, isDashboardRequest(request))
+            },
+            origin
+          );
+        } catch (error) {
+          const msg =
+            error instanceof Error ? error.message : "Erro ao renomear conversa.";
+          sendJson(
+            response,
+            msg.includes("não encontrada") ? 404 : 400,
+            { error: msg },
+            origin
+          );
+        }
+        return;
+      }
+
+      if (debateDetailMatch && request.method === "DELETE") {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, {
+            error: "Não autorizado."
+          }, origin);
+          return;
+        }
+
+        const debateId = debateDetailMatch[1] ?? "";
+        try {
+          const deleted = await deleteDebateSession(debateId);
+          if (!deleted) {
+            sendJson(response, 404, {
+              error: "Conversa não encontrada."
+            }, origin);
+            return;
+          }
+
+          sendJson(response, 200, {
+            deleted: true,
+            id: debateId
+          }, origin);
+        } catch (error) {
+          console.error("[AI Council] Erro ao excluir conversa:", error);
+          sendJson(response, 500, {
+            error: "Falha ao excluir a conversa."
+          }, origin);
+        }
+        return;
+      }
+
       // ----------------------------------------
       // LISTAR OU CRIAR DEBATES (/debates)
       // ----------------------------------------
@@ -1117,7 +1895,7 @@ async function main(): Promise<void> {
           let payload: unknown;
 
           try {
-            const body = await readRequestBody(request);
+            const body = await readRequestBody(request, MAX_MEDIA_BODY_SIZE);
             payload = JSON.parse(body);
           } catch {
             sendJson(response, 400, {
@@ -1143,11 +1921,26 @@ async function main(): Promise<void> {
           const rawAttachments = Array.isArray(payload.attachments)
             ? (payload.attachments as ChatAttachment[])
             : undefined;
+          const webSearchMode: WebSearchMode =
+            payload.webSearchMode === "off" ? "off" : "auto";
+          const topicStr = typeof payload.topic === "string" ? payload.topic : "";
+          const projectId =
+            typeof payload.projectId === "string" && payload.projectId.trim()
+              ? payload.projectId.trim()
+              : undefined;
 
           try {
+            const [webSources, resolvedProjectContext] = await Promise.all([
+              gatherWebContext(topicStr, {
+                mode: webSearchMode,
+                hasAttachments: Boolean(rawAttachments && rawAttachments.length > 0)
+              }).catch(() => []),
+              gatherProjectContext(projectId, topicStr).catch(() => null)
+            ]);
+
             const session = await createDebateSession({
               title: typeof payload.title === "string" ? payload.title : "",
-              topic: typeof payload.topic === "string" ? payload.topic : "",
+              topic: topicStr,
               rules: typeof payload.rules === "string" ? payload.rules : undefined,
               participants: rawParticipants,
               totalRounds: Number(payload.totalRounds) || 2,
@@ -1161,7 +1954,11 @@ async function main(): Promise<void> {
                   : "prompt_markdown",
               interactionMode:
                 payload.interactionMode === "direct" ? "direct" : "debate",
-              attachments: rawAttachments
+              webSearchMode,
+              attachments: rawAttachments,
+              webSources,
+              ...(projectId && resolvedProjectContext ? { projectId } : {}),
+              ...(resolvedProjectContext ? { resolvedProjectContext } : {})
             });
 
             console.log(
@@ -1196,7 +1993,7 @@ async function main(): Promise<void> {
       // ----------------------------------------
 
       const debateActionMatch = url.pathname.match(
-        /^\/debates\/([0-9a-fA-F-]{8,64})\/(respond|pause|resume|message|regenerate|review|memory)$/
+        /^\/debates\/([0-9a-fA-F-]{8,64})\/(respond|pause|stop|resume|message|regenerate|review|verdict|memory|rename|delete|pin|project)$/
       );
 
       if (debateActionMatch && request.method === "POST") {
@@ -1214,7 +2011,10 @@ async function main(): Promise<void> {
         let payload: Record<string, unknown> = {};
 
         try {
-          const body = await readRequestBody(request);
+          const body = await readRequestBody(
+            request,
+            action === "message" ? MAX_MEDIA_BODY_SIZE : MAX_BODY_SIZE
+          );
           if (body.trim()) {
             const parsed: unknown = JSON.parse(body);
             if (isRecord(parsed)) {
@@ -1240,10 +2040,24 @@ async function main(): Promise<void> {
             const rawAttachments = Array.isArray(payload.attachments)
               ? (payload.attachments as ChatAttachment[])
               : undefined;
+            const webSearchMode: WebSearchMode =
+              payload.webSearchMode === "off" ? "off" : "auto";
+            const messageStr =
+              typeof payload.message === "string" ? payload.message : "";
+
+            const existingSession = await getDebateSessionById(debateId).catch(() => null);
+            const activeProjectId = existingSession?.projectId;
+
+            const [webSources, resolvedProjectContext] = await Promise.all([
+              gatherWebContext(messageStr, {
+                mode: webSearchMode,
+                hasAttachments: Boolean(rawAttachments && rawAttachments.length > 0)
+              }).catch(() => []),
+              gatherProjectContext(activeProjectId, messageStr).catch(() => null)
+            ]);
 
             const updated = await continueDebateSession(debateId, {
-              message:
-                typeof payload.message === "string" ? payload.message : "",
+              message: messageStr,
               rules:
                 typeof payload.rules === "string" ? payload.rules : undefined,
               participants: rawParticipants,
@@ -1258,7 +2072,10 @@ async function main(): Promise<void> {
                   : "prompt_markdown",
               interactionMode:
                 payload.interactionMode === "direct" ? "direct" : "debate",
-              attachments: rawAttachments
+              webSearchMode,
+              attachments: rawAttachments,
+              webSources,
+              ...(resolvedProjectContext ? { resolvedProjectContext } : {})
             });
 
             kickRunner();
@@ -1314,6 +2131,31 @@ async function main(): Promise<void> {
             return;
           }
 
+          if (action === "verdict") {
+            const turnId =
+              typeof payload.turnId === "string" && payload.turnId.trim()
+                ? payload.turnId.trim()
+                : undefined;
+            const judge =
+              payload.judge === "gemini" ||
+              payload.judge === "groq" ||
+              payload.judge === "openrouter"
+                ? payload.judge
+                : undefined;
+
+            const { debate: updated, verdict } = await generateTurnVerdict(
+              debateId,
+              { turnId, judge }
+            );
+
+            sendJson(response, 200, {
+              updated: true,
+              verdict,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
           if (action === "memory") {
             const summary =
               typeof payload.summary === "string" ? payload.summary : "";
@@ -1351,7 +2193,19 @@ async function main(): Promise<void> {
             return;
           }
 
+          if (action === "stop") {
+            const partials = abortDebateTasks(debateId);
+            const updated = await stopDebateGeneration(debateId, partials);
+
+            sendJson(response, 200, {
+              stopped: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
           if (action === "pause") {
+            abortDebateTasks(debateId);
             const reason =
               typeof payload.reason === "string"
                 ? payload.reason
@@ -1374,6 +2228,60 @@ async function main(): Promise<void> {
             sendJson(response, 200, {
               updated: true,
               debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
+          if (action === "rename") {
+            const title =
+              typeof payload.title === "string" ? payload.title : "";
+            const updated = await renameDebateSession(debateId, title);
+
+            sendJson(response, 200, {
+              updated: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
+          if (action === "pin") {
+            const pinned =
+              typeof payload.pinned === "boolean" ? payload.pinned : undefined;
+            const updated = await togglePinDebateSession(debateId, pinned);
+
+            sendJson(response, 200, {
+              updated: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
+          if (action === "project") {
+            const nextProjectId =
+              typeof payload.projectId === "string" && payload.projectId.trim()
+                ? payload.projectId.trim()
+                : null;
+            const updated = await assignDebateToProject(debateId, nextProjectId);
+
+            sendJson(response, 200, {
+              updated: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
+          if (action === "delete") {
+            const deleted = await deleteDebateSession(debateId);
+            if (!deleted) {
+              sendJson(response, 404, {
+                error: "Conversa não encontrada."
+              }, origin);
+              return;
+            }
+
+            sendJson(response, 200, {
+              deleted: true,
+              id: debateId
             }, origin);
             return;
           }
