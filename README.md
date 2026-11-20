@@ -1,37 +1,53 @@
 # AI Council — Intelligence Hub
 
-> **Plataforma local de orquestração de debates técnicos multi-IA em rodadas estruturadas, com execução automática via APIs gratuitas, proteção rigorosa de limites (`UsageGate`) e interface conversacional inspirada no Eraser Design System.**
+> **Plataforma local de conversas e debates técnicos multi-IA com execução paralela via APIs gratuitas, Cérebro Local por Projeto (BM25 + PDF + pasta do PC), voz neural individual por IA, Veredito comparativo, busca na Web em tempo real, proteção rigorosa de cota (`UsageGate`), PWA mobile e ícone na bandeja do Windows.**
 
 ---
 
 ## Sumário
 
-1. [Visão Geral](#1-visão-geral)
+1. [Visão Geral e Recursos](#1-visão-geral-e-recursos)
 2. [Arquitetura do Sistema](#2-arquitetura-do-sistema)
-3. [Dinâmica dos Debates e Papéis das IAs](#3-dinâmica-dos-debates-e-papéis-das-ias)
-4. [Proteção de Cota e Custo Zero (`UsageGate`)](#4-proteção-de-cota-e-custo-zero-usagegate)
-5. [Arquitetura Frontend e Design System](#5-arquitetura-frontend-e-design-system)
-6. [Estrutura do Projeto](#6-estrutura-do-projeto)
-7. [Requisitos, Instalação e Configuração](#7-requisitos-instalação-e-configuração)
-8. [Scripts Disponíveis](#8-scripts-disponíveis)
-9. [Referência da API HTTP Local](#9-referência-da-api-http-local)
-10. [Persistência e Segurança](#10-persistência-e-segurança)
-11. [Solução de Problemas (Troubleshooting)](#11-solução-de-problemas-troubleshooting)
+3. [Modos de Uso, Papéis e Orçamento de Contexto](#3-modos-de-uso-papéis-e-orçamento-de-contexto)
+4. [Projetos / Pastas com "Cérebro Local" (RAG)](#4-projetos--pastas-com-cérebro-local-rag)
+5. [Voz Completa: Groq Whisper + Vozes Neurais (Edge TTS)](#5-voz-completa-groq-whisper--vozes-neurais-edge-tts)
+6. [Veredito do Conselho e Busca na Web](#6-veredito-do-conselho-e-busca-na-web)
+7. [Proteção de Cota e Custo Zero (`UsageGate`)](#7-proteção-de-cota-e-custo-zero-usagegate)
+8. [Desktop (Bandeja do Windows) e Celular (PWA / Remoto)](#8-desktop-bandeja-do-windows-e-celular-pwa--remoto)
+9. [Estrutura do Projeto](#9-estrutura-do-projeto)
+10. [Instalação, Configuração e Scripts](#10-instalação-configuração-e-scripts)
+11. [Referência da API HTTP Local](#11-referência-da-api-http-local)
+12. [Testes Automatizados e Integridade](#12-testes-automatizados-e-integridade)
+13. [Solução de Problemas (Troubleshooting)](#13-solução-de-problemas-troubleshooting)
 
 ---
 
-## 1. Visão Geral
+## 1. Visão Geral e Recursos
 
-O **AI Council** é um hub de inteligência coletiva que coordena múltiplas inteligências artificiais para analisar problemas complexos, realizar críticas técnicas cruzadas entre pares e consolidar uma **Síntese e Conclusão Conjunta em Markdown** pronta para uso.
+O **AI Council** reúne múltiplas IAs em um único painel rápido, privado e 100% gratuito, rodando no seu PC e acessível do celular.
 
-### Principais Capacidades
-- **Orquestração Multi-IA Híbrida:**
-  - **Assentos Automáticos (API):** `Gemini` (Google), `Groq` e `OpenRouter (:free)` respondem automaticamente em paralelo através do runner interno do servidor.
-  - **Assentos Manuais Opcionais:** `ChatGPT` (OpenAI) e `Claude` (Anthropic) podem ser incluídos no debate gerando prompts contextuais prontos para cópia e colagem manual, sem automação intrusiva no navegador.
-- **Debates em Múltiplas Rodadas com Economia de Tokens:**
-  - Suporta de **1 a 3 rodadas de debate** seguidas por uma etapa final de **Síntese**, com compactação inteligente de contexto (`compactForPrompt`) entre rodadas.
-- **Garantia de Custo Zero e Resiliência:**
-  - Bloqueio em nível de código contra modelos pagos no OpenRouter (exige sufixo `:free`), controle preventivo de RPM/RPD/TPM/TPD e pausa automática em caso de limite atingido, permitindo retomar do ponto exato sem perda de respostas.
+### Principais Funcionalidades
+- **Orquestração Multi-IA em Tempo Real (SSE Streaming):**
+  - **Assentos Automáticos (API gratuita):** `Gemini` (Google), `Groq` e `OpenRouter (:free)` respondem em paralelo com streaming ao vivo token a token.
+  - **Assentos Manuais Opcionais:** `ChatGPT` e `Claude` geram prompts contextuais prontos para copiar/colar sem automação intrusiva.
+  - **Botão Parar real (`AbortController`):** interrompe imediatamente requisições e streams em andamento preservando o texto parcial já gerado.
+- **Projetos / Pastas com "Cérebro Local":**
+  - Instruções fixas por projeto + upload de arquivos/PDFs (com extração automática de texto) + vínculo opcional com pasta local do PC em modo **somente leitura** e busca local **BM25** sem custo de API.
+- **Mensagem por Voz & Vozes Neurais Individuais por IA:**
+  - Gravação segurando o microfone no PC ou celular via **Groq Whisper** (grátis).
+  - Leitura das respostas e modo **"Ouvir Conselho"** (podcast sequencial) usando **Microsoft Edge Neural TTS** com voz e cadência próprias para cada IA.
+- **Veredito do Conselho (Consenso vs. Divergência):**
+  - Juiz automático (escolhido pela maior cota livre) gera 4 blocos estruturados — **Consenso**, **Divergências & Alertas**, **IA Recomendada** e **Síntese Prática** — destacando a vencedora e recolhendo automaticamente os demais cards.
+- **Busca na Web + Leitor Automático de Links:**
+  - Lê automaticamente até 3 URLs coladas (inclusive redirecionamentos do Google mobile, Instagram, Facebook e Reddit) e faz busca gratuita (DuckDuckGo + fallback Wikipedia) com proteção **anti-SSRF**.
+- **Produtividade no Dia a Dia:**
+  - **Anexos multimodais:** colar prints (`Ctrl + V`), arrastar ou anexar imagens (com compressão automática e lightbox) e PDFs.
+  - **Busca full-text + Pin:** pesquisa instantânea por título e conteúdo completo (sem acento) + fixar conversas no topo.
+  - **Templates editáveis:** biblioteca de prompts reutilizáveis na barra e no Zero State.
+  - **Memória Compartilhada:** compactação automática em segundo plano de turnos antigos + edição manual compartilhada entre todas as IAs.
+  - **Exportação `.md`** completa de qualquer conversa em 1 clique.
+- **Interface Eraser Neon Blueprint em Largura Total:**
+  - Layout responsivo de 3 colunas retráteis, cards das IAs em grade adaptativa lado a lado (sem corte lateral nem rolagem presa dentro do card) e frontend 100% modularizado em ES Modules acíclicos.
 
 ---
 
@@ -39,277 +55,312 @@ O **AI Council** é um hub de inteligência coletiva que coordena múltiplas int
 
 ```mermaid
 flowchart TB
-    subgraph Frontend["Frontend Web (127.0.0.1:4317)"]
-        UI["Clean Chat UI + Eraser Design System<br/>(public/index.html, styles.css, dashboard.js)"]
+    subgraph Client["Frontend Web & PWA (ES Modules Acíclicos)"]
+        UI["public/index.html + styles.css + dashboard.js<br/>public/js/{state,api,markdown,telemetry,motion,projects,composer,sidebar,voice,chat}.js"]
+        SW["Service Worker & PWA<br/>(public/sw.js, manifest.json, offline.html)"]
     end
 
-    subgraph Server["Servidor Local Node.js / TypeScript"]
-        HTTP["HTTP Monitor & API Server<br/>(src/monitor.ts)"]
-        Engine["Debate Engine v2<br/>(src/debate/debate-engine.ts)"]
-        Runner["Background Task Runner<br/>(src/debate/runner.ts)"]
-        Registry["Provider Registry<br/>(src/providers/registry.ts)"]
-        Gate["UsageGate (RPM / RPD / TPM / TPD)<br/>(src/providers/usage-gate.ts)"]
+    subgraph Server["Servidor Node.js / TypeScript (src/monitor.ts)"]
+        HTTP["HTTP REST + SSE Hub<br/>(src/debate/stream-hub.ts)"]
+        Engine["Debate Engine v2 & Verdict<br/>(debate-engine.ts, verdict.ts)"]
+        Runner["Runner Paralelo + AbortController<br/>(src/debate/runner.ts)"]
+        ProjRAG["Cérebro Local (BM25 + PDF + Safe FS)<br/>(src/projects/{project-rag,pdf-extract}.ts)"]
+        WebCtx["Busca Web & Leitor de Links<br/>(src/web/web-context.ts)"]
+        Audio["Voz: Whisper & Edge Neural TTS<br/>(src/providers/{whisper,tts}.ts)"]
+        Gate["UsageGate (RPM/RPD/TPM/TPD)<br/>(src/providers/usage-gate.ts)"]
     end
 
-    subgraph Providers["Provedores Externos (APIs Gratuitas)"]
-        Gemini["Google Gemini API<br/>(src/providers/gemini.ts)"]
-        Groq["Groq Cloud API<br/>(src/providers/openai-compat.ts)"]
-        OpenRouter["OpenRouter API (:free)<br/>(src/providers/openai-compat.ts)"]
+    subgraph External["APIs Gratuitas"]
+        Gemini["Google Gemini API"]
+        Groq["Groq Cloud (LLM + Whisper)"]
+        OpenRouter["OpenRouter (:free)"]
+        EdgeTTS["Microsoft Edge Neural TTS"]
     end
 
-    subgraph Storage["Persistência Atômica Local (data/)"]
-        DebatesDB[("data/debates.json")]
+    subgraph Storage["Persistência Atômica Local (data/ — ignorada no Git)"]
+        Sessions[("data/sessions/index.json + *.json")]
+        ProjectsDB[("data/projects/index.json + files/")]
+        TemplatesDB[("data/templates.json")]
         UsageDB[("data/usage.json")]
-        EventsDB[("data/monitor-events.json")]
     end
 
-    UI <-->|"REST JSON (/status, /providers, /debates)"| HTTP
+    UI <-->|"REST JSON + SSE (/events/stream)"| HTTP
     HTTP --> Engine
     HTTP --> Runner
-    HTTP --> Registry
-    Engine <--> DebatesDB
-    HTTP <--> EventsDB
+    HTTP --> ProjRAG
+    HTTP --> WebCtx
+    HTTP --> Audio
+    Engine <--> Sessions
+    ProjRAG <--> ProjectsDB
+    HTTP <--> TemplatesDB
     Runner --> Engine
-    Runner --> Registry
-    Registry --> Gate
+    Runner --> Gate
     Gate <--> UsageDB
-    Registry --> Gemini
-    Registry --> Groq
-    Registry --> OpenRouter
+    Gate --> Gemini
+    Gate --> Groq
+    Gate --> OpenRouter
+    Audio --> Groq
+    Audio --> EdgeTTS
 ```
 
 ---
 
-## 3. Dinâmica dos Debates e Papéis das IAs
+## 3. Modos de Uso, Papéis e Orçamento de Contexto
 
-### 3.1. Ciclo de Vida das Etapas (`DebateStage`)
-1. **`initial_response` (Rodada 1 — Análise Inicial):**
-   Cada IA participante analisa o problema original sob a ótica do seu papel técnico específico e propõe uma solução prática e enxuta (teto de `1.100 tokens`).
-2. **`critique` (Rodadas 2 a N — Crítica Cruzada e Refinamento):**
-   Cada IA recebe um resumo compactado (`até 3.000 caracteres` por resposta, preservando início e fim) das propostas da rodada anterior, aponta até 3 falhas objetivas e entrega uma versão corrigida e consolidada (teto de `1.100 tokens`).
-3. **`synthesis` (Etapa Final — Síntese e Conclusão Conjunta):**
-   O relator do conselho (prioritariamente o `Gemini`, ou o primeiro provedor automático participante) recebe as posições finais (`até 4.500 caracteres` por resposta) e redige o documento final com a **Solução Final** e a **Conclusão do Conselho** (teto de `1.600 tokens`).
-4. **`completed` (Finalizado):**
-   A síntese é gravada em `debate.conclusion` e exibida em destaque no final do chat.
+### 3.1. Combinações no Composer
+- **Formato:** `Normal` (conversa natural e direta) ou `Prompt MD` (resposta técnica estruturada em Markdown, com foco `Geral`, `Backend` ou `Frontend`).
+- **Dinâmica:** `Direto` (1 turno rápido com 1 IA ou com o Trio em paralelo) ou `Debate` (1 a 3 rodadas de crítica cruzada + Síntese Final do relator).
+- **Atalhos rápidos:** `1 IA` ou `Trio` no composer e seletor **`Respondendo: ... ▾`** na barra superior para trocar a IA da próxima mensagem em 1 clique.
 
-### 3.2. Matriz de Papéis por Foco de Trabalho (`DebateFocus`)
+### 3.2. Papéis no Debate (`Prompt MD`)
 
 | Plataforma | Foco: `geral` | Foco: `backend` | Foco: `frontend` |
 | :--- | :--- | :--- | :--- |
-| **Gemini** *(auto)* | **Arquiteto e relator:** propõe a arquitetura principal, código essencial e redige a síntese final. | **Arquiteto e relator:** propõe estrutura, contratos e consolida a solução. | **Arquiteto e relator:** estrutura componentes, estado e consolida o código. |
-| **Groq** *(auto)* | **Revisor técnico:** foca em bugs prováveis, segurança, tratamento de erros e casos de borda. | **Revisor técnico:** audita vulnerabilidades, concorrência, validação e falhas de borda. | **Revisor técnico:** audita XSS, acessibilidade, performance e estados de erro. |
-| **OpenRouter** *(auto)* | **Voz alternativa:** propõe uma abordagem diferente da mais óbvia, explicando os trade-offs. | **Revisor de simplicidade:** corta complexidade acidental, acoplamento e dívida técnica. | **Revisor de UX e estética:** aplica regras estritas contra visual genérico de IA. |
-| **ChatGPT** *(manual)* | **Autor alternativo:** questiona premissas ignoradas e propõe solução complementar. | **Autor alternativo:** explora arquitetura alternativa e trade-offs práticos. | **Autor alternativo:** propõe padrões de interação e layout alternativos. |
-| **Claude** *(manual)* | **Revisor de qualidade:** prioriza clareza, legibilidade, bons nomes e fácil manutenção. | **Revisor de qualidade:** refina código limpo, tipagem e manutenibilidade. | **Revisor de qualidade:** refina semântica HTML, CSS modular e clareza. |
+| **Gemini** *(auto)* | Arquiteto e relator (síntese final). | Arquiteto e relator (contratos e merge). | Arquiteto e relator (estrutura e estado). |
+| **Groq** *(auto)* | Revisor técnico (bugs, segurança e borda). | Auditor de segurança, concorrência e borda. | Auditor de XSS, acessibilidade e erros. |
+| **OpenRouter** *(auto)* | Voz alternativa e otimização. | Revisor de simplicidade e desacoplamento. | Revisor de UX e estética sem cara genérica. |
+| **ChatGPT / Claude** *(manuais)* | Autor alternativo / Revisor de qualidade. | Arquitetura alternativa / Código limpo. | Padrões de layout / Semântica e clareza. |
+
+### 3.3. Orçamento Dinâmico por IA (`src/shared/context-budget.ts`)
+Cada provedor recebe o histórico, anexos, fontes web e trechos do Projeto dimensionados para a sua janela gratuita (evitando que o Groq gratuito estoure `8.000 TPM`):
+
+| Orçamento (caracteres) | Gemini | OpenRouter / Alto Contexto | Groq Gratuito (8k TPM) |
+| :--- | :---: | :---: | :---: |
+| Histórico unificado | `24.000` | `20.000` | `7.500` |
+| Anexos de texto | `22.000` | `18.000` | `4.500` |
+| **Contexto de Projeto (RAG)** | **`16.000`** | **`12.000`** | **`3.000`** |
+| Contexto Web (links/busca) | `6.500` | `6.000` | `2.200` |
+| Memória Compartilhada | `2.800` | `2.400` | `2.000` |
 
 ---
 
-## 4. Proteção de Cota e Custo Zero (`UsageGate`)
+## 4. Projetos / Pastas com "Cérebro Local" (RAG)
 
-O módulo `src/providers/usage-gate.ts` atua como um *circuit breaker* e *rate limiter* local antes de qualquer requisição sair para a internet:
+Na barra lateral esquerda, a seção **`PROJETOS`** organiza conversas com contexto permanente:
 
-- **Margem de Segurança (`USAGE_SAFETY`):** Por padrão opera em `0.9` (90%), interrompendo o uso local **antes** de atingir o teto real do provedor.
-- **Controle por Minuto (RPM / TPM):** Mantém uma janela deslizante de 60 segundos em memória. Se o limite por minuto estiver próximo (ex.: `8.000 tokens/min` na Groq), o `UsageGate` aguarda automaticamente a liberação da janela antes de disparar a requisição.
-- **Controle Diário Persistente (RPD / TPD):** Gravado atomicamente em `data/usage.json`, respeitando o fuso horário de referência de cada provedor (`America/Los_Angeles` para o Gemini; `UTC` para Groq e OpenRouter).
-- **Trava Estrita `:free` no OpenRouter:** Em `src/providers/registry.ts`, qualquer modelo configurado em `OPENROUTER_MODELS` cujo ID não termine em `:free` é recusado imediatamente na inicialização.
-- **Fallback Automático de Modelos:** Cada provedor aceita uma lista ordenada de modelos (principal + reservas). Em caso de indisponibilidade ou erro de modelo/rate-limit temporário, o cliente tenta o próximo modelo da fila respeitando o limite máximo de tentativas (`maxHttpAttempts`).
-
----
-
-## 5. Arquitetura Frontend e Design System
-
-A interface web (`public/index.html`, `public/styles.css`, `public/dashboard.js`) adota uma arquitetura **Clean Chat-First** combinada ao **Eraser Design System (Neon Blueprint on Black Velvet)**:
-
-- **Layout em 3 Regiões Retráteis (`100vw × 100vh`):**
-  1. **Sidebar Esquerda Retrátil (`#left-sidebar`):** Botão `+ Novo Debate →`, seções colapsáveis para **Navegação do Sistema** (*Chat Central*, *Resumo & Monitoramento*, *Atividade & Histórico*) e **Conversas / Debates**, além do rodapé compacto com status do servidor e relógio.
-  2. **Palco Central (`#main-stage`):** Conversa centralizada (`860px`), blocos retráteis de raciocínio por rodada (`Pensando... 00:00.0s` → `Pensou por X.Xs — Rodada N`), cards de respostas individuais colapsáveis com renderização segura de Markdown/código e **AI Prompt Panel** fixo na base.
-  3. **Dock Direito Compacto (`#right-ai-panel`):** Exibe exclusivamente as **3 IAs automáticas** (`Gemini`, `Groq`, `OpenRouter`) com seus ícones vetoriais SVG reais, cronômetro ao vivo (`100ms`), aviso de conclusão (`✔ Concluído • Xs`) e micro-barra de limite diário (`reqHoje/reqMax req`).
-- **Tokens Visuais Principais:**
-  - Superfície principal: `--color-obsidian` (`#181818`) e blocos de código em `--color-ink-black` (`#080808`).
-  - Acentos técnicos: `--color-iris-glow` (`#9985ff`), `--color-sky-pulse` (`#94dbff`), `--color-saffron-whisper` (`#d6ca6f`) e `--color-rose-quartz` (`#ffa3c2`).
-  - Sombras sólidas sem blur: `--shadow-subtle` (`6px 6px 0px 0px #080808`) e `--shadow-subtle-2` (`6px 6px 0px 0px #363054`).
+- **Origem híbrida:**
+  1. **Instruções fixas:** regras, stack, tom e restrições injetadas automaticamente em todos os turnos (inclusive nas rodadas de Crítica e Síntese).
+  2. **Uploads no projeto (PC e celular):** arquivos `.md`, `.txt`, `.json`, `.csv`, `.yml`, código-fonte e **`.pdf`** (texto extraído automaticamente com `unpdf` e indexado para que **Gemini, Groq e OpenRouter** consigam consultar o conteúdo).
+  3. **Pasta local do PC (opcional):** caminho de uma pasta local lido em modo **estritamente somente leitura**, com botão **`Testar Pasta`**.
+- **Busca BM25 local (0 custo de API):**
+  - Projetos pequenos (até `14.000` chars / 8 arquivos) enviam a base completa.
+  - Projetos maiores quebram os arquivos em blocos sobrepostos e selecionam os trechos mais relevantes por pontuação **BM25 sem acentos**.
+- **Trava rígida de segurança (não contornável):**
+  - Bloqueia automaticamente `.env`, `.env.*`, `*.key`, `*.pem`, `*.p12`, `*.pfx`, `*.jks`, `id_rsa*`, `credentials*`, `*secret*`, `.git`, `node_modules`, `dist`, `build`, `.next`, `__pycache__`, bancos `.sqlite`/`.db` e binários.
+- **Transparência no chat:** cada mensagem mostra a barra recolhível **`Contexto do Projeto · <Nome> (N trechos)`** listando exatamente quais arquivos/trechos foram usados.
+- **Gestão segura:** qualquer conversa pode ser movida para dentro ou fora de um projeto pelo menu **`Projeto ▾`** na barra superior; excluir um projeto mantém suas conversas intactas em *Todos os chats*.
 
 ---
 
-## 6. Estrutura do Projeto
+## 5. Voz Completa: Groq Whisper + Vozes Neurais (Edge TTS)
+
+- **Entrada por Voz (Segurar para Gravar):**
+  - Botão de microfone no composer usando **Groq `whisper-large-v3-turbo`** em português (fallback `whisper-large-v3`).
+  - Soltar envia automaticamente; arrastar para a esquerda (> 75px) cancela; limite de 2 minutos.
+- **Saída com Voz Neural Individual (`Microsoft Edge Neural TTS`):**
+  - **Gemini:** `pt-BR-ThalitaMultilingualNeural` (equilibrada e clara)
+  - **Groq:** `pt-BR-AntonioNeural` (`+6%` de velocidade, ágil e objetivo)
+  - **OpenRouter:** `pt-BR-FranciscaNeural` (expressiva e alternativa)
+  - **Juiz / Síntese:** `pt-BR-AntonioNeural` (`-2%` / `-4Hz`, tom grave de relator)
+  - Cache LRU em memória (25 áudios / 30 min) + fallback automático para `speechSynthesis` nativo.
+- **Modo "Ouvir Conselho" + Mini-Player Flutuante:**
+  - Reproduz todas as respostas do turno em fila com pré-carregamento da próxima faixa, barra de progresso clicável, Play/Pause, Pular (`⏭`), velocidade (`1x`/`1.25x`/`1.5x`) e seletor `⚙` para personalizar a voz de cada IA.
+
+---
+
+## 6. Veredito do Conselho e Busca na Web
+
+### 6.1. Veredito (Consenso vs. Divergência)
+Quando 2 ou mais IAs respondem no turno, o botão **`Veredito`** aciona o juiz automático (escolhido por maior cota restante no `UsageGate` + bônus de contexto):
+- Entrega **1. Consenso**, **2. Divergências & Alertas**, **3. Por que a IA venceu** e **4. Síntese Prática**.
+- Marca a vencedora com selo dourado **`★ Recomendada`**, recolhe uma única vez os cards não vencedores para leitura limpa e oferece **`Ir para <IA>`**, **`Copiar síntese`**, **`Ouvir`** e **`Reavaliar ▾`** para trocar o juiz.
+
+### 6.2. Busca na Web + Leitor Automático de Links
+- Toggle **`Web: Auto | Off`** no composer.
+- **Leitor de links:** extrai e lê automaticamente até 3 URLs coladas na mensagem, desembrulhando links de redirecionamento (`google.com/url?...`, Facebook, Instagram, Reddit).
+- **Busca gratuita:** DuckDuckGo HTML/Lite (com filtro de anúncios) + fallback Wikipedia + leitura profunda das 2 melhores páginas.
+- **Anti-SSRF:** bloqueia `localhost`, `127.0.0.1`, redes LAN privadas (`10.x`, `172.16-31.x`, `192.168.x`), Tailscale (`100.64.0.0/10`) e protocolos não-HTTP.
+- Exibe a barra recolhível **`Fontes consultadas (N)`** com links clicáveis abaixo da mensagem.
+
+---
+
+## 7. Proteção de Cota e Custo Zero (`UsageGate`)
+
+O módulo `src/providers/usage-gate.ts` atua antes de qualquer chamada externa:
+- **Margem de segurança (`USAGE_SAFETY=0.9`):** trava em 90% dos limites diários/por minuto.
+- **Janela deslizante de 60s (RPM / TPM)** + **contador diário persistido em `data/usage.json`** (respeitando `America/Los_Angeles` no Gemini e `UTC` na Groq/OpenRouter).
+- **Trava estrita `:free` no OpenRouter:** recusa na inicialização qualquer modelo que não termine em `:free`.
+- **Google Search Grounding do Gemini em opt-in (`GEMINI_WEB_GROUNDING=true`):** desativado por padrão para evitar `429` da cota separada do Free Tier (usando a busca web gratuita local).
+
+---
+
+## 8. Desktop (Bandeja do Windows) e Celular (PWA / Remoto)
+
+### 8.1. Aplicativo de Bandeja do Windows (`scripts/win/`)
+- Instale os atalhos na Área de Trabalho e Menu Iniciar com:
+  ```powershell
+  npm.cmd run install:shortcuts
+  ```
+- Ou inicie diretamente pela bandeja com `npm.cmd run tray`.
+- Clique com o **botão direito** no ícone do AI Council ao lado do relógio para **Abrir no navegador**, **Iniciar / Parar / Reiniciar servidor**, ativar **Iniciar com o Windows** ou **Abrir logs**.
+
+### 8.2. Acesso no Celular (Wi-Fi Local ou Tailscale HTTPS) + PWA
+- O servidor escuta em `0.0.0.0:4317` (configurável por `HOST` e `PORT`).
+- Acesso local no PC (`127.0.0.1:4317`) entra direto; acessos remotos (Wi-Fi / Tailscale HTTPS) exibem a tela de bloqueio protegida por `ACCESS_PASSWORD` com cookie `HttpOnly` + botão **Bloquear**.
+- Inclui `manifest.json`, `sw.js`, `offline.html` e ícones oficiais em `public/icons/` para adicionar à tela inicial do celular.
+
+---
+
+## 9. Estrutura do Projeto
 
 ```text
 AI-Council/
-├── data/                        # Persistência local JSON (criada automaticamente)
-│   ├── debates.json             # Histórico e estado completo das sessões de debate
-│   ├── usage.json               # Contadores diários de requisições e tokens por IA
-│   └── monitor-events.json      # Eventos de alerta/limite registrados pelo monitor
-├── public/                      # Frontend Web (Clean Chat + Eraser Design System)
-│   ├── index.html               # App Shell em 3 colunas retráteis
-│   ├── styles.css               # Tokens e estilos do Eraser Design System
-│   └── dashboard.js             # Estado reativo, timers de 100ms, Markdown e chamadas HTTP
-├── scripts/                     # Utilitários de linha de comando (CLI)
-│   ├── list-free-models.ts      # Lista modelos gratuitos disponíveis nos provedores
-│   ├── list-models.ts           # Inspeção geral de modelos
-│   └── test-providers.ts        # Diagnóstico e teste real/dry-run das chaves de API
-├── src/                         # Backend TypeScript
+├── data/                              # Persistência local (ignorada no Git)
+│   ├── sessions/                      # index.json + um JSON por conversa
+│   ├── projects/                      # index.json + arquivos indexados por projeto
+│   ├── templates.json                 # Biblioteca de templates editáveis
+│   ├── usage.json                     # Contadores diários do UsageGate
+│   └── monitor-events.json            # Histórico de alertas/eventos
+├── public/                            # Frontend Web + PWA (ES Modules)
+│   ├── index.html                     # Shell principal, modais e player de voz
+│   ├── styles.css                     # Eraser Neon Blueprint (Desktop & Mobile)
+│   ├── dashboard.js                   # Ponto de entrada, bindings e registro de hooks
+│   ├── manifest.json / sw.js / offline.html
+│   ├── icons/                         # Ícones SVG, PNG (192/512/maskable) e ICO
+│   └── js/
+│       ├── state.js                   # Estado reativo, constantes, timers e uiHooks
+│       ├── api.js                     # REST client, auth, SSE e sincronização
+│       ├── markdown.js                # Parser Markdown seguro, syntax highlight e export .md
+│       ├── telemetry.js               # Dock direito, cotas, cronômetros e monitoramento
+│       ├── motion.js                  # Scroll inteligente, minimapa, parallax e lightbox
+│       ├── projects.js                # Sidebar de projetos, modal, pasta PC e uploads
+│       ├── composer.js                # Composer, anexos multimodais, memória e templates
+│       ├── sidebar.js                 # Lista de conversas, busca, pin, topbar e ações
+│       ├── voice.js                   # Gravador Whisper + player Edge Neural TTS + fila
+│       └── chat.js                    # Renderização de turnos, Veredito, fontes e streams
+├── scripts/
+│   ├── win/                           # Bandeja Windows (tray.ps1, launch-tray.vbs, install-shortcuts.ps1)
+│   ├── tunnel.ts                      # Auxiliar de túnel remoto
+│   ├── test-providers.ts              # Teste real ou --dry das chaves de API
+│   └── list-free-models.ts            # Lista modelos gratuitos disponíveis
+├── src/
 │   ├── debate/
-│   │   ├── debate-engine.ts     # Máquina de estados do debate, prompts e síntese
-│   │   └── runner.ts            # Loop assíncrono que executa tarefas automáticas em paralelo
+│   │   ├── debate-engine.ts           # Máquina de estados, turnos, prompts e memória
+│   │   ├── runner.ts                  # Execução paralela automática + AbortController
+│   │   ├── stream-hub.ts              # Barramento SSE em tempo real
+│   │   └── verdict.ts                 # Juiz inteligente (Consenso vs. Divergência)
 │   ├── persistence/
-│   │   └── debate-store.ts      # Leitura/escrita atômica com fila de lock em data/debates.json
+│   │   ├── debate-store.ts            # Persistência atômica por sessão + busca full-text
+│   │   ├── project-store.ts           # CRUD atômico de Projetos e arquivos enviados
+│   │   └── template-store.ts          # CRUD atômico de Templates
+│   ├── projects/
+│   │   ├── pdf-extract.ts             # Extração de texto de PDFs (unpdf)
+│   │   └── project-rag.ts             # BM25 local, chunking e scanner somente-leitura seguro
 │   ├── providers/
-│   │   ├── gemini.ts            # Adaptador Google GenAI SDK com fallback de modelos
-│   │   ├── openai-compat.ts     # Adaptador OpenAI-compatible para Groq e OpenRouter
-│   │   ├── policy.ts            # Políticas e estimativas de tokens
-│   │   ├── registry.ts          # Inicialização de provedores, limites e snapshots
-│   │   ├── types.ts             # Contratos de provedores e classificação de erros
-│   │   └── usage-gate.ts        # Controle de cota por minuto e por dia (UsageGate)
+│   │   ├── gemini.ts                  # Adaptador Google GenAI (texto + visão + PDF)
+│   │   ├── openai-compat.ts           # Adaptador Groq e OpenRouter (:free)
+│   │   ├── whisper.ts                 # Transcrição de voz via Groq Whisper
+│   │   ├── tts.ts                     # Síntese neural individual via Microsoft Edge TTS
+│   │   ├── policy.ts / registry.ts / types.ts / usage-gate.ts
 │   ├── shared/
-│   │   └── debate-types.ts      # Tipagens compartilhadas de sessões, tarefas e respostas
-│   └── monitor.ts               # Servidor HTTP nativo (127.0.0.1:4317), rotas e segurança
-├── .env.example                 # Template de variáveis de ambiente
-├── package.json                 # Dependências e scripts NPM
-└── tsconfig.json                # Configuração do compilador TypeScript
+│   │   ├── debate-types.ts            # Contratos TypeScript compartilhados
+│   │   └── context-budget.ts          # Orçamentos de contexto por provedor
+│   ├── web/
+│   │   └── web-context.ts             # Busca web gratuita, leitor de URLs e anti-SSRF
+│   └── monitor.ts                     # Servidor HTTP, autenticação e rotas REST/SSE
+├── tests/                             # Suíte automatizada (node:test via tsx — 37 testes)
+│   ├── context-budget.test.ts
+│   ├── debate-engine.test.ts
+│   ├── frontend-integrity.test.ts
+│   ├── projects.test.ts
+│   ├── usage-gate.test.ts
+│   ├── verdict.test.ts
+│   ├── voice.test.ts
+│   └── web-context.test.ts
+├── .env.example                       # Modelo limpo de variáveis de ambiente
+├── package.json
+└── tsconfig.json
 ```
 
 ---
 
-## 7. Requisitos, Instalação e Configuração
+## 10. Instalação, Configuração e Scripts
 
-### 7.1. Pré-requisitos
-- **Node.js** `v20+` (recomendado `v22+`)
-- Chaves de API gratuitas para:
-  - **Google AI Studio (Gemini):** `GEMINI_API_KEY`
-  - **Groq Cloud:** `GROQ_API_KEY`
-  - **OpenRouter:** `OPENROUTER_API_KEY`
+### 10.1. Pré-requisitos e Instalação
+- **Node.js `v20+`** (recomendado `v22+`)
+- Instale as dependências (no Windows PowerShell use `npm.cmd`):
+  ```powershell
+  npm.cmd install
+  ```
 
-### 7.2. Instalação
-```powershell
-npm.cmd install
-```
-*(No Windows PowerShell, utilize `npm.cmd` caso a política de execução bloqueie scripts `.ps1`).*
-
-### 7.3. Configuração do `.env`
-Copie o arquivo `.env.example` para `.env` na raiz do projeto e preencha suas chaves:
+### 10.2. Configuração do `.env`
+Copie `.env.example` para `.env` e preencha suas chaves (nunca versione o `.env`):
 
 | Variável | Obrigatória | Padrão | Descrição |
 | :--- | :---: | :--- | :--- |
-| `MONITOR_TOKEN` | **Sim** | — | Token de segurança local (mínimo de 32 caracteres). |
-| `GEMINI_API_KEY` | **Sim** | — | Chave de API do Google AI Studio. |
-| `GROQ_API_KEY` | **Sim** | — | Chave de API da Groq Cloud. |
-| `OPENROUTER_API_KEY` | **Sim** | — | Chave de API do OpenRouter. |
-| `GEMINI_MODELS` | Não | `gemini-3.5-flash-lite,gemini-3.5-flash` | Lista de modelos Gemini (principal + reservas). |
-| `GROQ_MODELS` | Não | `openai/gpt-oss-120b,openai/gpt-oss-20b` | Lista de modelos Groq (principal + reservas). |
-| `OPENROUTER_MODELS` | Não | `nvidia/nemotron-3-ultra-550b-a55b:free,...` | Lista de modelos OpenRouter (**todos devem terminar em `:free`**). |
-| `GEMINI_RPM` / `GEMINI_RPD` | Não | `5` / `100` | Limites por minuto e por dia do Gemini. |
-| `GROQ_RPM` / `GROQ_RPD` | Não | `30` / `1000` | Limites de requisições da Groq. |
-| `GROQ_TPM` / `GROQ_TPD` | Não | `8000` / `200000` | Limites de tokens por minuto e por dia da Groq. |
-| `OPENROUTER_RPM` / `OPENROUTER_RPD` | Não | `20` / `50` | Limites de requisições do OpenRouter gratuito. |
-| `USAGE_SAFETY` | Não | `0.9` | Fator de segurança local (`0.9` = trava em 90% da cota). |
+| `MONITOR_TOKEN` | **Sim** | — | Token local de segurança (mín. 32 chars). |
+| `ACCESS_PASSWORD` | Rec. | `aicouncil2026` | Senha para acesso remoto/celular (Wi-Fi/HTTPS). |
+| `REQUIRE_PASSWORD_LOCAL` | Não | `false` | Se `true`, exige senha também no `127.0.0.1`. |
+| `GEMINI_API_KEY` | **Sim** | — | Chave gratuita do Google AI Studio. |
+| `GROQ_API_KEY` | **Sim** | — | Chave gratuita da Groq Cloud (LLM + Whisper). |
+| `OPENROUTER_API_KEY` | **Sim** | — | Chave gratuita do OpenRouter. |
+| `GEMINI_MODELS` | Não | `gemini-3.5-flash-lite,...` | Lista de modelos Gemini (principal + fallback). |
+| `GROQ_MODELS` | Não | `openai/gpt-oss-120b,...` | Lista de modelos Groq (principal + fallback). |
+| `OPENROUTER_MODELS` | Não | `...:free` | Lista OpenRouter (**obrigatório sufixo `:free`**). |
+| `GEMINI_WEB_GROUNDING` | Não | `false` | Habilita Google Search nativo do Gemini (opt-in). |
+| `HOST` / `PORT` | Não | `0.0.0.0` / `4317` | Interface de rede e porta do servidor HTTP. |
+| `USAGE_SAFETY` | Não | `0.9` | Trava preventiva de cota (`0.9` = 90%). |
+| `AI_COUNCIL_DATA_DIR` | Não | `./data` | Diretório alternativo de dados (usado nos testes). |
 
----
-
-## 8. Scripts Disponíveis
+### 10.3. Scripts Disponíveis
 
 | Comando | Descrição |
 | :--- | :--- |
-| `npm.cmd run test:providers:dry` | Valida as chaves e configurações do `.env` sem realizar chamadas externas. |
-| `npm.cmd run test:providers` | Executa 1 chamada mínima por provedor para testar conectividade e modelos. |
-| `npm.cmd run list-models` | Lista modelos gratuitos disponíveis nas APIs configuradas. |
-| `npm.cmd run monitor` | Inicia o servidor local e o runner automático em `http://127.0.0.1:4317`. |
-| `npm.cmd run dev` | Inicia o servidor em modo *watch* (recarrega ao editar arquivos em `src/`). |
-| `npm.cmd run build` | Compila o projeto TypeScript para JavaScript na pasta `dist/`. |
-| `npm.cmd run start` | Executa a versão compilada (`node dist/monitor.js`). |
+| `npm.cmd run build` | Compila TypeScript para `dist/`. |
+| `npm.cmd test` | Executa toda a suíte automatizada (`37` testes). |
+| `npm.cmd run start` | Executa o servidor compilado (`node dist/monitor.js`). |
+| `npm.cmd run monitor` | Executa o servidor diretamente em TypeScript (`tsx`). |
+| `npm.cmd run dev` | Executa em modo *watch* recarregando alterações em `src/`. |
+| `npm.cmd run tray` | Abre o ícone controlador na bandeja do Windows. |
+| `npm.cmd run install:shortcuts` | Cria os atalhos no Desktop e Menu Iniciar do Windows. |
+| `npm.cmd run test:providers:dry` | Valida `.env` e modelos sem fazer chamadas externas. |
+| `npm.cmd run test:providers` | Testa conectividade real com cada provedor configurado. |
+| `npm.cmd run list-models` | Lista modelos gratuitos disponíveis nas APIs. |
 
 ---
 
-## 9. Referência da API HTTP Local
+## 11. Referência da API HTTP Local
 
-O servidor escuta exclusivamente em `http://127.0.0.1:4317` e valida origem (`same-origin`) ou o cabeçalho `X-AI-Council-Token`.
+Todas as rotas autenticadas aceitam acesso local (`127.0.0.1`), sessão remota (`Cookie`/`X-AI-Council-Session`) ou `X-AI-Council-Token`.
 
-### `GET /health`
-Verifica a saúde do servidor.
-- **Resposta `200 OK`:**
-  ```json
-  {
-    "status": "online",
-    "service": "ai-council-usage-monitor",
-    "timestamp": "2026-11-17T16:00:00.000Z"
-  }
-  ```
-
-### `GET /status`
-Retorna o resumo de eventos do monitor e todas as sessões de debate armazenadas.
-- **Resposta `200 OK`:**
-  ```json
-  {
-    "status": "online",
-    "totalEvents": 0,
-    "latestEvents": [],
-    "activeDebatesCount": 1,
-    "debates": [ /* Array de DebateSession */ ]
-  }
-  ```
-
-### `GET /providers`
-Retorna o estado de prontidão, modelos configurados e consumo diário (`UsageGate`) dos 3 provedores automáticos (`gemini`, `groq`, `openrouter`).
-- **Resposta `200 OK`:**
-  ```json
-  {
-    "providers": [
-      {
-        "id": "gemini",
-        "name": "Gemini",
-        "ready": true,
-        "reason": null,
-        "models": ["gemini-3.5-flash-lite", "gemini-3.5-flash"],
-        "usage": {
-          "day": "2026-11-17",
-          "requestsToday": 7,
-          "tokensToday": 10823,
-          "requestsDailyCap": 90,
-          "tokensDailyCap": null,
-          "requestsPerMinuteCap": 4,
-          "tokensPerMinuteCap": 180000
-        }
-      }
-    ]
-  }
-  ```
-
-### `POST /debates`
-Cria e inicia imediatamente uma nova sessão de debate (pausando sessões anteriores que estivessem em execução).
-- **Corpo da Requisição:**
-  ```json
-  {
-    "title": "Arquitetura de microsserviços vs. monolito modular",
-    "topic": "Compare as abordagens para uma equipe de 8 desenvolvedores...",
-    "rules": "Seja direto e concreto.",
-    "participants": ["gemini", "groq", "openrouter"],
-    "totalRounds": 2,
-    "focus": "backend"
-  }
-  ```
-- **Resposta `201 Created`:** `{ "created": true, "debate": { ... } }`
-
-### `POST /debates/:id/respond`
-Registra manualmente a resposta de uma tarefa pendente (utilizado para assentos manuais como `ChatGPT` e `Claude`).
-- **Corpo da Requisição:** `{ "taskId": "uuid-da-tarefa", "content": "Texto em Markdown..." }`
-
-### `POST /debates/:id/pause` e `POST /debates/:id/resume`
-Pausa manualmente um debate em andamento preservando seu estado ou retoma a execução exatamente da tarefa pendente onde parou.
+| Grupo | Endpoints |
+| :--- | :--- |
+| **Sistema & Auth** | `GET /health`, `GET /status`, `GET /providers`, `GET /events/stream` (SSE), `GET /auth/status`, `POST /auth/login`, `POST /auth/logout` |
+| **Conversas & Debates** | `GET/POST /debates`, `GET /debates/search?q=`, `GET/PATCH/DELETE /debates/:id`, `POST /debates/:id/{message,respond,stop,pause,resume,regenerate,review,verdict,memory,rename,pin,project,delete}` |
+| **Projetos (Cérebro Local)** | `GET/POST /projects`, `POST /projects/inspect-folder`, `GET/PATCH/DELETE /projects/:id`, `POST /projects/:id/files`, `DELETE /projects/:id/files/:fileId` |
+| **Templates** | `GET/POST /templates`, `PATCH/DELETE /templates/:id` |
+| **Voz (Áudio)** | `POST /audio/transcribe` (Groq Whisper), `POST /audio/speak` (Microsoft Edge Neural TTS) |
 
 ---
 
-## 10. Persistência e Segurança
+## 12. Testes Automatizados e Integridade
 
-- **Gravação Atômica com Lock:** Tanto `data/debates.json`, `data/usage.json` quanto `data/monitor-events.json` utilizam filas de execução em memória (`withDebateLock` / `persistQueue`) e escrita em arquivo temporário (`.tmp`) seguida de `rename` atômico, impedindo corrupção de dados mesmo em execuções paralelas das IAs.
-- **Isolamento de Rede Local:** O servidor faz *bind* estrito em `127.0.0.1` (loopback local) e bloqueia requisições de origens externas via verificação de `Host`, `Origin` e `Sec-Fetch-Site`.
-- **Proteção contra Echo de Prompt:** Ao colar respostas manuais, a engine valida se o usuário não colou acidentalmente o próprio enunciado do prompt antes de avançar a etapa.
+Execute `npm.cmd test` para validar todas as 9 suítes (37 testes em ~1s):
+- **`tests/projects.test.ts`:** bloqueio de segredos (`.env`, `.pem`, `.key`, `.git`, `node_modules`, binários), BM25 em bases grandes e orçamento Groq vs. Gemini.
+- **`tests/frontend-integrity.test.ts`:** `node --check` em todos os módulos JS, grafo de imports **100% acíclico**, zero símbolos faltantes entre módulos, zero referências sem prefixo `state.` e simulação completa de boot + renderização (incluindo Projetos, Veredito e anexos).
+- **`tests/voice.test.ts`:** normalização de áudio Android/iOS, limpeza de Markdown para fala e vozes individuais por IA.
+- **`tests/verdict.test.ts`:** parsing resiliente de JSON, empates e compactação por orçamento.
+- **`tests/web-context.test.ts`:** anti-SSRF, desembrulhamento de links de redirecionamento e limpeza de HTML.
+- **`tests/debate-engine.test.ts`**, **`tests/usage-gate.test.ts`**, **`tests/context-budget.test.ts`**.
 
 ---
 
-## 11. Solução de Problemas (Troubleshooting)
+## 13. Solução de Problemas (Troubleshooting)
 
 | Sintoma | Causa Provável | Solução |
 | :--- | :--- | :--- |
-| **Erro de execução de script no PowerShell (`npm.ps1`)** | Política `ExecutionPolicy` restrita do Windows. | Utilize `npm.cmd` em vez de `npm` (ex.: `npm.cmd run monitor`). |
-| **Card da IA exibe `Sem chave`** | Chave ausente no `.env` ou modelo sem sufixo `:free` no OpenRouter. | Verifique o arquivo `.env` e rode `npm.cmd run test:providers:dry`. |
-| **Debate entra em `Pausado (Erro no Provedor)`** | Nome de modelo descontinuado ou falha de autenticação na API. | Execute `npm.cmd run list-models`, atualize o `.env` e clique em **`Retomar →`** no topo do chat. |
-| **Debate entra em `Pausado (Limite Gratuito Atingido)`** | Cota diária (`UsageGate`) ou rate-limit (`429`) atingido em um dos provedores. | Aguarde a renovação da janela de tempo (ou ajuste os limites no `.env`) e clique em **`Retomar →`**. |
+| **`Error: listen EADDRINUSE 0.0.0.0:4317`** | O servidor já está rodando em segundo plano (iniciado pela bandeja do Windows). | Não precisa rodar `npm.cmd run monitor`; use o ícone na bandeja (**Botão direito → Reiniciar servidor**) ou pare-o antes de abrir no terminal. |
+| **Erro ao rodar `npm` no PowerShell** | Política `ExecutionPolicy` bloqueando `npm.ps1`. | Utilize `npm.cmd` (ex.: `npm.cmd run build`, `npm.cmd test`). |
+| **Card da IA exibe `Sem chave`** | Chave ausente no `.env` ou modelo OpenRouter sem `:free`. | Confira o `.env` e rode `npm.cmd run test:providers:dry`. |
+| **Debate pausado por limite gratuito** | Cota diária/minuto (`UsageGate`) ou `429` atingido. | Aguarde a janela renovar e clique em **`Retomar →`** no topo do chat. |
+| **Mudanças visuais não apareceram** | Cache do navegador/Service Worker. | Pressione **`Ctrl + F5`** no PC (ou recarregue a aba no celular). |
