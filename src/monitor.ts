@@ -20,16 +20,27 @@ import { dirname, resolve, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
-import { ALL_PLATFORMS, type AIPlatform, type DebateSession } from "./shared/debate-types.js";
+import {
+  ALL_PLATFORMS,
+  type AIPlatform,
+  type ChatAttachment,
+  type DebateSession
+} from "./shared/debate-types.js";
 import {
   applyLimitSignalToDebates,
+  continueDebateSession,
   createDebateSession,
-  listDebateSessions,
+  getDebateSessionById,
+  listDebateSummaries,
   pauseDebateManually,
+  regenerateDebateResponse,
   resumeDebateSession,
-  submitDebateTaskResponse
+  reviewDebateResponseWithPlatform,
+  submitDebateTaskResponse,
+  updateSessionSharedMemoryManually
 } from "./debate/debate-engine.js";
 import { kickRunner, startRunner } from "./debate/runner.js";
+import { getActiveStreams, subscribeStreamHub } from "./debate/stream-hub.js";
 import { getProvidersStatus } from "./providers/registry.js";
 
 // ============================================
@@ -92,7 +103,7 @@ function getLocalWifiAddresses(): string[] {
   return ips;
 }
 
-const MAX_BODY_SIZE = 65_536;
+const MAX_BODY_SIZE = 262_144;
 const MAX_HISTORY = 200;
 const SERVER_DEDUP_WINDOW_MS = 30_000;
 
@@ -364,6 +375,21 @@ function slimDebateForDashboard(
 ): unknown {
   return {
     ...debate,
+    ...(Array.isArray(debate.turns)
+      ? {
+          turns: debate.turns.map((turn) => ({
+            ...turn,
+            ...(Array.isArray(turn.attachments) && turn.attachments.length > 0
+              ? {
+                  attachments: turn.attachments.map((att) => ({
+                    name: att.name,
+                    size: att.size
+                  }))
+                }
+              : {})
+          }))
+        }
+      : {}),
     tasks: (includePendingTasks
       ? debate.tasks
       : debate.tasks.filter((task) => task.status !== "pending")
@@ -374,6 +400,7 @@ function slimDebateForDashboard(
         task.seat === "manual";
       return {
         id: task.id,
+        ...(task.turnId ? { turnId: task.turnId } : {}),
         round: task.round,
         stage: task.stage,
         platform: task.platform,
@@ -389,6 +416,7 @@ function slimDebateForDashboard(
     }),
     responses: debate.responses.map((resp) => ({
       id: resp.id,
+      ...(resp.turnId ? { turnId: resp.turnId } : {}),
       taskId: resp.taskId,
       round: resp.round,
       stage: resp.stage,
@@ -868,7 +896,62 @@ async function main(): Promise<void> {
       }
 
       // ----------------------------------------
-      // STATUS, HISTÓRICO E DEBATES
+      // STREAM EM TEMPO REAL (SSE: /events/stream)
+      // ----------------------------------------
+
+      if (
+        request.method === "GET" &&
+        url.pathname === "/events/stream"
+      ) {
+        const querySession = url.searchParams.get("session") ?? "";
+        const authorizedByQuery =
+          querySession.length > 0 &&
+          safeCompareString(querySession.trim(), getExpectedSessionToken());
+
+        if (!isAuthorizedLocalClient(request) && !authorizedByQuery) {
+          sendJson(response, 401, {
+            error: "Não autorizado."
+          }, origin);
+          return;
+        }
+
+        response.writeHead(200, {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no"
+        });
+
+        const sendSse = (eventName: string, data: unknown): void => {
+          if (response.writableEnded || response.destroyed) return;
+          response.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        sendSse("ready", {
+          at: new Date().toISOString(),
+          activeStreams: getActiveStreams()
+        });
+
+        const unsubscribe = subscribeStreamHub((evt) => {
+          sendSse(evt.type, evt.data);
+        });
+
+        const heartbeat = setInterval(() => {
+          if (!response.writableEnded && !response.destroyed) {
+            response.write(": ping\n\n");
+          }
+        }, 25_000);
+
+        request.on("close", () => {
+          clearInterval(heartbeat);
+          unsubscribe();
+        });
+
+        return;
+      }
+
+      // ----------------------------------------
+      // STATUS, HISTÓRICO E RESUMO DE CONVERSAS
       // ----------------------------------------
 
       if (
@@ -885,30 +968,27 @@ async function main(): Promise<void> {
         }
 
         try {
-          const [events, debates] = await Promise.all([
+          const [events, summaries] = await Promise.all([
             readEvents(),
-            listDebateSessions()
+            listDebateSummaries()
           ]);
 
-          const activeDebatesCount = debates.filter(
+          const activeDebatesCount = summaries.filter(
             (d) => d.status === "running"
           ).length;
 
-          // Trava de segurança: a extensão de navegador (legado) usa o token e
-          // lia as tarefas pendentes para automatizar o ChatGPT/Claude pela
-          // interface web, o que pode violar os termos de uso. Só o painel
-          // (mesma origem) recebe as tarefas pendentes.
-          const includePending = isDashboardRequest(request);
-          const visibleDebates = debates.map((debate) =>
-            slimDebateForDashboard(debate, includePending)
-          );
-
           sendJson(response, 200, {
             status: "online",
+            capabilities: {
+              responseModes: true,
+              multiTurn: true,
+              streaming: true,
+              lightweightStatus: true
+            },
             totalEvents: events.length,
             latestEvents: events.slice(-20),
             activeDebatesCount,
-            debates: visibleDebates
+            debates: summaries
           }, origin);
         } catch (error) {
           console.error(
@@ -956,6 +1036,51 @@ async function main(): Promise<void> {
       }
 
       // ----------------------------------------
+      // DETALHE DE UMA CONVERSA (/debates/:id)
+      // ----------------------------------------
+
+      const debateDetailMatch = url.pathname.match(
+        /^\/debates\/([0-9a-fA-F-]{8,64})$/
+      );
+
+      if (debateDetailMatch && request.method === "GET") {
+        if (!isAuthorizedLocalClient(request)) {
+          sendJson(response, 401, {
+            error: "Não autorizado."
+          }, origin);
+          return;
+        }
+
+        const debateId = debateDetailMatch[1] ?? "";
+        try {
+          const session = await getDebateSessionById(debateId);
+          if (!session) {
+            sendJson(response, 404, {
+              error: "Conversa não encontrada."
+            }, origin);
+            return;
+          }
+
+          const includePending = isDashboardRequest(request);
+          sendJson(
+            response,
+            200,
+            {
+              debate: slimDebateForDashboard(session, includePending),
+              activeStreams: getActiveStreams(debateId)
+            },
+            origin
+          );
+        } catch (error) {
+          console.error("[AI Council] Erro ao ler conversa:", error);
+          sendJson(response, 500, {
+            error: "Falha ao carregar a conversa."
+          }, origin);
+        }
+        return;
+      }
+
+      // ----------------------------------------
       // LISTAR OU CRIAR DEBATES (/debates)
       // ----------------------------------------
 
@@ -970,15 +1095,12 @@ async function main(): Promise<void> {
 
         if (request.method === "GET") {
           try {
-            const debates = await listDebateSessions();
-            const includePending = isDashboardRequest(request);
+            const summaries = await listDebateSummaries();
             sendJson(
               response,
               200,
               {
-                debates: debates.map((d) =>
-                  slimDebateForDashboard(d, includePending)
-                )
+                debates: summaries
               },
               origin
             );
@@ -1018,6 +1140,10 @@ async function main(): Promise<void> {
               )
             : [];
 
+          const rawAttachments = Array.isArray(payload.attachments)
+            ? (payload.attachments as ChatAttachment[])
+            : undefined;
+
           try {
             const session = await createDebateSession({
               title: typeof payload.title === "string" ? payload.title : "",
@@ -1028,13 +1154,21 @@ async function main(): Promise<void> {
               focus:
                 payload.focus === "backend" || payload.focus === "frontend"
                   ? payload.focus
-                  : "geral"
+                  : "geral",
+              responseMode:
+                payload.responseMode === "normal"
+                  ? "normal"
+                  : "prompt_markdown",
+              interactionMode:
+                payload.interactionMode === "direct" ? "direct" : "debate",
+              attachments: rawAttachments
             });
 
             console.log(
-              "[AI Council] Debate criado:",
+              "[AI Council] Sessão criada:",
               session.id,
-              session.title
+              session.title,
+              `(${session.responseMode}/${session.interactionMode})`
             );
 
             // Os assentos automáticos começam a responder imediatamente.
@@ -1049,7 +1183,7 @@ async function main(): Promise<void> {
               error:
                 error instanceof Error
                   ? error.message
-                  : "Não foi possível criar o debate."
+                  : "Não foi possível criar a conversa."
             }, origin);
           }
 
@@ -1062,7 +1196,7 @@ async function main(): Promise<void> {
       // ----------------------------------------
 
       const debateActionMatch = url.pathname.match(
-        /^\/debates\/([0-9a-fA-F-]{36})\/(respond|pause|resume)$/
+        /^\/debates\/([0-9a-fA-F-]{8,64})\/(respond|pause|resume|message|regenerate|review|memory)$/
       );
 
       if (debateActionMatch && request.method === "POST") {
@@ -1095,6 +1229,107 @@ async function main(): Promise<void> {
         }
 
         try {
+          if (action === "message") {
+            const rawParticipants = Array.isArray(payload.participants)
+              ? payload.participants.filter(
+                  (p): p is AIPlatform =>
+                    typeof p === "string" && VALID_PARTICIPANTS.has(p)
+                )
+              : [];
+
+            const rawAttachments = Array.isArray(payload.attachments)
+              ? (payload.attachments as ChatAttachment[])
+              : undefined;
+
+            const updated = await continueDebateSession(debateId, {
+              message:
+                typeof payload.message === "string" ? payload.message : "",
+              rules:
+                typeof payload.rules === "string" ? payload.rules : undefined,
+              participants: rawParticipants,
+              totalRounds: Number(payload.totalRounds) || 2,
+              focus:
+                payload.focus === "backend" || payload.focus === "frontend"
+                  ? payload.focus
+                  : "geral",
+              responseMode:
+                payload.responseMode === "normal"
+                  ? "normal"
+                  : "prompt_markdown",
+              interactionMode:
+                payload.interactionMode === "direct" ? "direct" : "debate",
+              attachments: rawAttachments
+            });
+
+            kickRunner();
+
+            sendJson(response, 200, {
+              updated: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
+          if (action === "regenerate") {
+            const responseId =
+              typeof payload.responseId === "string" ? payload.responseId : "";
+
+            const updated = await regenerateDebateResponse(debateId, responseId);
+            kickRunner();
+
+            sendJson(response, 200, {
+              updated: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
+          if (action === "review") {
+            const responseId =
+              typeof payload.responseId === "string" ? payload.responseId : "";
+            const reviewer =
+              typeof payload.reviewer === "string" &&
+              VALID_PARTICIPANTS.has(payload.reviewer)
+                ? (payload.reviewer as AIPlatform)
+                : null;
+
+            if (!reviewer) {
+              sendJson(response, 400, {
+                error: "Selecione uma IA válida para revisar."
+              }, origin);
+              return;
+            }
+
+            const updated = await reviewDebateResponseWithPlatform(
+              debateId,
+              responseId,
+              reviewer
+            );
+            kickRunner();
+
+            sendJson(response, 200, {
+              updated: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
+          if (action === "memory") {
+            const summary =
+              typeof payload.summary === "string" ? payload.summary : "";
+
+            const updated = await updateSessionSharedMemoryManually(
+              debateId,
+              summary
+            );
+
+            sendJson(response, 200, {
+              updated: true,
+              debate: slimDebateForDashboard(updated, true)
+            }, origin);
+            return;
+          }
+
           if (action === "respond") {
             const taskId =
               typeof payload.taskId === "string" ? payload.taskId : "";
@@ -1111,7 +1346,7 @@ async function main(): Promise<void> {
 
             sendJson(response, 200, {
               updated: true,
-              debate: updated
+              debate: slimDebateForDashboard(updated, true)
             }, origin);
             return;
           }
@@ -1126,7 +1361,7 @@ async function main(): Promise<void> {
 
             sendJson(response, 200, {
               updated: true,
-              debate: updated
+              debate: slimDebateForDashboard(updated, true)
             }, origin);
             return;
           }
@@ -1138,7 +1373,7 @@ async function main(): Promise<void> {
 
             sendJson(response, 200, {
               updated: true,
-              debate: updated
+              debate: slimDebateForDashboard(updated, true)
             }, origin);
             return;
           }

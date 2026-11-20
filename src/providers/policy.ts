@@ -54,6 +54,9 @@ export async function runWithFallback(args: {
   let lastError: ProviderError | null = null;
 
   for (let attempt = 0; attempt < maxHttpAttempts; attempt++) {
+    if (attempt > 0) {
+      request.onReset?.();
+    }
     const model = models[attempt % models.length] as string;
     const ticket = await gate.acquire(estimate);
 

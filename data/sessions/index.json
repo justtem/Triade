@@ -1,0 +1,366 @@
+[
+  {
+    "id": "98a8ea1b-963e-4e63-b9cd-58e4f1dfb70c",
+    "title": "Preciso de uma forma de viajar 300km sem gastar demais com...",
+    "topic": "Preciso de uma forma de viajar 300km sem gastar demais com gasolina e tenho um carro 1.0 mil",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "responseMode": "normal",
+    "interactionMode": "debate",
+    "turnCount": 2,
+    "createdAt": "2026-11-20T00:05:52.003Z",
+    "updatedAt": "2026-11-20T00:07:27.073Z",
+    "completedAt": "2026-11-20T00:07:27.073Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "765cdf62-6af1-40ef-8fb4-cd6d35ac8548",
+    "title": "preciso de uma receita infalível de brownie",
+    "topic": "preciso de uma receita infalível de brownie",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "responseMode": "normal",
+    "interactionMode": "debate",
+    "turnCount": 3,
+    "createdAt": "2026-11-19T23:38:20.652Z",
+    "updatedAt": "2026-11-19T23:42:51.417Z",
+    "completedAt": "2026-11-19T23:42:51.417Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "69f12182-20f5-493b-bf86-19cc95f60ca3",
+    "title": "Deus existe?",
+    "topic": "Deus existe?",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 3,
+    "currentRound": 3,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "responseMode": "normal",
+    "interactionMode": "debate",
+    "turnCount": 3,
+    "createdAt": "2026-11-19T23:06:18.265Z",
+    "updatedAt": "2026-11-19T23:18:26.963Z",
+    "completedAt": "2026-11-19T23:18:26.963Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "0e6b0b98-f418-4a85-9088-69d8de1e6321",
+    "title": "Como fazer um bolo",
+    "topic": "Como fazer um bolo",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "responseMode": "normal",
+    "interactionMode": "debate",
+    "turnCount": 2,
+    "createdAt": "2026-11-19T23:03:49.237Z",
+    "updatedAt": "2026-11-19T23:05:02.723Z",
+    "completedAt": "2026-11-19T23:05:02.723Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "1d20ead5-d203-471b-bcf9-5896c1fb45ed",
+    "title": "Como fazer um bolo",
+    "topic": "Como fazer um bolo",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 1,
+    "currentRound": 1,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-19T22:56:22.423Z",
+    "updatedAt": "2026-11-19T22:56:30.722Z",
+    "completedAt": "2026-11-19T22:56:30.722Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "8e1f524b-d659-4550-ac0f-807f7fe0a7d9",
+    "title": "Me faça uma calculadora completa em java, com funções e...",
+    "topic": "Me faça uma calculadora completa em java, com funções e parametros",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 3,
+    "currentRound": 3,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-19T22:22:47.984Z",
+    "updatedAt": "2026-11-19T22:24:03.246Z",
+    "completedAt": "2026-11-19T22:24:03.246Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "87c5240e-97f5-4b81-b48d-9c321dfcfaf6",
+    "title": "Me passe um código de um vetor com cadastro e exclusão e...",
+    "topic": "Me passe um código de um vetor com cadastro e exclusão e atualização de nomes",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-18T20:26:03.136Z",
+    "updatedAt": "2026-11-18T20:26:31.013Z",
+    "completedAt": "2026-11-18T20:26:31.013Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "6451215a-1ae6-4d11-97be-789d9797f674",
+    "title": "Qual a melhor linguagem para fazer um backend seguro?",
+    "topic": "Qual a melhor linguagem para fazer um backend seguro?",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-18T19:31:00.849Z",
+    "updatedAt": "2026-11-18T19:33:50.332Z",
+    "completedAt": "2026-11-18T19:33:50.332Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "7a6ecf53-2139-4975-8e16-c1d8ad8a8480",
+    "title": "qual é a stack mais simples para aplicar uma prova que envolva...",
+    "topic": "qual é a stack mais simples para aplicar uma prova que envolva crud completa com backend e interface e banco de dados",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T21:22:11.732Z",
+    "updatedAt": "2026-11-17T21:28:09.352Z",
+    "completedAt": "2026-11-17T21:28:09.352Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "f395ec24-210f-450e-a245-809db0bb1562",
+    "title": "# CRUD RESTful Básico em Java 21 e Spring Boot 3 Desenvolver um...",
+    "topic": "# CRUD RESTful Básico em Java 21 e Spring Boot 3\n\nDesenvolver um CRUD extremamente simples, direto e funcional para gerenciamento de produtos em uma API REST usando Java 21, Spring Boot 3.x e Spring Data JPA. O foco é simplicidade máxima, c...",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T19:34:52.626Z",
+    "updatedAt": "2026-11-17T19:36:27.051Z",
+    "completedAt": "2026-11-17T19:36:27.051Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "da4022e1-a96e-4b3e-8532-a88d5af3c555",
+    "title": "# Especificação Técnica: Sincronização de Schema Gere uma...",
+    "topic": "# Especificação Técnica: Sincronização de Schema\n\nGere uma especificação técnica em Markdown para um módulo de **Auditoria de Logs de API**.\n\n## Estrutura Obrigatória da Resposta\nA resposta deve seguir rigorosamente esta estrutura de seções...",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T19:21:10.860Z",
+    "updatedAt": "2026-11-17T19:23:19.163Z",
+    "completedAt": "2026-11-17T19:23:19.163Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "f1ebcf16-6e23-4ec8-af2d-ba4d43272666",
+    "title": "# Revisão de Arquitetura e Código: Sistema de Autenticação e...",
+    "topic": "# Revisão de Arquitetura e Código: Sistema de Autenticação e Pagamento\n\nEstou finalizando o backend de um gateway de pagamentos e defini a seguinte arquitetura para validação de usuários e transações:\n\n> **Decisão Atual:** Para garantir máx...",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T19:16:26.819Z",
+    "updatedAt": "2026-11-17T19:17:49.948Z",
+    "completedAt": "2026-11-17T19:17:49.948Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "674dc837-4551-4001-a2bb-4535e46bfdf7",
+    "title": "# Tarefa: Implementar um Rate Limiter em JavaScript (Node.js)...",
+    "topic": "# Tarefa: Implementar um Rate Limiter em JavaScript (Node.js)\n\nCrie uma função de controle de taxa de requisições (Rate Limiter) por IP utilizando a estratégia de janela deslizante (Sliding Window).\n\n## Regras Inegociáveis (Restrições)\n1. *...",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T19:08:14.923Z",
+    "updatedAt": "2026-11-17T19:09:46.670Z",
+    "completedAt": "2026-11-17T19:09:46.670Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "53bc1283-edba-4786-ab00-860227f6ecb8",
+    "title": "Me passe uma receita de bolo",
+    "topic": "Me passe uma receita de bolo",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T17:17:53.225Z",
+    "updatedAt": "2026-11-17T17:18:32.262Z",
+    "completedAt": "2026-11-17T17:18:32.262Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "2c1fff06-8220-4009-939c-1c77d070be8c",
+    "title": "Me faça um prompt em markdom para fazer um crude em java com...",
+    "topic": "Me faça um prompt em markdom para fazer um crude em java com springboot basico com back e front para um .zip que eu vou baixar e executar no meu vscode.\nno pior dos cenarios, apenas compile os arquivos.",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T16:36:54.852Z",
+    "updatedAt": "2026-11-17T16:39:27.136Z",
+    "completedAt": "2026-11-17T16:39:27.136Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "b3a4c702-56f5-41c6-bd63-f60051285134",
+    "title": "Me faça um crude basico",
+    "topic": "Me faça um crude de acadastro basico do basico e um frontend mais basico ainda",
+    "participants": [
+      "gemini",
+      "groq",
+      "openrouter"
+    ],
+    "totalRounds": 2,
+    "currentRound": 2,
+    "currentStage": "completed",
+    "status": "completed",
+    "focus": "geral",
+    "turnCount": 1,
+    "createdAt": "2026-11-17T03:11:55.903Z",
+    "updatedAt": "2026-11-17T16:06:26.275Z",
+    "completedAt": "2026-11-17T16:06:26.275Z",
+    "engineVersion": 2
+  },
+  {
+    "id": "f9e254cc-5c0f-4810-884e-0c6cd184e335",
+    "title": "executavel",
+    "topic": "# SÍNTESE E SOLUÇÃO DEFINITIVA\n\nA solução definitiva adota **3 arquivos totais**, **1 única dependência** (`spring-boot-starter-web`), armazenamento thread-safe em memória com `ConcurrentHashMap` e `record` (Java 17+), validação REST corret...",
+    "participants": [
+      "chatgpt",
+      "claude",
+      "gemini"
+    ],
+    "totalRounds": 3,
+    "currentRound": 3,
+    "currentStage": "completed",
+    "status": "completed",
+    "turnCount": 1,
+    "createdAt": "2026-11-15T15:07:52.906Z",
+    "updatedAt": "2026-11-15T15:12:16.282Z",
+    "completedAt": "2026-11-15T15:12:16.282Z"
+  },
+  {
+    "id": "8f5fbe56-4d73-4f5b-ab40-42ef15409ac6",
+    "title": "Me faça um crude basico",
+    "topic": "Quero que me faça um crude com springboot em java o mais basico possivel, com um frontend mais basico ainda, quero que o crude seja apenas de cadastro,atualização e delete de nome de pessoas. quero bem basico mesmo.",
+    "participants": [
+      "chatgpt",
+      "claude",
+      "gemini"
+    ],
+    "totalRounds": 3,
+    "currentRound": 3,
+    "currentStage": "completed",
+    "status": "completed",
+    "turnCount": 1,
+    "createdAt": "2026-11-15T15:04:47.940Z",
+    "updatedAt": "2026-11-15T15:06:27.941Z",
+    "completedAt": "2026-11-15T15:06:27.941Z"
+  }
+]

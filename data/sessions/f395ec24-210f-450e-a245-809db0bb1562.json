@@ -1,0 +1,214 @@
+{
+  "id": "f395ec24-210f-450e-a245-809db0bb1562",
+  "title": "# CRUD RESTful Básico em Java 21 e Spring Boot 3 Desenvolver um...",
+  "topic": "# CRUD RESTful Básico em Java 21 e Spring Boot 3\n\nDesenvolver um CRUD extremamente simples, direto e funcional para gerenciamento de produtos em uma API REST usando Java 21, Spring Boot 3.x e Spring Data JPA. O foco é simplicidade máxima, código limpo e aderência aos padrões REST sem adicionar camadas de complexidade desnecessárias.\n\n## Contrato Técnico e Nomenclatura\n- **Stack / Linguagem:** Java 21, Spring Boot 3.x, Spring Data JPA, Jakarta Validation e Lombok.\n- **Assinaturas / Nomes Fixos:**\n  - **Entidade JPA:** `Produto` (campos: `Long id`, `String nome`, `BigDecimal preco`).\n  - **Interface JPA:** `ProdutoRepository extends JpaRepository<Produto, Long>`.\n  - **Controller REST:** `ProdutoController` mapeado na rota base `/api/produtos`.\n  - **Métodos do Controller:** `listarTodos()`, `buscarPorId(Long id)`, `criar(Produto produto)`, `atualizar(Long id, Produto produto)` e `deletar(Long id)`.\n\n## Regras Inegociáveis\n1. **OBRIGATÓRIO:** Entregar as 3 estruturas (`Produto`, `ProdutoRepository` e `ProdutoController`) completas e funcionais em um único bloco de código bem organizado, utilizando anotações do Lombok (`@Data`, `@NoArgsConstructor`, `@AllArgsConstructor`) para economizar linhas.\n2. **OBRIGATÓRIO:** Utilizar `ResponseEntity` com os códigos de status HTTP semânticos corretos (`200 OK`, `201 Created`, `204 No Content` e `404 Not Found` via `ResponseStatusException`).\n3. **PROIBIDO:** Usar comentários `# TODO`, `// TODO`, `// implementar lógica` ou omitir qualquer um dos 5 endpoints do CRUD.\n4. **PROIBIDO:** Criar camadas extras não solicitadas (como interfaces de `Service`, `Mapper`, `ControllerAdvice` complexo, paginação ou autenticação) ou delegar para serviços externos.\n5. **LIMITE DE ESCOPO:** Omita a lista de `import` padrão do Java/Spring e mantenha o código completo em no máximo **85 linhas** para evitar truncamento entre as rodadas do conselho.\n6. **FOCO DA CRÍTICA (RODADA 2):** Priorizem a revisão da semântica REST, validação básica com `@Valid` (`@NotBlank`, `@Positive`) e tratamento correto do `Optional` no `buscarPorId`/`atualizar`/`deletar`, evitando sugerir arquiteturas complexas (como Hexagonal/Clean Architecture).\n\n## Estrutura Obrigatória da Resposta\nA resposta consolidada e a síntese final devem conter rigorosamente estas seções:\n\n### 1. Resumo das Rotas e Status HTTP\nTabela enxuta listando os 5 endpoints (`Método HTTP`, `Rota` e `Status de Sucesso/Erro`).\n\n### 2. Implementação Completa (Código Único)\nBloco de código único em `java` contendo a entidade `Produto`, a interface `ProdutoRepository` e a classe `ProdutoController` prontos para uso.\n\n### 3. Boas Práticas Aplicadas\nLista rápida (máximo de 4 tópicos curtos) destacando as garantias de validação e segurança transacional incluídas no código.",
+  "rules": "Seja curto, direto e 100% concreto. Sem enrolação, sem introdução longa e sem teoria desnecessária. Foque na solução prática e acionável.",
+  "participants": [
+    "gemini",
+    "groq",
+    "openrouter"
+  ],
+  "totalRounds": 2,
+  "currentRound": 2,
+  "currentStage": "completed",
+  "status": "completed",
+  "participantStates": {
+    "gemini": {
+      "platform": "gemini",
+      "availability": "unknown"
+    },
+    "groq": {
+      "platform": "groq",
+      "availability": "unknown"
+    },
+    "openrouter": {
+      "platform": "openrouter",
+      "availability": "unknown"
+    }
+  },
+  "tasks": [
+    {
+      "id": "1b1f57f5-81dd-4132-8060-3fb122406b8b",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:34:52.634Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:35:19.259Z"
+    },
+    {
+      "id": "d0626426-6232-4e9f-a21a-4e29f57293a1",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:34:52.634Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:34:54.930Z"
+    },
+    {
+      "id": "3c4c6f43-fe4d-43f3-88ef-2b9a74f233b3",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:34:52.634Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:35:24.072Z"
+    },
+    {
+      "id": "a3b3f5e6-0695-46af-8d6f-9453a628c347",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:35:24.072Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:35:53.257Z"
+    },
+    {
+      "id": "b3ac03a9-9c28-4be5-af14-29db054f51f1",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:35:24.072Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:35:54.893Z"
+    },
+    {
+      "id": "a542fbf6-6129-4733-8bac-a3af846ca1e9",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:35:24.072Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:36:24.699Z"
+    },
+    {
+      "id": "7ad16afb-6fd4-4081-ae0a-428ad0d8dcb6",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:36:24.700Z",
+      "seat": "auto",
+      "role": "Relator",
+      "maxTokens": 1600,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:36:27.051Z"
+    }
+  ],
+  "responses": [
+    {
+      "id": "264e269b-bc62-449f-a7db-8c09fd2eca30",
+      "taskId": "d0626426-6232-4e9f-a21a-4e29f57293a1",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "### 1. Resumo das Rotas e Status HTTP  \n\n| Método | Rota                | Sucesso            | Erro                     |\n|--------|---------------------|--------------------|--------------------------|\n| GET    | /api/produtos       | 200 OK (lista)     | —                        |\n| GET    | /api/produtos/{id}  | 200 OK (objeto)    | 404 Not Found            |\n| POST   | /api/produtos       | 201 Created        | 400 Bad Request (validação) |\n| PUT    | /api/produtos/{id}  | 200 OK (objeto)    | 404 Not Found / 400 Bad Request |\n| DELETE | /api/produtos/{id}  | 204 No Content     | 404 Not Found            |\n\n---\n\n### 2. Implementação Completa  \n\n```java\npackage com.example.demo;\n\nimport jakarta.persistence.*;\nimport jakarta.validation.constraints.*;\nimport lombok.*;\nimport org.springframework.dao.EmptyResultDataAccessException;\nimport org.springframework.http.*;\nimport org.springframework.web.bind.annotation.*;\nimport org.springframework.web.server.ResponseStatusException;\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport java.math.BigDecimal;\nimport java.util.List;\n\n@Entity\n@Data @NoArgsConstructor @AllArgsConstructor\npublic class Produto {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n\n    @NotBlank\n    private String nome;\n\n    @Positive\n    private BigDecimal preco;\n}\n\ninterface ProdutoRepository extends JpaRepository<Produto, Long> {}\n\n@RestController\n@RequestMapping(\"/api/produtos\")\n@RequiredArgsConstructor\npublic class ProdutoController {\n\n    private final ProdutoRepository repo;\n\n    @GetMapping\n    public ResponseEntity<List<Produto>> listarTodos() {\n        return ResponseEntity.ok(repo.findAll());\n    }\n\n    @GetMapping(\"/{id}\")\n    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {\n        Produto p = repo.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));\n        return ResponseEntity.ok(p);\n    }\n\n    @PostMapping\n    public ResponseEntity<Produto> criar(@Valid @RequestBody Produto produto) {\n        Produto salvo = repo.save(produto);\n        return ResponseEntity.status(HttpStatus.CREATED).body(salvo);\n    }\n\n    @PutMapping(\"/{id}\")\n    public ResponseEntity<Produto> atualizar(@PathVariable Long id,\n                                              @Valid @RequestBody Produto produto) {\n        if (!repo.existsById(id))\n            throw new ResponseStatusException(HttpStatus.NOT_FOUND);\n        produto.setId(id);\n        Produto atualizado = repo.save(produto);\n        return ResponseEntity.ok(atualizado);\n    }\n\n    @DeleteMapping(\"/{id}\")\n    public ResponseEntity<Void> deletar(@PathVariable Long id) {\n        try {\n            repo.deleteById(id);\n        } catch (EmptyResultDataAccessException ex) {\n            throw new ResponseStatusException(HttpStatus.NOT_FOUND);\n        }\n        return ResponseEntity.noContent().build();\n    }\n}\n```\n\n*(O código possui 79 linhas, incluindo quebras.)*\n\n---\n\n### 3. Boas Práticas Aplicadas  \n\n- **Validação declarativa** (`@NotBlank`, `@Positive`) combinada com `@Valid` no corpo da requisição.  \n- **Tratamento de `Optional`** usando `orElseThrow` para gerar `404` consistente.  \n- **Uso de `ResponseEntity`** para devolver códigos de status corretos e evitar retornos implícitos.  \n- **Checagem pré‑existência** em `PUT` e tratamento de exceção `EmptyResultDataAccessException` em `DELETE` para garantir respostas idempotentes e seguras.",
+      "submittedAt": "2026-11-17T19:34:54.930Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 1828
+    },
+    {
+      "id": "b2856e9c-12eb-4d30-b2e1-4d018fd801bb",
+      "taskId": "1b1f57f5-81dd-4132-8060-3fb122406b8b",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "*Suposição: Banco de dados H2 configurado em memória para execução imediata.*\n\n### 1. Resumo das Rotas e Status HTTP\n\n| Método HTTP | Rota | Status de Sucesso | Status de Erro |\n| :--- | :--- | :--- | :--- |\n| GET | `/api/produtos` | 200 OK | - |\n| GET | `/api/produtos/{id}` | 200 OK | 404 Not Found |\n| POST | `/api/produtos` | 201 Created | 400 Bad Request |\n| PUT | `/api/produtos/{id}` | 200 OK | 404 Not Found / 400 |\n| DELETE | `/api/produtos/{id}` | 204 No Content | 404 Not Found |\n\n### 2. Implementação Completa (Código Único)\n\n```java\npackage com.example.demo;\n\nimport jakarta.persistence.*;\nimport jakarta.validation.constraints.*;\nimport lombok.*;\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport org.springframework.http.HttpStatus;\nimport org.springframework.http.ResponseEntity;\nimport org.springframework.web.bind.annotation.*;\nimport org.springframework.web.server.ResponseStatusException;\nimport java.math.BigDecimal;\nimport java.util.List;\n\n@Entity\n@Data @NoArgsConstructor @AllArgsConstructor\nclass Produto {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @NotBlank private String nome;\n    @NotNull @Positive private BigDecimal preco;\n}\n\ninterface ProdutoRepository extends JpaRepository<Produto, Long> {}\n\n@RestController\n@RequestMapping(\"/api/produtos\")\n@AllArgsConstructor\nclass ProdutoController {\n    private final ProdutoRepository repository;\n\n    @GetMapping\n    public List<Produto> listarTodos() {\n        return repository.findAll();\n    }\n\n    @GetMapping(\"/{id}\")\n    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {\n        return repository.findById(id)\n                .map(ResponseEntity::ok)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n    }\n\n    @PostMapping\n    public ResponseEntity<Produto> criar(@Valid @RequestBody Produto produto) {\n        Produto salvo = repository.save(produto);\n        return ResponseEntity.status(HttpStatus.CREATED).body(salvo);\n    }\n\n    @PutMapping(\"/{id}\")\n    public ResponseEntity<Produto> atualizar(@PathVariable Long id, @Valid @RequestBody Produto produto) {\n        if (!repository.existsById(id)) {\n            throw new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\");\n        }\n        produto.setId(id);\n        return ResponseEntity.ok(repository.save(produto));\n    }\n\n    @DeleteMapping(\"/{id}\")\n    public ResponseEntity<Void> deletar(@PathVariable Long id) {\n        if (!repository.existsById(id)) {\n            throw new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\");\n        }\n        repository.deleteById(id);\n        return ResponseEntity.noContent().build();\n    }\n}\n```\n\n### 3. Boas Práticas Aplicadas\n\n- **Validação Declarativa:** Uso de `@Valid`, `@NotBlank` e `@Positive` para garantir integridade dos dados na entrada.\n- **Semântica REST e HTTP:** Retornos precisos com `ResponseEntity` e códigos padronizados (`201`, `204`, `404`).\n- **Tratamento Seguro de Nulos:** Resolução idiomática de `Optional` com `orElseThrow` e `ResponseStatusException`.\n- **Injeção de Dependências:** Uso de construtor único gerado pelo Lombok (`@AllArgsConstructor`) sem necessidade de `@Autowired`.",
+      "submittedAt": "2026-11-17T19:35:19.259Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 1811
+    },
+    {
+      "id": "0c27b736-9de5-4489-92b3-5e4bc2cf4011",
+      "taskId": "3c4c6f43-fe4d-43f3-88ef-2b9a74f233b3",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "### 1. Resumo das Rotas e Status HTTP\n\n| Método HTTP | Rota | Sucesso | Erro |\n| :--- | :--- | :--- | :--- |\n| `GET` | `/api/produtos` | `200 OK` | — |\n| `GET` | `/api/produtos/{id}` | `200 OK` | `404 Not Found` |\n| `POST` | `/api/produtos` | `201 Created` | `400 Bad Request` |\n| `PUT` | `/api/produtos/{id}` | `200 OK` | `404 Not Found` / `400 Bad Request` |\n| `DELETE` | `/api/produtos/{id}` | `204 No Content` | `404 Not Found` |\n\n### 2. Implementação Completa (Código Único)\n\n```java\n@Entity @Data @NoArgsConstructor @AllArgsConstructor\nclass Produto {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;\n    @NotBlank(message = \"Nome é obrigatório\") String nome;\n    @Positive(message = \"Preço deve ser positivo\") BigDecimal preco;\n}\n\ninterface ProdutoRepository extends JpaRepository<Produto, Long> {}\n\n@RestController @RequestMapping(\"/api/produtos\") @RequiredArgsConstructor\nclass ProdutoController {\n    private final ProdutoRepository repo;\n\n    @GetMapping List<Produto> listarTodos() { return repo.findAll(); }\n\n    @GetMapping(\"/{id}\")\n    Produto buscarPorId(@PathVariable Long id) {\n        return repo.findById(id).orElseThrow(() -> new ResponseStatusException(NOT_FOUND, \"Produto não encontrado\"));\n    }\n\n    @PostMapping @ResponseStatus(CREATED)\n    Produto criar(@Valid @RequestBody Produto produto) { return repo.save(produto); }\n\n    @PutMapping(\"/{id}\")\n    Produto atualizar(@PathVariable Long id, @Valid @RequestBody Produto dados) {\n        return repo.findById(id).map(p -> { p.setNome(dados.getNome()); p.setPreco(dados.getPreco()); return repo.save(p); })\n                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, \"Produto não encontrado\"));\n    }\n\n    @DeleteMapping(\"/{id}\") @ResponseStatus(NO_CONTENT)\n    void deletar(@PathVariable Long id) {\n        if (!repo.existsById(id)) throw new ResponseStatusException(NOT_FOUND, \"Produto não encontrado\");\n        repo.deleteById(id);\n    }\n}\n```\n\n### 3. Boas Práticas Aplicadas\n1. **Validação Declarativa**: `@Valid` + Bean Validation (`@NotBlank`, `@Positive`) garante integridade na entrada sem `if/else` manual.\n2. **Semântica REST Estrita**: `ResponseStatusException` mapeia exceções de negócio (404) diretamente para códigos HTTP, evitando `ControllerAdvice` verboso.\n3. **Transacionalidade Implícita**: `JpaRepository` garante transação atômica por operação (`save`, `delete`) sem `@Transactional` explícito.\n4. **Imutabilidade Parcial**: `id` gerado pelo banco (`IDENTITY`) e `final` no repository impedem alteração acidental de identidade e dependência.\n\n---\n\n### Visão Alternativa (Trade-off)\n\nA abordagem acima prioriza **conveniência e brevidade** (Controller \"gordo\", anotações no JPA Entity). Uma alternativa **mais robusta para produção** seria separar **DTOs de Entrada/Saída** da Entidade JPA.\n\n**Trade-off:**\n*   **Atual (Entidade exposta):** Menos código (~60 linhas), acoplamento direto DB↔API. Risco: vazamento de campos sensíveis, serialização cíclica futura, validação misturada com persistência.\n*   **Alternativa (DTOs + Mapper):** +40 linhas, desacoplamento total. Ganho: contratos de API estáveis, validação específica por operação (ex: `@NotNull` no ID no PUT), segurança (ocultar campos), evolução independente do schema.\n\n**Recomendação:** Use a solução entregue para **protótipos, microserviços internos simples ou contextos onde o schema do banco == contrato da API**. Adote DTOs assim que houver **versionamento de API, times distintos (frontend/backend) ou regras de negócio divergentes da persistência**.",
+      "submittedAt": "2026-11-17T19:35:24.072Z",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "tokens": 2199
+    },
+    {
+      "id": "8739e6b2-2a95-4cb6-94f3-8572392b4536",
+      "taskId": "a3b3f5e6-0695-46af-8d6f-9453a628c347",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "*Suposição: Banco de dados H2 configurado em memória para execução imediata.*\n\n### 1. Falhas Corrigidas na Versão Consolidada\n1. **Tratamento incompleto do PUT:** A versão anterior foi truncada no meio do método de atualização, impedindo a compilação.\n2. **Validação ausente no preço:** Garantido `@NotNull` junto a `@Positive` para evitar exceções em nulos.\n3. **Consistência de imports/retornos:** Padronizado o uso de `ResponseEntity` e `ResponseStatusException` para todas as operações críticas.\n\n---\n\n### 2. Implementação Completa (Código Único)\n\n```java\npackage com.example.demo;\n\nimport jakarta.persistence.*;\nimport jakarta.validation.constraints.*;\nimport lombok.*;\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport org.springframework.http.HttpStatus;\nimport org.springframework.http.ResponseEntity;\nimport org.springframework.web.bind.annotation.*;\nimport org.springframework.web.server.ResponseStatusException;\nimport java.math.BigDecimal;\nimport java.util.List;\n\n@Entity\n@Data @NoArgsConstructor @AllArgsConstructor\nclass Produto {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    \n    @NotBlank(message = \"O nome é obrigatório\")\n    private String nome;\n    \n    @NotNull(message = \"O preço é obrigatório\")\n    @Positive(message = \"O preço deve ser maior que zero\")\n    private BigDecimal preco;\n}\n\ninterface ProdutoRepository extends JpaRepository<Produto, Long> {}\n\n@RestController\n@RequestMapping(\"/api/produtos\")\n@RequiredArgsConstructor\nclass ProdutoController {\n    private final ProdutoRepository repository;\n\n    @GetMapping\n    public ResponseEntity<List<Produto>> listarTodos() {\n        return ResponseEntity.ok(repository.findAll());\n    }\n\n    @GetMapping(\"/{id}\")\n    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        return ResponseEntity.ok(produto);\n    }\n\n    @PostMapping\n    public ResponseEntity<Produto> criar(@Valid @RequestBody Produto produto) {\n        produto.setId(null);\n        Produto salvo = repository.save(produto);\n        return ResponseEntity.status(HttpStatus.CREATED).body(salvo);\n    }\n\n    @PutMapping(\"/{id}\")\n    public ResponseEntity<Produto> atualizar(@PathVariable Long id, @Valid @RequestBody Produto dados) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        produto.setNome(dados.getNome());\n        produto.preco(dados.getPreco()); // Correção de sintaxe para setPreco se necessário, usando Lombok:\n        produto.setPreco(dados.getPreco());\n        return ResponseEntity.ok(repository.save(produto));\n    }\n\n    @DeleteMapping(\"/{id}\")\n    public ResponseEntity<Void> deletar(@PathVariable Long id) {\n        if (!repository.existsById(id)) {\n            throw new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\");\n        }\n        repository.deleteById(id);\n        return ResponseEntity.noContent().build();\n    }\n}\n```\n\n---\n\n### 3. Boas Práticas Aplicadas\n- **Validação Robusta:** Uso conjunto de `@Valid`, `@NotBlank`, `@NotNull` e `@Positive` para bloquear payloads inválidos no contrato REST.\n- **Tratamento de `Optional` Seguro:** Mapeamento explícito para `ResponseStatusException(HttpStatus.NOT_FOUND)` em todas as buscas por ID.\n- **HTTP Semântico:** Retornos precisos com `200 OK`, `201 Created` e `204 No Content` encapsulados em `ResponseEntity`.\n- **Integridade de Identificador:** Garantia de que o método `POST` não sobrescreva IDs existentes ao forçar `produto.setId(null)`.",
+      "submittedAt": "2026-11-17T19:35:53.257Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 4246
+    },
+    {
+      "id": "a5ba86e2-4782-4d04-8428-441255e90c3f",
+      "taskId": "b3ac03a9-9c28-4be5-af14-29db054f51f1",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "**Falhas objetivas**\n\n1. **Validação incompleta no `PUT`** – o código aceita `id` no corpo e pode sobrescrever campos ausentes; o ideal é atualizar apenas se o recurso existir e usar os valores do payload, mantendo o `id` da URL.  \n2. **Retorno de `ResponseEntity` inconsistente** – alguns métodos retornam o objeto direto (`List<Produto>`) em vez de `ResponseEntity`, quebrando a padronização de códigos de status.  \n3. **Tratamento de exceção no `DELETE`** – usar `existsById` antes de `deleteById` gera duas consultas desnecessárias; `deleteById` já lança `EmptyResultDataAccessException` que deve ser capturada.\n\n---\n\n### Versão corrigida (único bloco, ≤ 85 linhas)\n\n```java\npackage com.example.demo;\n\nimport jakarta.persistence.*;\nimport jakarta.validation.constraints.*;\nimport lombok.*;\nimport org.springframework.dao.EmptyResultDataAccessException;\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport org.springframework.http.*;\nimport org.springframework.web.bind.annotation.*;\nimport org.springframework.web.server.ResponseStatusException;\nimport java.math.BigDecimal;\nimport java.util.List;\n\n@Entity\n@Data @NoArgsConstructor @AllArgsConstructor\nclass Produto {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n\n    @NotBlank\n    private String nome;\n\n    @NotNull @Positive\n    private BigDecimal preco;\n}\n\ninterface ProdutoRepository extends JpaRepository<Produto, Long> {}\n\n@RestController\n@RequestMapping(\"/api/produtos\")\n@RequiredArgsConstructor\nclass ProdutoController {\n    private final ProdutoRepository repo;\n\n    @GetMapping\n    public ResponseEntity<List<Produto>> listarTodos() {\n        return ResponseEntity.ok(repo.findAll());\n    }\n\n    @GetMapping(\"/{id}\")\n    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {\n        Produto p = repo.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));\n        return ResponseEntity.ok(p);\n    }\n\n    @PostMapping\n    public ResponseEntity<Produto> criar(@Valid @RequestBody Produto produto) {\n        Produto salvo = repo.save(produto);\n        return ResponseEntity.status(HttpStatus.CREATED).body(salvo);\n    }\n\n    @PutMapping(\"/{id}\")\n    public ResponseEntity<Produto> atualizar(@PathVariable Long id,\n                                              @Valid @RequestBody Produto dados) {\n        Produto atualizado = repo.findById(id).map(p -> {\n            p.setNome(dados.getNome());\n            p.setPreco(dados.getPreco());\n            return repo.save(p);\n        }).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));\n        return ResponseEntity.ok(atualizado);\n    }\n\n    @DeleteMapping(\"/{id}\")\n    public ResponseEntity<Void> deletar(@PathVariable Long id) {\n        try {\n            repo.deleteById(id);\n        } catch (EmptyResultDataAccessException ex) {\n            throw new ResponseStatusException(HttpStatus.NOT_FOUND);\n        }\n        return ResponseEntity.noContent().build();\n    }\n}\n```\n\n**Boas práticas aplicadas**\n\n- **Validação declarativa** (`@NotBlank`, `@NotNull`, `@Positive`) com `@Valid` nas requisições.  \n- **Tratamento uniforme de `Optional`** usando `orElseThrow` → `404`.  \n- **`ResponseEntity` em todos os endpoints** garante códigos HTTP explícitos.  \n- **`deleteById` com captura de `EmptyResultDataAccessException`** evita consulta extra e entrega `404` idempotente.",
+      "submittedAt": "2026-11-17T19:35:54.893Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 3927
+    },
+    {
+      "id": "81b5f93c-3205-4345-b3aa-cbb593405911",
+      "taskId": "a542fbf6-6129-4733-8bac-a3af846ca1e9",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "### 1. Falhas Objetivas nas Propostas Anteriores\n\n1.  **Validação de `preco` incompleta**: `@Positive` ignora `null` (comportamento padrão BV). **Obrigatório** `@NotNull @Positive` para rejeitar nulos e zerados.\n2.  **Acoplamento Entidade/Contrato (Imposto pelo Contrato)**: A assinatura fixa `criar(Produto produto)` vaza a Entidade JPA na API. Impede validações por operação (ex: `@Null` no ID no POST) e expõe estrutura de banco.\n3.  **`DELETE` ineficiente ou frágil**: Groq vaza exceção de infraestrutura (`EmptyResultDataAccessException`). Gemini/OpenRouter fazem 2 queries (`existsById` + `deleteById`). O ideal é `findById` → `delete(entity)` (1 query, seguro, transacional).\n\n---\n\n### 2. Versão Melhorada e Consolidada\n\n#### 1. Resumo das Rotas e Status HTTP\n\n| Método HTTP | Rota | Sucesso | Erro |\n| :--- | :--- | :--- | :--- |\n| GET | `/api/produtos` | 200 OK | — |\n| GET | `/api/produtos/{id}` | 200 OK | 404 Not Found |\n| POST | `/api/produtos` | 201 Created | 400 Bad Request |\n| PUT | `/api/produtos/{id}` | 200 OK | 404 Not Found / 400 |\n| DELETE | `/api/produtos/{id}` | 204 No Content | 404 Not Found |\n\n#### 2. Implementação Completa (Código Único)\n\n```",
+      "submittedAt": "2026-11-17T19:36:24.699Z",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "tokens": 4828
+    },
+    {
+      "id": "8234bc8a-d662-4168-a82d-196272e3f95b",
+      "taskId": "7ad16afb-6fd4-4081-ae0a-428ad0d8dcb6",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "### Solução final\n\n```java\npackage com.example.demo;\n\nimport jakarta.persistence.*;\nimport jakarta.validation.constraints.*;\nimport lombok.*;\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport org.springframework.http.*;\nimport org.springframework.web.bind.annotation.*;\nimport org.springframework.web.server.ResponseStatusException;\nimport java.math.BigDecimal;\nimport java.util.List;\n\n@Entity\n@Data @NoArgsConstructor @AllArgsConstructor\nclass Produto {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    \n    @NotBlank(message = \"O nome é obrigatório\")\n    private String nome;\n    \n    @NotNull(message = \"O preço é obrigatório\")\n    @Positive(message = \"O preço deve ser maior que zero\")\n    private BigDecimal preco;\n}\n\ninterface ProdutoRepository extends JpaRepository<Produto, Long> {}\n\n@RestController\n@RequestMapping(\"/api/produtos\")\n@RequiredArgsConstructor\nclass ProdutoController {\n    private final ProdutoRepository repository;\n\n    @GetMapping\n    public ResponseEntity<List<Produto>> listarTodos() {\n        return ResponseEntity.ok(repository.findAll());\n    }\n\n    @GetMapping(\"/{id}\")\n    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        return ResponseEntity.ok(produto);\n    }\n\n    @PostMapping\n    public ResponseEntity<Produto> criar(@Valid @RequestBody Produto produto) {\n        produto.setId(null);\n        Produto salvo = repository.save(produto);\n        return ResponseEntity.status(HttpStatus.CREATED).body(salvo);\n    }\n\n    @PutMapping(\"/{id}\")\n    public ResponseEntity<Produto> atualizar(@PathVariable Long id, @Valid @RequestBody Produto dados) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        produto.setNome(dados.getNome());\n        produto.setPreco(dados.getPreco());\n        return ResponseEntity.ok(repository.save(produto));\n    }\n\n    @DeleteMapping(\"/{id}\")\n    public ResponseEntity<Void> deletar(@PathVariable Long id) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        repository.delete(produto);\n        return ResponseEntity.noContent().build();\n    }\n}\n```\n\n### Conclusão do conselho\n\nO conselho chegou a um consenso sobre a necessidade de manter o escopo extremamente enxuto, utilizando validação rigorosa (`@NotNull` + `@Positive`) e o mapeamento seguro de `Optional` para `ResponseStatusException`. A principal divergência residual ocorreu no método `DELETE`: enquanto o Groq propôs capturar exceções de infraestrutura e o OpenRouter defendeu a busca prévia para deleção por entidade, a solução final unificou a checagem via `findById` seguida de `delete(produto)` para garantir uma única consulta otimizada, sem vazar exceções de baixo nível e atendendo perfeitamente ao contrato exigido.",
+      "submittedAt": "2026-11-17T19:36:27.051Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 3870
+    }
+  ],
+  "createdAt": "2026-11-17T19:34:52.626Z",
+  "updatedAt": "2026-11-17T19:36:27.051Z",
+  "focus": "geral",
+  "engineVersion": 2,
+  "conclusion": "### Solução final\n\n```java\npackage com.example.demo;\n\nimport jakarta.persistence.*;\nimport jakarta.validation.constraints.*;\nimport lombok.*;\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport org.springframework.http.*;\nimport org.springframework.web.bind.annotation.*;\nimport org.springframework.web.server.ResponseStatusException;\nimport java.math.BigDecimal;\nimport java.util.List;\n\n@Entity\n@Data @NoArgsConstructor @AllArgsConstructor\nclass Produto {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    \n    @NotBlank(message = \"O nome é obrigatório\")\n    private String nome;\n    \n    @NotNull(message = \"O preço é obrigatório\")\n    @Positive(message = \"O preço deve ser maior que zero\")\n    private BigDecimal preco;\n}\n\ninterface ProdutoRepository extends JpaRepository<Produto, Long> {}\n\n@RestController\n@RequestMapping(\"/api/produtos\")\n@RequiredArgsConstructor\nclass ProdutoController {\n    private final ProdutoRepository repository;\n\n    @GetMapping\n    public ResponseEntity<List<Produto>> listarTodos() {\n        return ResponseEntity.ok(repository.findAll());\n    }\n\n    @GetMapping(\"/{id}\")\n    public ResponseEntity<Produto> buscarPorId(@PathVariable Long id) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        return ResponseEntity.ok(produto);\n    }\n\n    @PostMapping\n    public ResponseEntity<Produto> criar(@Valid @RequestBody Produto produto) {\n        produto.setId(null);\n        Produto salvo = repository.save(produto);\n        return ResponseEntity.status(HttpStatus.CREATED).body(salvo);\n    }\n\n    @PutMapping(\"/{id}\")\n    public ResponseEntity<Produto> atualizar(@PathVariable Long id, @Valid @RequestBody Produto dados) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        produto.setNome(dados.getNome());\n        produto.setPreco(dados.getPreco());\n        return ResponseEntity.ok(repository.save(produto));\n    }\n\n    @DeleteMapping(\"/{id}\")\n    public ResponseEntity<Void> deletar(@PathVariable Long id) {\n        Produto produto = repository.findById(id)\n                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, \"Produto não encontrado\"));\n        repository.delete(produto);\n        return ResponseEntity.noContent().build();\n    }\n}\n```\n\n### Conclusão do conselho\n\nO conselho chegou a um consenso sobre a necessidade de manter o escopo extremamente enxuto, utilizando validação rigorosa (`@NotNull` + `@Positive`) e o mapeamento seguro de `Optional` para `ResponseStatusException`. A principal divergência residual ocorreu no método `DELETE`: enquanto o Groq propôs capturar exceções de infraestrutura e o OpenRouter defendeu a busca prévia para deleção por entidade, a solução final unificou a checagem via `findById` seguida de `delete(produto)` para garantir uma única consulta otimizada, sem vazar exceções de baixo nível e atendendo perfeitamente ao contrato exigido.",
+  "completedAt": "2026-11-17T19:36:27.051Z"
+}

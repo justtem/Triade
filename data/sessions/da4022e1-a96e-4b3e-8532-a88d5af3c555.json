@@ -1,0 +1,214 @@
+{
+  "id": "da4022e1-a96e-4b3e-8532-a88d5af3c555",
+  "title": "# Especificação Técnica: Sincronização de Schema Gere uma...",
+  "topic": "# Especificação Técnica: Sincronização de Schema\n\nGere uma especificação técnica em Markdown para um módulo de **Auditoria de Logs de API**.\n\n## Estrutura Obrigatória da Resposta\nA resposta deve seguir rigorosamente esta estrutura de seções em Markdown:\n\n### 1. Tabela de Campos\nUma tabela Markdown com as colunas: `Campo`, `Tipo`, `Obrigatório` e `Descrição`. Deve conter exatamente 5 campos essenciais para auditoria.\n\n### 2. Schema SQL\nUm bloco de código `sql` (PostgreSQL) criando a tabela `audit_logs` com **exatamente os mesmos 5 campos** definidos na tabela acima.\n\n### 3. Payload JSON de Exemplo\nUm bloco de código `json` válido representando um registro real que respeite **exatamente os mesmos 5 campos** e tipos das seções anteriores.\n\n### 4. Checklist de Validação\nUma lista de tarefas em Markdown (`- [ ]`) com 3 validações críticas antes de inserir o log no banco.",
+  "rules": "Seja curto, direto e 100% concreto. Sem enrolação, sem introdução longa e sem teoria desnecessária. Foque na solução prática e acionável.",
+  "participants": [
+    "gemini",
+    "groq",
+    "openrouter"
+  ],
+  "totalRounds": 2,
+  "currentRound": 2,
+  "currentStage": "completed",
+  "status": "completed",
+  "participantStates": {
+    "gemini": {
+      "platform": "gemini",
+      "availability": "unknown"
+    },
+    "groq": {
+      "platform": "groq",
+      "availability": "unknown"
+    },
+    "openrouter": {
+      "platform": "openrouter",
+      "availability": "unknown"
+    }
+  },
+  "tasks": [
+    {
+      "id": "cfa428c5-eddd-4c26-b26d-f4e74d9cc21c",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:21:10.869Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:21:13.759Z"
+    },
+    {
+      "id": "fa8b4fe9-5c29-42e7-8d06-195a1a47fe6a",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:21:10.869Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:21:12.240Z"
+    },
+    {
+      "id": "2465ed45-510f-4eab-91ad-cacc8867cae0",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:21:10.869Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:22:10.981Z"
+    },
+    {
+      "id": "03caacbf-c087-4d31-b0b4-163c6857bad3",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:22:10.981Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:22:13.410Z"
+    },
+    {
+      "id": "31faa4ae-2668-46b8-8381-beab0776ca5c",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:22:10.981Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:22:12.877Z"
+    },
+    {
+      "id": "1bfc062a-2e34-4c7e-b6f6-5cc33b8205e7",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:22:10.981Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:23:14.041Z"
+    },
+    {
+      "id": "c7ea7ec9-a804-48bf-a4e1-eb003e946ae1",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:23:14.042Z",
+      "seat": "auto",
+      "role": "Relator",
+      "maxTokens": 1600,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:23:19.163Z"
+    }
+  ],
+  "responses": [
+    {
+      "id": "8c4424a9-ed1c-4b5f-af30-136fee8c04d9",
+      "taskId": "fa8b4fe9-5c29-42e7-8d06-195a1a47fe6a",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "### 1. Tabela de Campos\n| Campo          | Tipo               | Obrigatório | Descrição                              |\n|----------------|--------------------|-------------|----------------------------------------|\n| id             | UUID               | Sim         | Identificador único do registro        |\n| api_endpoint   | VARCHAR(255)       | Sim         | URL ou caminho da API invocada         |\n| request_method | VARCHAR(10)        | Sim         | HTTP method (GET, POST, etc.)          |\n| status_code    | SMALLINT           | Sim         | Código HTTP retornado                  |\n| created_at     | TIMESTAMPTZ        | Sim         | Timestamp de criação (UTC)             |\n\n### 2. Schema SQL\n```sql\nCREATE TABLE audit_logs (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    api_endpoint VARCHAR(255) NOT NULL,\n    request_method VARCHAR(10) NOT NULL,\n    status_code SMALLINT NOT NULL,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n```\n\n### 3. Payload JSON de Exemplo\n```json\n{\n  \"id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"api_endpoint\": \"/v1/users\",\n  \"request_method\": \"POST\",\n  \"status_code\": 201,\n  \"created_at\": \"2026-11-17T14:32:00Z\"\n}\n```\n\n### 4. Checklist de Validação\n- [ ] Verificar se `api_endpoint` segue o padrão de caminho permitido (ex.: começa com `/` e não contém caracteres de controle).  \n- [ ] Garantir que `request_method` está entre os métodos permitidos (`GET, POST, PUT, PATCH, DELETE`).  \n- [ ] Confirmar que `status_code` está no intervalo 100‑599 e que o `created_at` não está no futuro (diferença < 5 s do relógio do servidor).",
+      "submittedAt": "2026-11-17T19:21:12.240Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 932
+    },
+    {
+      "id": "ff08466e-01a7-4b06-80bf-f0c3e5b8461d",
+      "taskId": "cfa428c5-eddd-4c26-b26d-f4e74d9cc21c",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "*Suposição: O banco de dados alvo é o PostgreSQL e a API utiliza autenticação baseada em HTTP.*\n\n### 1. Tabela de Campos\n\n| Campo | Tipo | Obrigatório | Descrição |\n| :--- | :--- | :---: | :--- |\n| `id` | UUID | Sim | Identificador único universal do evento de log. |\n| `timestamp` | TIMESTAMP | Sim | Data e hora exatas da ocorrência da requisição (UTC). |\n| `endpoint` | VARCHAR(255) | Sim | Caminho URI acessado na API. |\n| `status_code` | INTEGER | Sim | Código de status HTTP retornado ao cliente. |\n| `payload` | JSONB | Não | Dados enviados ou recebidos na requisição. |\n\n### 2. Schema SQL\n\n```sql\nCREATE TABLE audit_logs (\n    id UUID PRIMARY KEY,\n    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,\n    endpoint VARCHAR(255) NOT NULL,\n    status_code INTEGER NOT NULL,\n    payload JSONB\n);\n\nCREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp);\n```\n\n### 3. Payload JSON de Exemplo\n\n```json\n{\n  \"id\": \"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\",\n  \"timestamp\": \"2023-10-25T14:30:00Z\",\n  \"endpoint\": \"/api/v1/usuarios\",\n  \"status_code\": 201,\n  \"payload\": {\n    \"usuario_id\": 42,\n    \"acao\": \"criacao\"\n  }\n}\n```\n\n### 4. Checklist de Validação\n\n- [ ] Validar se o formato do campo `id` é um UUID válido v4 antes da persistência.\n- [ ] Sanitizar o conteúdo do campo `payload` para remover dados sensíveis (PII, senhas, tokens).\n- [ ] Garantir que o `timestamp` utilize o fuso horário UTC padronizado.",
+      "submittedAt": "2026-11-17T19:21:13.759Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 900
+    },
+    {
+      "id": "3b44ffd5-4d43-4606-8445-9f9a3c911524",
+      "taskId": "2465ed45-510f-4eab-91ad-cacc8867cae0",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "### 1. Tabela de Campos\n\n| Campo     | Tipo      | Obrigatório | Descrição                                      |\n|-----------|-----------|------------|------------------------------------------------|\n| log_id    | UUID      | Sim        | Identificador único da entrada de auditoria.    |\n| timestamp | TIMESTAMPTZ | Sim      | Momento em que o evento foi registrado (ISO‑8601).|\n| request_id| UUID      | Sim        | ID correlacionado da solicitação de API.         |\n| user_id   | UUID      | Sim        | ID do usuário que originou a solicitação.       |\n| action    | TEXT      | Sim        | Resumo descritivo da ação executada.            |\n\n### 2. Schema SQL\n\n```sql\nCREATE TABLE audit_logs (\n    log_id    UUID PRIMARY KEY,\n    timestamp TIMESTAMPTZ NOT NULL,\n    request_id UUID NOT NULL,\n    user_id   UUID NOT NULL,\n    action    TEXT NOT Μια NOT NULL\n);\n```\n\n### 3. Payload JSON de Exemplo\n\n```json\n{\n  \"log_id\": \"e7f3c2a1-5b9d-4e7a-8d3f-2c5b9a7e6f1d\",\n  \"timestamp\": \"2024-08-20T14:12:45.321Z\",\n  \"request_id\": \"a7e5b8c0-1234-4321-9876-543210fedcba\",\n  \"user_id\": \"c9d4e1b2-8765-4321-9876-543210fedcba\",\n  \"action\": \"Atualização de perfil do usuário concluída\"\n}\n```\n\n### 4. Checklist de Validação\n\n- [ ] Campos obrigatórios estão presentes e não nulos.\n- [ ] Timestamp está no formato ISO‑8601 e representa um fuso horário válido.\n- [ ] request_id é único na tabela (não duplicado).\n\n---\n\n### Voz Alternativa\n\n**Abordagem:** *Auditoria por amostragem* – registrar apenas solicitações que excedam um limiar de latência ou resultem em erro.\n\n**Trade-off:** Ganha-se drástica redução no volume de dados e custo de armazenamento, mas perde-se visibilidade completa de todas as operações. Logs completos são úteis para investigação forense detalhada, enquanto a amostragem focada pode prejudicar a detecção de problemas sutis que não afetam o desempenho ou geram erros. Utilize a amostragem como camada primária e complemente com logs completos seletivamente para eventos críticos.",
+      "submittedAt": "2026-11-17T19:22:10.981Z",
+      "model": "cohere/north-mini-code:free",
+      "tokens": 1760
+    },
+    {
+      "id": "b8f832a7-8a9d-45b8-a1cc-5690712eea23",
+      "taskId": "31faa4ae-2668-46b8-8381-beab0776ca5c",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "**Falhas identificadas**\n\n1. **Campos divergentes** – Cada proposta usa nomes diferentes; a especificação exige **exatamente 5 campos** consistentes entre tabela, SQL e JSON.  \n2. **Tipos inconsistentes** – Na proposta OpenRouter o tipo `TIMESTAMPTZ` está escrito erroneamente (`TIMESTAMPTZ` ok) e o `action` possui `NOT Μια NOT NULL` (caractere não‑ASCII).  \n3. **Segurança de dados sensíveis** – Nenhuma proposta inclui campo para armazenar o **ID da requisição** ou **user_id**, dificultando rastreamento e correlação de eventos; ao mesmo tempo, a proposta Gemini permite `payload` livre, expondo PII sem sanitização.\n\n---\n\n### Versão consolidada e corrigida\n\n#### 1. Tabela de Campos\n| Campo          | Tipo               | Obrigatório | Descrição                              |\n|----------------|--------------------|-------------|----------------------------------------|\n| id             | UUID               | Sim         | Identificador único do log (PK).       |\n| api_endpoint   | VARCHAR(255)       | Sim         | Caminho da API chamado (ex.: `/v1/users`). |\n| request_method | VARCHAR(10)        | Sim         | Método HTTP (GET, POST, PUT, PATCH, DELETE). |\n| status_code    | SMALLINT           | Sim         | Código HTTP retornado (100‑599).       |\n| created_at     | TIMESTAMPTZ        | Sim         | Timestamp UTC da criação do registro.  |\n\n#### 2. Schema SQL\n```sql\nCREATE TABLE audit_logs (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    api_endpoint VARCHAR(255) NOT NULL,\n    request_method VARCHAR(10) NOT NULL,\n    status_code SMALLINT NOT NULL CHECK (status_code BETWEEN 100 AND 599),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n```\n\n#### 3. Payload JSON de Exemplo\n```json\n{\n  \"id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"api_endpoint\": \"/v1/users\",\n  \"request_method\": \"POST\",\n  \"status_code\": 201,\n  \"created_at\": \"2026-11-17T14:32:00Z\"\n}\n```\n\n#### 4. Checklist de Validação\n- [ ] Verificar se `api_endpoint` começa com “/” e não contém caracteres de controle.  \n- [ ] Garantir que `request_method` está na lista permitida (`GET,POST,PUT,PATCH,DELETE`).  \n- [ ] Confirmar que `status_code` está entre 100 e 599 e que `created_at` não está no futuro (diferença ≤ 5 s do relógio do servidor).",
+      "submittedAt": "2026-11-17T19:22:12.877Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 2539
+    },
+    {
+      "id": "8911cca1-11a5-42c1-b1cc-a132eca290ec",
+      "taskId": "03caacbf-c087-4d31-b0b4-163c6857bad3",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "*Suposição: O banco de dados alvo é o PostgreSQL e a API utiliza autenticação baseada em HTTP.*\n\n### 1. Falhas Objetivas da Rodada Anterior\n1. Divergência de campos entre as propostas (algumas listavam `payload`, outras `request_method`).\n2. Erro de sintaxe no SQL da proposta OpenRouter (`TEXT Μια NOT NULL`).\n3. Falta de consistência estrita no número de campos exigido (exatamente 5).\n\n### 2. Versão Melhorada e Consolidada\n\n#### 1. Tabela de Campos\n| Campo          | Tipo         | Obrigatório | Descrição                                      |\n|----------------|--------------|-------------|------------------------------------------------|\n| id             | UUID         | Sim         | Identificador único universal do evento (v4).  |\n| api_endpoint   | VARCHAR(255) | Sim         | Caminho URI acessado na API.                   |\n| request_method | VARCHAR(10)  | Sim         | Método HTTP executado (GET, POST, etc.).       |\n| status_code    | SMALLINT     | Sim         | Código de status HTTP retornado.               |\n| created_at     | TIMESTAMPTZ  | Sim         | Timestamp exato da requisição em UTC.          |\n\n#### 2. Schema SQL\n```sql\nCREATE TABLE audit_logs (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    api_endpoint VARCHAR(255) NOT NULL,\n    request_method VARCHAR(10) NOT NULL,\n    status_code SMALLINT NOT NULL,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\nCREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);\n```\n\n#### 3. Payload JSON de Exemplo\n```json\n{\n  \"id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"api_endpoint\": \"/v1/users\",\n  \"request_method\": \"POST\",\n  \"status_code\": 201,\n  \"created_at\": \"2026-11-17T14:32:00Z\"\n}\n```\n\n#### 4. Checklist de Validação\n- [ ] Validar se o campo `id` é um UUID v4 válido antes da persistência.\n- [ ] Garantir que `request_method` pertence à lista de métodos HTTP suportados e `status_code` está entre 100 e 599.\n- [ ] Assegurar que o `created_at` esteja em formato ISO-8601 UTC e sem defasagem temporal superior a 5 segundos.",
+      "submittedAt": "2026-11-17T19:22:13.410Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 2679
+    },
+    {
+      "id": "aadc0113-a1ca-4139-ac40-580e92057001",
+      "taskId": "1bfc062a-2e34-4c7e-b6f6-5cc33b8205e7",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "**(1) Falhas objetivas (≤ 3)**\n\n1. **Inconsistência de campos** – cada proposta define um conjunto diferente de colunas, tornando a integração e a análise impossível.\n2. **Erro de sintaxe SQL** – a versão de OpenRouter contém “NOT Μια NOT NULL”, um token inválido que impede a criação da tabela.\n3. **Checklist de validação desalinhado** – os itens propostos não cobrem os campos essenciais definidos (ex.: validação de UUID, sanitização de endpoint, intervalo de código de status).\n\n**(2) Versão consolidada melhorada**\n\n### 1. Tabela de Campos\n| Campo      | Tipo               | Obrigatório | Descrição                         |\n|------------ czę |--------------------|--------|-----------------------------------|\n| id         | UUID               | Sim    | Identificador único",
+      "submittedAt": "2026-11-17T19:23:14.041Z",
+      "model": "cohere/north-mini-code:free",
+      "tokens": 3283
+    },
+    {
+      "id": "024bd254-ec21-49ab-b639-be1397a22a28",
+      "taskId": "c7ea7ec9-a804-48bf-a4e1-eb003e946ae1",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "# Solução final\n\n### 1. Tabela de Campos\n| Campo          | Tipo         | Obrigatório | Descrição                                      |\n|----------------|--------------|-------------|------------------------------------------------|\n| id             | UUID         | Sim         | Identificador único universal do evento (v4).  |\n| api_endpoint   | VARCHAR(255) | Sim         | Caminho URI acessado na API.                   |\n| request_method | VARCHAR(10)  | Sim         | Método HTTP executado (GET, POST, etc.).       |\n| status_code    | SMALLINT     | Sim         | Código de status HTTP retornado (100-599).     |\n| created_at     | TIMESTAMPTZ  | Sim         | Timestamp exato da requisição em UTC.          |\n\n### 2. Schema SQL\n```sql\nCREATE TABLE audit_logs (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    api_endpoint VARCHAR(255) NOT NULL,\n    request_method VARCHAR(10) NOT NULL,\n    status_code SMALLINT NOT NULL CHECK (status_code BETWEEN 100 AND 599),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\nCREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);\n```\n\n### 3. Payload JSON de Exemplo\n```json\n{\n  \"id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"api_endpoint\": \"/v1/users\",\n  \"request_method\": \"POST\",\n  \"status_code\": 201,\n  \"created_at\": \"2026-11-17T14:32:00Z\"\n}\n```\n\n### 4. Checklist de Validação\n- [ ] Validar se o campo `id` é um UUID v4 válido e único antes da persistência.\n- [ ] Garantir que `request_method` pertence aos verbos HTTP suportados e que `status_code` está entre 100 e 599.\n- [ ] Assegurar que o `created_at` está em ISO-8601 UTC sem defasagem temporal superior a 5 segundos do servidor.\n\n## Conclusão do conselho\nO conselho entrou em consenso absoluto quanto à necessidade de padronizar exatamente 5 campos essenciais (id, api_endpoint, request_method, status_code e created_at), eliminando os erros de sintaxe e as divergências de nomenclatura das rodadas anteriores. Houve acordo unânime sobre a inclusão de restrições nativas no PostgreSQL (`CHECK` para o status HTTP e índices temporais) e validações rígidas de formato no payload para garantir a integridade dos dados de auditoria.",
+      "submittedAt": "2026-11-17T19:23:19.163Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 2623
+    }
+  ],
+  "createdAt": "2026-11-17T19:21:10.860Z",
+  "updatedAt": "2026-11-17T19:23:19.163Z",
+  "focus": "geral",
+  "engineVersion": 2,
+  "conclusion": "# Solução final\n\n### 1. Tabela de Campos\n| Campo          | Tipo         | Obrigatório | Descrição                                      |\n|----------------|--------------|-------------|------------------------------------------------|\n| id             | UUID         | Sim         | Identificador único universal do evento (v4).  |\n| api_endpoint   | VARCHAR(255) | Sim         | Caminho URI acessado na API.                   |\n| request_method | VARCHAR(10)  | Sim         | Método HTTP executado (GET, POST, etc.).       |\n| status_code    | SMALLINT     | Sim         | Código de status HTTP retornado (100-599).     |\n| created_at     | TIMESTAMPTZ  | Sim         | Timestamp exato da requisição em UTC.          |\n\n### 2. Schema SQL\n```sql\nCREATE TABLE audit_logs (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    api_endpoint VARCHAR(255) NOT NULL,\n    request_method VARCHAR(10) NOT NULL,\n    status_code SMALLINT NOT NULL CHECK (status_code BETWEEN 100 AND 599),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\nCREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);\n```\n\n### 3. Payload JSON de Exemplo\n```json\n{\n  \"id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"api_endpoint\": \"/v1/users\",\n  \"request_method\": \"POST\",\n  \"status_code\": 201,\n  \"created_at\": \"2026-11-17T14:32:00Z\"\n}\n```\n\n### 4. Checklist de Validação\n- [ ] Validar se o campo `id` é um UUID v4 válido e único antes da persistência.\n- [ ] Garantir que `request_method` pertence aos verbos HTTP suportados e que `status_code` está entre 100 e 599.\n- [ ] Assegurar que o `created_at` está em ISO-8601 UTC sem defasagem temporal superior a 5 segundos do servidor.\n\n## Conclusão do conselho\nO conselho entrou em consenso absoluto quanto à necessidade de padronizar exatamente 5 campos essenciais (id, api_endpoint, request_method, status_code e created_at), eliminando os erros de sintaxe e as divergências de nomenclatura das rodadas anteriores. Houve acordo unânime sobre a inclusão de restrições nativas no PostgreSQL (`CHECK` para o status HTTP e índices temporais) e validações rígidas de formato no payload para garantir a integridade dos dados de auditoria.",
+  "completedAt": "2026-11-17T19:23:19.163Z"
+}

@@ -1,0 +1,214 @@
+{
+  "id": "53bc1283-edba-4786-ab00-860227f6ecb8",
+  "title": "Me passe uma receita de bolo",
+  "topic": "Me passe uma receita de bolo",
+  "rules": "Seja curto, direto e 100% concreto. Sem enrolação, sem introdução longa e sem teoria desnecessária. Foque na solução prática e acionável.",
+  "participants": [
+    "gemini",
+    "groq",
+    "openrouter"
+  ],
+  "totalRounds": 2,
+  "currentRound": 2,
+  "currentStage": "completed",
+  "status": "completed",
+  "participantStates": {
+    "gemini": {
+      "platform": "gemini",
+      "availability": "unknown"
+    },
+    "groq": {
+      "platform": "groq",
+      "availability": "unknown"
+    },
+    "openrouter": {
+      "platform": "openrouter",
+      "availability": "unknown"
+    }
+  },
+  "tasks": [
+    {
+      "id": "60411852-2a33-4f9c-8df1-17a2af99aec9",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T17:17:53.233Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T17:17:56.245Z"
+    },
+    {
+      "id": "2e3a3162-19f6-4df3-9308-d5a3c18beb00",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T17:17:53.233Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T17:17:56.187Z"
+    },
+    {
+      "id": "e4d4f569-93c8-4d0e-91cb-57905f09bc13",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T17:17:53.233Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T17:18:09.016Z"
+    },
+    {
+      "id": "b04fd670-541e-4269-9f8f-352494ccd198",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T17:18:09.016Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T17:18:23.872Z"
+    },
+    {
+      "id": "6dc6495f-6826-4877-b651-39c8b76ca1d1",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T17:18:09.016Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T17:18:10.761Z"
+    },
+    {
+      "id": "1c72a75b-9408-40bf-9fd9-3af526fd0ee6",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T17:18:09.016Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T17:18:30.216Z"
+    },
+    {
+      "id": "1486f43d-16cb-4d5d-841e-1210d65941a9",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T17:18:30.217Z",
+      "seat": "auto",
+      "role": "Relator",
+      "maxTokens": 1600,
+      "prompt": "",
+      "completedAt": "2026-11-17T17:18:32.262Z"
+    }
+  ],
+  "responses": [
+    {
+      "id": "176ed152-bcb1-43bf-97c4-c541a036bef7",
+      "taskId": "2e3a3162-19f6-4df3-9308-d5a3c18beb00",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "**Receita de Bolo Simples (1 kg)**  \n\n| Ingrediente | Quantidade |\n|-------------|------------|\n| Farinha de trigo | 2 xícaras (chá) |\n| Açúcar | 1 ½ xícara (chá) |\n| Ovos | 3 unidades |\n| Leite | 1 xícara (chá) |\n| Óleo vegetal | ½ xícara (chá) |\n| Fermento químico em pó | 1 colher (sopa) |\n| Essência de baunilha | 1 colher (chá) |\n| Sal | 1 pitada |\n\n**Modo de preparo**\n\n1. Preaqueça o forno a 180 °C e unte uma forma de 20 cm com manteiga + farinha.  \n2. Bata os ovos com o açúcar até obter um creme claro e fofo.  \n3. Incorpore o óleo, a essência e o leite, misturando suavemente.  \n4. Peneire a farinha, o fermento e o sal; adicione à mistura líquida, mexendo apenas até homogeneizar.  \n5. Despeje na forma e leve ao forno por **35‑40 min** ou até que um palito saia limpo.  \n6. Deixe esfriar 10 min antes de desenformar; sirva morno ou em temperatura ambiente.\n\n---\n\n## Revisão Técnica (bugs, segurança e casos de borda)\n\n| Possível problema | Impacto | Mitigação |\n|-------------------|---------|-----------|\n| **Medidas imprecisas** (ex.: “xícara” pode variar) | Textura inconsistente | Indicar uso de copos medidores padronizados ou peso (ex.: 250 g de farinha) |\n| **Ovos crus contaminados** | Risco de salmonela | Recomendar ovos pasteurizados ou cozinhá‑los até 71 °C se a receita for adaptada para “bolo de micro-ondas”. |\n| **Temperatura do forno fora do padrão** | Bolo queima ou fica cru | Usar termômetro interno; assar até 95 °C no centro. |\n| **Formas diferentes** (metal vs silicone) | Tempo de cozimento varia | Ajustar 5‑10 min a menos para formas de silicone, 5‑10 min a mais para metal escuro. |\n| **Alergênicos** (glúten, ovos, leite) | Exclusão de dietas | Substituir: farinha 1:1 por farinha sem glúten; ovos por “ovo de linhaça” (1 colher chia + 3 colheres água); leite por bebida vegetal. |\n| **Fermento vencido** | Bolo não cresce | Verificar data; testar 1 g de fermento em água morna – deve borbulhar. |\n| **Mistura excessiva** | Bolo duro | Parar de mexer assim que a farinha for incorporada. |\n| **Armazenamento** | Mofo após 2 dias | Guardar em recipiente hermético na geladeira; consumir em até 5 dias ou congelar por 3 meses. |\n\n**Caso de borda:** Se a forma estiver cheia > 2/3, o bolo pode transbordar. Reduza a quantidade de massa ou use forma maior.  \n\n**Segurança:** Manuseie o forno com luvas resistentes; mantenha a cozinha ventilada para evitar acúmulo de vapor quente.",
+      "submittedAt": "2026-11-17T17:17:56.187Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 1059
+    },
+    {
+      "id": "66b07903-eada-475e-81e1-11a74b04c00f",
+      "taskId": "60411852-2a33-4f9c-8df1-17a2af99aec9",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "Suposição: Bolo simples de chocolate de liquidificador.\n\n### Arquitetura da Solução (Pipeline Culinário)\n\nO processo divide-se em três fases sequenciais e síncronas:\n1. **Preparo dos Secos**: Homogeneização dos ingredientes base (açúcar, farinha, chocolate).\n2. **Processamento Líquido**: Emulsão dos ingredientes úmidos no liquidificador para garantir a aeração.\n3. **Cocção e Finalização**: Integração das fases e transferência para o ambiente térmico.\n\n---\n\n### Código Executivo (Receita)\n\n```text\n[INGREDIENTES]\n- 3 ovos\n- 2 xícaras de açúcar\n- 3 xícaras de farinha de trigo\n- 1 xícara de achocolatado ou 1/2 xícara de cacau em pó\n- 1 xícara de leite morno\n- 1/2 xícara de óleo\n- 1 colher de sopa de fermento em pó\n\n[INSTRUÇÕES DE EXECUÇÃO]\n1. Pré-aqueça o forno a 180°C. Unte uma forma com manteiga e farinha.\n2. No liquidificador, processe os ovos, o açúcar, o óleo, o leite e o achocolatado por 2 minutos até obter um líquido homogêneo.\n3. Transfira a mistura para um recipiente e adicione a farinha de trigo aos poucos, mexendo com um fouet para evitar grumos.\n4. Incorpore o fermento delicadamente com uma espátula (não bata).\n5. Despeje a massa na forma preparada.\n6. Asse por 40 minutos. Faça o teste do palito antes de retirar.\n```",
+      "submittedAt": "2026-11-17T17:17:56.245Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 595
+    },
+    {
+      "id": "955e318f-8ba8-4241-bda1-b2b89c30e7db",
+      "taskId": "e4d4f569-93c8-4d0e-91cb-57905f09bc13",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "**Abordagem: Bolo de Caneca no Micro-ondas (Single-Serving, 2 min)**\n\nTrade-off: Sacrifica textura fofa e volume de bolo tradicional por **velocidade extrema, zero desperdício e porção controlada**. Ideal para vontade imediata sem sujar forma ou ligar forno.\n\n```text\nIngredientes (direto na caneca de 300ml+):\n- 4 col (sopa) farinha de trigo\n- 3 col (sopa) açúcar\n- 2 col (sopa) chocolate em pó (ou 1 col cacau + 1 col açúcar extra)\n- 1 pitada fermento em pó\n- 1 pitada sal\n- 3 col (sopa) leite\n- 2 col (sopa) óleo vegetal\n- 1 ovo pequeno (ou 1/2 grande)\n- 1/2 col (chá) essência de baunilha (opcional)\n\nModo:\n1. Misture secos na caneca com garfo até homogêneo.\n2. Adicione líquidos e bata bem até brilhar (sem grumos).\n3. Micro-ondas potência alta: 1 min 30s a 2 min (pare se transbordar).\n4. Desenforme ou coma na caneca.\n```\n\n**Variações rápidas:**\n- *Fit*: Farinha de aveia, açúcar demerara, banana amassada no lugar do ovo.\n- *Vegano*: Substitua ovo por 1 col (sopa) linhaça hidratada + 1 col água.\n- *Recheio*: Coloque 1 col doce de leite/Nutella no centro da massa crua antes de assar.",
+      "submittedAt": "2026-11-17T17:18:09.016Z",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "tokens": 683
+    },
+    {
+      "id": "1a6e2ee0-d563-4eed-b1b1-6bbc48aa1845",
+      "taskId": "6dc6495f-6826-4877-b651-39c8b76ca1d1",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "**Falhas encontradas**  \n1. **Unidade de medida imprecisa** – “xícara” varia entre 200 ml e 240 ml, gerando massa inconsistente.  \n2. **Temperatura do forno genérica** – sem verificação real (fornos domésticos podem estar fora de 180 °C).  \n3. **Ausência de instrução de teste de ponto** – “palito limpo” pode confundir quem não tem palito; falta temperatura interna recomendada.\n\n---\n\n### Receita consolidada (bolo simples, 1 kg) – medidas em peso (mais preciso)\n\n| Ingrediente | Peso |\n|-------------|------|\n| Farinha de trigo (peneirada) | 250 g |\n| Açúcar refinado | 200 g |\n| Ovos (grandes) | 3 unidades (≈150 g) |\n| Leite integral | 240 g |\n| Óleo vegetal | 120 g |\n| Fermento químico em pó | 12 g (1 col sopa) |\n| Essência de baunilha | 5 g (1 col chá) |\n| Sal | 2 g (1 pitada) |\n\n#### Modo de preparo\n1. Preaqueça o forno a **180 °C** (use termômetro interno para confirmar). Unte e enfarinhe forma redonda de 20 cm.  \n2. Bata os ovos com o açúcar até dobrar de volume e ficar esbranquiçado.  \n3. Incorpore óleo, essência e leite, misturando apenas até homogeneizar.  \n4. Misture farinha, fermento e sal em outro recipiente; adicione à massa em 3 partes, mexendo delicadamente (não bata).  \n5. Despeje a massa na forma e leve ao forno **35 min**. Quando a **temperatura interna** atingir **95 °C** ou o palito sair limpo, retire.  \n6. Resfrie 10 min na forma, desenforme e deixe esfriar totalmente sobre grade.\n\n#### Segurança / borda\n- Use ovos pasteurizados ou cozinhe até 71 °C se houver risco de salmonela.  \n- Verifique a data do fermento; teste 1 g em água morna antes de usar.  \n- Se a forma for de silicone, reduza 5 min; se for metal escuro, aumente 5 min.  \n- Armazene em recipiente hermético na geladeira (até 5 dias) ou congele (até 3 meses).",
+      "submittedAt": "2026-11-17T17:18:10.761Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 2380
+    },
+    {
+      "id": "9adf6c4b-618f-43e1-bea4-db48f1ceba3a",
+      "taskId": "b04fd670-541e-4269-9f8f-352494ccd198",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "Suposição: O usuário deseja um bolo clássico de liquidificador, rápido e infalível.\n\n### Falhas objetivas corrigidas:\n1. **Falta de padronização nas medidas:** O uso exclusivo de xícaras sem peso gera falhas de textura; corrigido com proporções testadas.\n2. **Ativação incorreta do fermento:** Bater o fermento no liquidificador quebra sua estrutura e impede o crescimento; corrigido para adição manual.\n3. **Controle térmico impreciso:** Apenas \"40 minutos\" queima o bolo em fornos desregulados; corrigido com o teste do palito obrigatório.\n\n---\n\n### Receita Consolidada: Bolo Simples de Liquidificador\n\n```text\n[INGREDIENTES]\n- 3 ovos\n- 2 xícaras (chá) de açúcar\n- 3 xícaras (chá) de farinha de trigo\n- 1 xícara (chá) de leite\n- 1/2 xícara (chá) de óleo\n- 1 colher (sopa) de fermento químico em pó\n- 1 pitada de sal\n\n[MODO DE PREPARO]\n1. Pré-aqueça o forno a 180 °C. Unte uma forma de 22 cm com manteiga e farinha.\n2. No liquidificador, bata os ovos, o açúcar, o óleo e o leite por 2 minutos.\n3. Despeje o líquido em uma tigela e adicione a farinha e o sal aos poucos, mexendo com um fouet até homogeneizar.\n4. Acrescente o fermento e misture delicadamente com uma espátula (não bata).\n5. Despeje na forma e asse por 35 a 45 minutos. \n6. Insira um palito no centro; se sair limpo, retire do forno. Espere esfriar 10 minutos antes de desenformar.\n```",
+      "submittedAt": "2026-11-17T17:18:23.872Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 2321
+    },
+    {
+      "id": "7b10667e-16ee-45e8-bd65-7bac1311336c",
+      "taskId": "1c72a75b-9408-40bf-9fd9-3af526fd0ee6",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "### Falhas objetivas nas propostas anteriores\n1. **Medidas volumétricas imprecisas**: \"xícaras\" e \"colheres\" variam até 15 % entre utensílios, gerando textura inconsistente; nenhuma proposta usa peso (gramas).\n2. **Ausência de controle térmico real**: Todas confiam no tempo fixo (35‑40 min) sem indicar temperatura interna alvo (≈ 96 °C) ou teste objetivo além do palito.\n3. **Nenhuma opção cobre restrições comuns simultâneas**: As receitas são mutuamente exclusivas (tradicional, liquidificador, caneca) e não oferecem substituições 1:1 validadas para glúten, lactose e ovos no mesmo preparo.\n\n---\n\n### Receita Consolidada: Bolo Base Universal (peso, tolerante a alérgenos, forno 180 °C)\n\n**Ingredientes (pesados)**  \n| Item | Padrão | Sem glúten | Sem lactose | Vegano |\n|------|--------|------------|-------------|--------|\n| Farinha (trigo ou blend 1:1 sem glúten) | 240 g | 240 g | 240 g | 240 g |\n| Açúcar refinado ou demerara | 200 g | 200 g | 200 g | 200 g |\n| Óleo vegetal (girassol/canola) | 120 g | 120 g | 120 g | 120 g |\n| Leite integral ou bebida vegetal sem açúcar | 240 g | 240 g | 240 g | 240 g |\n| Ovos (≈ 50 g cada) | 150 g (3 un) | 150 g | 150 g | — |\n| *Ovo de linhaça* (1 c.s. linhaça + 3 c.s. água = 50 g) | — | — | — | 150 g (3 doses) |\n| Fermento químico | 10 g | 10 g | 10 g | 10 g |\n| Sal | 3 g | 3 g | 3 g | 3 g |\n| Baunilha (opcional) | 5 g | 5 g | 5 g | 5 g |\n| Cacau 100 % (para versão chocolate) | +30 g farinha −30 g cacau | idem | idem | idem |\n\n**Modo único (bowl + fouet, 1 tigela)**  \n1. Forno 180 °C (termostato verificado). Forma 20 cm untada com óleo + farinha (ou papel manteiga).  \n2. Misture secos: farinha, açúcar, fermento, sal, cacau (se usar).  \n3. No centro, adicione óleo, leite, ovos/**ovo de linhaça**, baunilha. Bata com fouet 60 s até liso — **não bata depois de juntar farinha**.  \n4. Verta na forma. Asse **30‑35 min** ou até centro marcar **96 °C** com sonda (ou palito seco).  \n5. Desenforme morno (10 min). Guarda 5 dias gelado hermético / 3 meses congelado.\n\n**Notas de substituição validadas**  \n- Farinha sem glúten: use blend com goma xantana (ex.: Schär, Finna) na mesma massa.  \n- Vegano: linhaça hidratada 5 min antes de usar; massa fica levemente mais densa, cresce igual.  \n- Lactose: leite de soja/aveia integral (proteína > 2 g/100 ml) mantém estrutura.",
+      "submittedAt": "2026-11-17T17:18:30.216Z",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "tokens": 2971
+    },
+    {
+      "id": "d6c7f0fc-6d03-47e1-8dea-3ba7ebd7a755",
+      "taskId": "1486f43d-16cb-4d5d-841e-1210d65941a9",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "# Solução final\n\n```text\n[INGREDIENTES]\n- Farinha de trigo: 250 g\n- Açúcar refinado: 200 g\n- Ovos grandes: 3 unidades (150 g)\n- Leite integral: 240 g\n- Óleo vegetal: 120 g\n- Fermento químico em pó: 12 g (1 colher de sopa)\n- Sal: 2 g (1 pitada)\n- Essência de baunilha: 5 g (1 colher de chá)\n\n[MODO DE PREPARO]\n1. Pré-aqueça o forno a 180 °C. Unte e enfarinhe uma forma redonda de 20 cm.\n2. Bata os ovos com o açúcar até dobrar de volume e clarear.\n3. Adicione o óleo, o leite e a baunilha, misturando apenas até homogeneizar.\n4. Misture a farinha, o fermento e o sal em outro recipiente. Incorpore à massa em 3 partes, mexendo delicadamente com um fouet ou espátula.\n5. Despeje na forma e asse por 35 minutos. O bolo estará pronto quando o palito sair limpo ou a temperatura interna atingir 95 °C.\n6. Deixe esfriar por 10 minutos antes de desenformar.\n```\n*Suposição: O usuário possui balança de cozinha para garantir a precisão das gramas.*\n\n## Conclusão do conselho\nO conselho entrou em consenso absoluto sobre a necessidade de abandonar medidas volumétricas imprecisas e padronizar a receita em gramas, além de estipular controle térmico rigoroso com termômetro ou palito. A única divergência remanescente foi o método de mistura: o uso exclusivo de tigela única com fouet (para texturas mais refinadas e inclusão de dietas restritivas) versus o método tradicional de liquidificador (mais rápido e acessível), tendo prevalecido a versão em peso com foco técnico e reprodutibilidade garantida.",
+      "submittedAt": "2026-11-17T17:18:32.262Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 2863
+    }
+  ],
+  "createdAt": "2026-11-17T17:17:53.225Z",
+  "updatedAt": "2026-11-17T17:18:32.262Z",
+  "focus": "geral",
+  "engineVersion": 2,
+  "conclusion": "# Solução final\n\n```text\n[INGREDIENTES]\n- Farinha de trigo: 250 g\n- Açúcar refinado: 200 g\n- Ovos grandes: 3 unidades (150 g)\n- Leite integral: 240 g\n- Óleo vegetal: 120 g\n- Fermento químico em pó: 12 g (1 colher de sopa)\n- Sal: 2 g (1 pitada)\n- Essência de baunilha: 5 g (1 colher de chá)\n\n[MODO DE PREPARO]\n1. Pré-aqueça o forno a 180 °C. Unte e enfarinhe uma forma redonda de 20 cm.\n2. Bata os ovos com o açúcar até dobrar de volume e clarear.\n3. Adicione o óleo, o leite e a baunilha, misturando apenas até homogeneizar.\n4. Misture a farinha, o fermento e o sal em outro recipiente. Incorpore à massa em 3 partes, mexendo delicadamente com um fouet ou espátula.\n5. Despeje na forma e asse por 35 minutos. O bolo estará pronto quando o palito sair limpo ou a temperatura interna atingir 95 °C.\n6. Deixe esfriar por 10 minutos antes de desenformar.\n```\n*Suposição: O usuário possui balança de cozinha para garantir a precisão das gramas.*\n\n## Conclusão do conselho\nO conselho entrou em consenso absoluto sobre a necessidade de abandonar medidas volumétricas imprecisas e padronizar a receita em gramas, além de estipular controle térmico rigoroso com termômetro ou palito. A única divergência remanescente foi o método de mistura: o uso exclusivo de tigela única com fouet (para texturas mais refinadas e inclusão de dietas restritivas) versus o método tradicional de liquidificador (mais rápido e acessível), tendo prevalecido a versão em peso com foco técnico e reprodutibilidade garantida.",
+  "completedAt": "2026-11-17T17:18:32.262Z"
+}

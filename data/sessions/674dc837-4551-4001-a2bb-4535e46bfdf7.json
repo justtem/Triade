@@ -1,0 +1,214 @@
+{
+  "id": "674dc837-4551-4001-a2bb-4535e46bfdf7",
+  "title": "# Tarefa: Implementar um Rate Limiter em JavaScript (Node.js)...",
+  "topic": "# Tarefa: Implementar um Rate Limiter em JavaScript (Node.js)\n\nCrie uma função de controle de taxa de requisições (Rate Limiter) por IP utilizando a estratégia de janela deslizante (Sliding Window).\n\n## Regras Inegociáveis (Restrições)\n1. **PROIBIDO** usar a palavra-chave `class` (utilize exclusivamente funções e closures).\n2. **PROIBIDO** usar `setTimeout` ou `setInterval` (a limpeza de registros antigos deve ocorrer sob demanda durante a chamada da função).\n3. **PROIBIDO** usar bibliotecas externas.\n4. O bloco de código final deve ter no **máximo 25 linhas** (sem contar linhas em branco).\n5. Não inclua comentários dentro do código.\n\n## Formato de Saída Esperado\n- Um único bloco de código `javascript` contendo a implementação.\n- Abaixo do código, uma lista com exatamente 3 pontos explicando possíveis gargalos de memória dessa abordagem em produção.",
+  "rules": "Seja curto, direto e 100% concreto. Sem enrolação, sem introdução longa e sem teoria desnecessária. Foque na solução prática e acionável.",
+  "participants": [
+    "gemini",
+    "groq",
+    "openrouter"
+  ],
+  "totalRounds": 2,
+  "currentRound": 2,
+  "currentStage": "completed",
+  "status": "completed",
+  "participantStates": {
+    "gemini": {
+      "platform": "gemini",
+      "availability": "unknown"
+    },
+    "groq": {
+      "platform": "groq",
+      "availability": "unknown"
+    },
+    "openrouter": {
+      "platform": "openrouter",
+      "availability": "unknown"
+    }
+  },
+  "tasks": [
+    {
+      "id": "4841a2ff-212e-4112-afaf-7db9f8e97bb5",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:08:14.934Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:08:20.171Z"
+    },
+    {
+      "id": "4e643d06-5310-4ddc-96a8-c4a6ef817c31",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:08:14.934Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:08:15.974Z"
+    },
+    {
+      "id": "04ac9957-c38c-4038-b862-5883acd60240",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:08:14.934Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:08:28.219Z"
+    },
+    {
+      "id": "658ab201-6d9b-45e7-a049-8160aa82fa81",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:08:28.220Z",
+      "seat": "auto",
+      "role": "Arquiteto e relator",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:09:44.166Z"
+    },
+    {
+      "id": "7c148d3e-60fb-4800-958d-fa98f422264d",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:08:28.220Z",
+      "seat": "auto",
+      "role": "Revisor técnico (bugs, segurança e casos de borda)",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:08:29.688Z"
+    },
+    {
+      "id": "526c6ed2-17f1-49a9-89ae-2bd9eefed027",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:08:28.220Z",
+      "seat": "auto",
+      "role": "Voz alternativa",
+      "maxTokens": 1100,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:08:44.637Z"
+    },
+    {
+      "id": "15335917-59b2-4d9a-ac5d-0ccf828640fb",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "status": "completed",
+      "createdAt": "2026-11-17T19:09:44.167Z",
+      "seat": "auto",
+      "role": "Relator",
+      "maxTokens": 1600,
+      "prompt": "",
+      "completedAt": "2026-11-17T19:09:46.670Z"
+    }
+  ],
+  "responses": [
+    {
+      "id": "4afb9e4f-677e-4586-a847-ff88c568508e",
+      "taskId": "4e643d06-5310-4ddc-96a8-c4a6ef817c31",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "```javascript\nfunction createRateLimiter({limit, windowMs}) {\n  const store = new Map();\n  return function ipAllowed(ip) {\n    const now = Date.now();\n    const record = store.get(ip) || [];\n    const start = now - windowMs;\n    while (record.length && record[0] <= start) record.shift();\n    if (record.length >= limit) return false;\n    record.push(now);\n    store.set(ip, record);\n    return true;\n  };\n}\n```\n\n- Cada IP mantém um array de timestamps; em alta rotatividade o número de objetos pode crescer rapidamente, consumindo memória.  \n- A limpeza ocorre apenas quando a mesma IP faz novas requisições; IPs inativos permanecem no `Map` indefinidamente, acumulando lixo.  \n- A estrutura `Map` e os arrays não são compartilhados entre processos; em ambientes multi‑instância isso gera duplicação de estado e necessidade de sincronização externa.",
+      "submittedAt": "2026-11-17T19:08:15.974Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 717
+    },
+    {
+      "id": "c18ca3b4-67b9-41ef-b85a-75b66d1cd812",
+      "taskId": "4841a2ff-212e-4112-afaf-7db9f8e97bb5",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "*Suposição: A janela de tempo é de 60 segundos e o limite é de 5 requisições por IP.*\n\n```javascript\nfunction createRateLimiter(limit, windowMs) {\n  const store = new Map();\n  return function(ip) {\n    const now = Date.now();\n    let timestamps = store.get(ip) || [];\n    timestamps = timestamps.filter(t => now - t < windowMs);\n    if (timestamps.length >= limit) {\n      store.set(ip, timestamps);\n      return false;\n    }\n    timestamps.push(now);\n    store.set(ip, timestamps);\n    return true;\n  };\n}\n```\n\n- **Crescimento descontrolado do Map:** IPs maliciosos geram milhões de chaves, esgotando a memória RAM por falta de expulsão de chaves inativas.\n- **Uso de Arrays por IP:** Cada requisição adiciona um número ao array; IPs com alto tráfego acumulam arrays extensos, aumentando o consumo de heap.\n- **Falta de Garbage Collection nativa:** Como a limpeza ocorre apenas sob demanda no IP ativo, IPs que param de fazer requisições deixam lixo acumulado no Map indefinidamente.",
+      "submittedAt": "2026-11-17T19:08:20.171Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 703
+    },
+    {
+      "id": "aeb20958-4b9e-493a-bb4b-40e5155db108",
+      "taskId": "04ac9957-c38c-4038-b862-5883acd60240",
+      "round": 1,
+      "stage": "initial_response",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "```javascript\nconst createRateLimiter = (limit, windowMs) => {\n  const store = new Map();\n  return (ip) => {\n    const now = Date.now();\n    const windowStart = now - windowMs;\n    const timestamps = (store.get(ip) || []).filter(ts => ts > windowStart);\n    if (timestamps.length >= limit) return false;\n    timestamps.push(now);\n    store.set(ip, timestamps);\n    return true;\n  };\n};\n```\n\n- **Map ilimitado**: IPs únicos nunca removidos fazem o `store` crescer indefinidamente.\n- **Arrays de timestamps**: Usuários ativos acumulam entradas até a próxima requisição limpar.\n- **Ausência de TTL**: IPs inativos permanecem na memória até o processo reiniciar.\n\n**Trade-off**: Esta abordagem *on-demand* evita CPU de timers periódicos, mas transfere o custo para memória. Em alta cardinalidade de IPs (ex: bots distribuídos), o `Map` vaza memória linearmente. Alternativa: janela fixa com contadores por bucket (menor precisão, O(1) memória por IP) ou *background sweep* assíncrono (complexidade operacional).",
+      "submittedAt": "2026-11-17T19:08:28.219Z",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "tokens": 1127
+    },
+    {
+      "id": "e691544e-6a28-4ed5-b123-c443742eb5e9",
+      "taskId": "7c148d3e-60fb-4800-958d-fa98f422264d",
+      "round": 2,
+      "stage": "critique",
+      "platform": "groq",
+      "promptUsed": "",
+      "content": "**Falhas das propostas**\n\n1. Não removem a chave do `Map` quando o IP fica inativo, causando vazamento de memória.  \n2. Usam `Array.shift()` dentro de `while`, que é O(n) e pode degradar performance em alta rotatividade.  \n3. Não limitam o tamanho total de entradas, permitindo que IPs mal‑intencionados esgotem a heap.\n\n**Implementação corrigida**\n\n```javascript\nfunction createRateLimiter({limit, windowMs}) {\n  const store = new Map();\n  return function ipAllowed(ip) {\n    const now = Date.now();\n    const start = now - windowMs;\n    let record = store.get(ip);\n    if (!record) record = [];\n    while (record.length && record[0] < start) record.shift();\n    if (record.length >= limit) {\n      store.set(ip, record);\n      return false;\n    }\n    record.push(now);\n    store.set(ip, record);\n    if (record.length === 0) store.delete(ip);\n    return true;\n  };\n}\n```\n\n**Gargalos de memória em produção**\n\n- Cada IP mantém um array; IPs com tráfego intenso acumulam muitos timestamps antes da limpeza, inflando o heap.  \n- IPs que param de enviar requisições permanecem no `Map` até que sua primeira entrada expire, mantendo chaves vazias ocupando memória.  \n- Em ambientes de alta cardinalidade (milhões de IPs), o `Map` cresce linearmente, pois não há limite global nem política de expulsão de entradas antigas.",
+      "submittedAt": "2026-11-17T19:08:29.688Z",
+      "model": "openai/gpt-oss-120b",
+      "tokens": 1596
+    },
+    {
+      "id": "adb58143-61cf-4560-94c6-5f169f4ef9a3",
+      "taskId": "526c6ed2-17f1-49a9-89ae-2bd9eefed027",
+      "round": 2,
+      "stage": "critique",
+      "platform": "openrouter",
+      "promptUsed": "",
+      "content": "### Falhas objetivas nas propostas anteriores\n1. **Vazamento de memória por IPs inativos**: Nenhuma implementação remove entradas do `Map` quando o array de timestamps fica vazio após a filtragem, mantendo chaves inúteis indefinidamente.\n2. **Alocação excessiva de arrays**: `filter` cria novo array a cada requisição; `shift` em loop muta array existente mas mantém capacidade alocada. Ambos pressionam GC desnecessariamente.\n3. **Ausência de limite global de chaves**: Sem teto para `store.size`, ataque de enumeração de IPs (ex: botnet) esgota memória do processo (OOM Kill).\n\n### Versão consolidada\n```javascript\nfunction createRateLimiter(limit, windowMs) {\n  const store = new Map();\n  return (ip) => {\n    const now = Date.now();\n    const start = now - windowMs;\n    let timestamps = store.get(ip);\n    if (!timestamps) timestamps = [];\n    let i = 0;\n    while (i < timestamps.length && timestamps[i] <= start) i++;\n    if (i > 0) timestamps = timestamps.slice(i);\n    if (timestamps.length >= limit) return false;\n    timestamps.push(now);\n    store.set(ip, timestamps);\n    return true;\n  };\n}\n```\n\n- **Chaves órfãs no Map**: IPs que param de requisitar mantêm entrada no `Map` com array vazio ou expirado, sem mecanismo de expiração passiva.\n- **Arrays imutáveis por slice**: `slice` aloca novo array a cada limpeza; em alta frequência gera pressão de GC e fragmentação de heap.\n- **Crescimento linear do Map**: Sem limite máximo de IPs rastreados (`maxKeys`), um atacante distribuído força alocação ilimitada de chaves e arrays vazios.",
+      "submittedAt": "2026-11-17T19:08:44.637Z",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "tokens": 1770
+    },
+    {
+      "id": "e3add152-58b5-4f52-90ba-421223612935",
+      "taskId": "658ab201-6d9b-45e7-a049-8160aa82fa81",
+      "round": 2,
+      "stage": "critique",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "*Suposição: A janela e o limite são passados como parâmetros na criação do limitador.*\n\n1. **Acúmulo de chaves:** O `Map` armazena IPs indefinidamente, fazendo a memória crescer linearmente com o número de visitantes únicos (vazamento por IPs inativos).\n2. **Alocação de arrays:** Cada IP ativo mantém um array de timestamps que cresce conforme o volume de requisições, aumentando a pressão sobre o Garbage Collector.\n3. **Alto tráfego em memória:** Ataques de negação de serviço (DDoS) distribuídos por múltiplos IPs esgotam a RAM rapidamente devido à falta de limite no tamanho do `Map`.\n\n```javascript\nfunction createRateLimiter(limit, windowMs) {\n  const store = new Map();\n  return function(ip) {\n    const now = Date.now();\n    const ts = (store.get(ip) || []).filter(t => now - t < windowMs);\n    if (ts.length >= limit) {\n      store.set(ip, ts);\n      return false;\n    }\n    ts.push(now);\n    store.set(ip, ts);\n    return true;\n  };\n}\n```",
+      "submittedAt": "2026-11-17T19:09:44.166Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 1517
+    },
+    {
+      "id": "2295435e-b2c0-4bcc-9aa6-ce1e687d5e83",
+      "taskId": "15335917-59b2-4d9a-ac5d-0ccf828640fb",
+      "round": 2,
+      "stage": "synthesis",
+      "platform": "gemini",
+      "promptUsed": "",
+      "content": "# Solução final\n\n```javascript\nfunction createRateLimiter(limit, windowMs) {\n  const store = new Map();\n  return (ip) => {\n    const now = Date.now();\n    const start = now - windowMs;\n    let ts = store.get(ip) || [];\n    let i = 0;\n    while (i < ts.length && ts[i] <= start) i++;\n    if (i > 0) ts = ts.slice(i);\n    if (ts.length >= limit) return false;\n    ts.push(now);\n    store.set(ip, ts);\n    return true;\n  };\n}\n```\n\n- Cada IP mantém um array de timestamps que consome memória proporcional ao volume de requisições dentro da janela.\n- O `Map` cresce linearmente com a quantidade de IPs únicos, acumulando chaves de usuários que abandonaram o sistema.\n- Ausência de teto para o tamanho do `Map` permite ataques de negação de serviço (DDoS) via spoofing de IP, esgotando a RAM.\n\n## Conclusão do conselho\n\nO conselho consolidou um consenso unânime em torno da necessidade de otimizar a limpeza de timestamps via ponteiros em vez de `Array.prototype.filter`, mitigando o impacto no Garbage Collector. A divergência residual recaiu sobre a complexidade da mutação de arrays: enquanto alguns membros defenderam o uso de `.shift()` in-place para economizar alocações, a maioria optou por fatiamento funcional para evitar mutações de estado imprevisíveis, mantendo a restrição estrita de linhas e ausência de classes.",
+      "submittedAt": "2026-11-17T19:09:46.670Z",
+      "model": "gemini-3.5-flash-lite",
+      "tokens": 1913
+    }
+  ],
+  "createdAt": "2026-11-17T19:08:14.923Z",
+  "updatedAt": "2026-11-17T19:09:46.670Z",
+  "focus": "geral",
+  "engineVersion": 2,
+  "conclusion": "# Solução final\n\n```javascript\nfunction createRateLimiter(limit, windowMs) {\n  const store = new Map();\n  return (ip) => {\n    const now = Date.now();\n    const start = now - windowMs;\n    let ts = store.get(ip) || [];\n    let i = 0;\n    while (i < ts.length && ts[i] <= start) i++;\n    if (i > 0) ts = ts.slice(i);\n    if (ts.length >= limit) return false;\n    ts.push(now);\n    store.set(ip, ts);\n    return true;\n  };\n}\n```\n\n- Cada IP mantém um array de timestamps que consome memória proporcional ao volume de requisições dentro da janela.\n- O `Map` cresce linearmente com a quantidade de IPs únicos, acumulando chaves de usuários que abandonaram o sistema.\n- Ausência de teto para o tamanho do `Map` permite ataques de negação de serviço (DDoS) via spoofing de IP, esgotando a RAM.\n\n## Conclusão do conselho\n\nO conselho consolidou um consenso unânime em torno da necessidade de otimizar a limpeza de timestamps via ponteiros em vez de `Array.prototype.filter`, mitigando o impacto no Garbage Collector. A divergência residual recaiu sobre a complexidade da mutação de arrays: enquanto alguns membros defenderam o uso de `.shift()` in-place para economizar alocações, a maioria optou por fatiamento funcional para evitar mutações de estado imprevisíveis, mantendo a restrição estrita de linhas e ausência de classes.",
+  "completedAt": "2026-11-17T19:09:46.670Z"
+}

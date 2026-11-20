@@ -1,11 +1,24 @@
 import {
   applyLimitSignalToDebates,
   DEFAULT_SYSTEM_PROMPT,
-  listDebateSessions,
+  getDebateSessionById,
+  getPendingMemoryCompaction,
+  listDebateSummaries,
   PLATFORM_NAMES,
   recordTaskFailure,
-  submitDebateTaskResponse
+  RECENT_FULL_TURNS,
+  saveSessionSharedMemory,
+  submitDebateTaskResponse,
+  type PendingMemoryCompaction
 } from "./debate-engine.js";
+
+import {
+  emitProvidersUpdated,
+  endTaskStream,
+  pushTaskStreamDelta,
+  resetTaskStream,
+  startTaskStream
+} from "./stream-hub.js";
 
 import {
   getProvider,
@@ -21,10 +34,13 @@ const TICK_MS = 2_500;
 // no limite diário). Por isso uma falha pausa o debate de imediato.
 const MAX_TASK_ATTEMPTS = 1;
 const RETRY_BASE_DELAY_MS = 8_000;
+const MEMORY_RETRY_COOLDOWN_MS = 120_000;
 const MAX_CHAINED_PASSES = 12;
 
 const inFlight = new Set<string>();
 const retryNotBefore = new Map<string, number>();
+const memoryInFlight = new Set<string>();
+const memoryRetryNotBefore = new Map<string, number>();
 
 let timer: NodeJS.Timeout | undefined;
 let ticking = false;
@@ -58,14 +74,32 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
     }
 
     let result;
+    let streamStarted = false;
 
     try {
+      startTaskStream({
+        debateId,
+        taskId: task.id,
+        ...(task.turnId ? { turnId: task.turnId } : {}),
+        round: task.round,
+        stage: task.stage,
+        platform,
+        startedAt: new Date().toISOString()
+      });
+      streamStarted = true;
+
       result = await provider.generate({
         system: task.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
         user: task.userPrompt ?? task.prompt,
-        maxTokens: task.maxTokens ?? 1100
+        maxTokens: task.maxTokens ?? 1100,
+        onDelta: (delta) => pushTaskStreamDelta(debateId, task.id, delta),
+        onReset: () => resetTaskStream(debateId, task.id)
       });
     } catch (error) {
+      if (streamStarted) {
+        endTaskStream(debateId, task.id);
+      }
+      emitProvidersUpdated();
       const failure = classifyError(error);
 
       if (failure.kind === "rate_limit" || failure.kind === "quota_exhausted") {
@@ -119,6 +153,11 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
         error instanceof Error ? error.message : error
       );
       return false;
+    } finally {
+      if (streamStarted) {
+        endTaskStream(debateId, task.id);
+      }
+      emitProvidersUpdated();
     }
 
     console.log(
@@ -132,23 +171,75 @@ async function runTask(debateId: string, task: DebateTask): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------
+// Memória Compartilhada (compactação em segundo plano via Gemini)
+// ---------------------------------------------------------------
+
+async function runMemoryCompaction(job: PendingMemoryCompaction): Promise<void> {
+  if (memoryInFlight.has(job.debateId)) return;
+  memoryInFlight.add(job.debateId);
+
+  try {
+    // Usa Gemini (maior janela gratuita: 200k TPM) ou OpenRouter se Gemini não estiver ativo.
+    // Nunca consome o TPM restrito do Groq para compactação em segundo plano.
+    const provider = getProvider("gemini") ?? getProvider("openrouter");
+    if (!provider) return;
+
+    const result = await provider.generate({
+      system: job.systemPrompt,
+      user: job.userPrompt,
+      maxTokens: job.maxTokens
+    });
+
+    const summary = result.text.trim();
+    if (!summary) return;
+
+    await saveSessionSharedMemory(job.debateId, {
+      summary,
+      coveredTurnCount: job.targetCoveredCount,
+      updatedAt: new Date().toISOString(),
+      model: result.model
+    });
+
+    console.log(
+      `[AI Council] Memória compartilhada atualizada (${result.model}) — turnos 1–${job.targetCoveredCount}`
+    );
+  } catch (error) {
+    memoryRetryNotBefore.set(job.debateId, Date.now() + MEMORY_RETRY_COOLDOWN_MS);
+    console.warn(
+      "[AI Council] Compactação de memória adiada:",
+      error instanceof Error ? error.message.slice(0, 140) : error
+    );
+  } finally {
+    memoryInFlight.delete(job.debateId);
+  }
+}
+
+// ---------------------------------------------------------------
 // Varredura
 // ---------------------------------------------------------------
 
 async function processOnce(): Promise<boolean> {
-  const sessions = await listDebateSessions();
+  const summaries = await listDebateSummaries();
   const now = Date.now();
   let didWork = false;
 
-  // Só automatiza debates criados pela engine v2 (os antigos continuam manuais).
-  const active = sessions.filter(
+  // Lê apenas o arquivo JSON das sessões realmente ativas (0 leituras em repouso).
+  const activeSummaries = summaries.filter(
     (s) => s.status === "running" && (s.engineVersion ?? 0) >= 2
   );
 
-  for (const session of active) {
+  for (const summary of activeSummaries) {
+    const session = await getDebateSessionById(summary.id);
+    if (!session || session.status !== "running") continue;
+
+    const activeTurnId = session.turns?.at(-1)?.id;
     const pending = session.tasks.filter(
       (task) =>
         task.status === "pending" &&
+        (task.singleTaskOnly === true ||
+          !activeTurnId ||
+          !task.turnId ||
+          task.turnId === activeTurnId) &&
         task.round === session.currentRound &&
         task.stage === session.currentStage &&
         isAutoPlatform(task.platform) &&
@@ -165,6 +256,33 @@ async function processOnce(): Promise<boolean> {
 
     if (outcomes.some(Boolean)) {
       didWork = true;
+    }
+  }
+
+  // Em segundo plano, compacta turnos antigos (> 3) em Memória Compartilhada
+  // enquanto o usuário lê, para não atrasar a próxima mensagem.
+  for (const summary of summaries.slice(0, 5)) {
+    if (summary.status !== "completed" || (summary.engineVersion ?? 0) < 2) {
+      continue;
+    }
+    if (
+      summary.turnCount <= RECENT_FULL_TURNS ||
+      (summary.sharedMemoryTurns ?? 0) >= summary.turnCount - RECENT_FULL_TURNS
+    ) {
+      continue;
+    }
+    if (
+      memoryInFlight.has(summary.id) ||
+      (memoryRetryNotBefore.get(summary.id) ?? 0) > now
+    ) {
+      continue;
+    }
+    const session = await getDebateSessionById(summary.id);
+    if (!session) continue;
+    const job = getPendingMemoryCompaction(session);
+    if (job) {
+      void runMemoryCompaction(job);
+      break;
     }
   }
 

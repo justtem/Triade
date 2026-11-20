@@ -4,6 +4,8 @@ export interface GenerateRequest {
   system: string;
   user: string;
   maxTokens: number;
+  onDelta?: (delta: string) => void;
+  onReset?: () => void;
 }
 
 export interface GenerateResult {
