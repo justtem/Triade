@@ -1,9 +1,19 @@
 import type { AutoPlatform } from "../shared/debate-types.js";
 
+export interface ProviderMediaPart {
+  name: string;
+  kind: "image" | "pdf";
+  mimeType: string;
+  dataBase64: string;
+}
+
 export interface GenerateRequest {
   system: string;
   user: string;
   maxTokens: number;
+  media?: ProviderMediaPart[];
+  enableWebGrounding?: boolean;
+  signal?: AbortSignal;
   onDelta?: (delta: string) => void;
   onReset?: () => void;
 }
@@ -14,6 +24,7 @@ export interface GenerateResult {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  groundingSources?: Array<{ title: string; url: string }>;
 }
 
 export type ProviderErrorKind =
@@ -23,6 +34,7 @@ export type ProviderErrorKind =
   | "model"
   | "transient"
   | "empty"
+  | "aborted"
   | "unknown";
 
 export class ProviderError extends Error {
@@ -114,6 +126,10 @@ export function classifyError(error: unknown): ProviderError {
   const errName = typeof record?.name === "string" ? record.name : "";
   const errCode = typeof record?.code === "string" ? record.code : "";
   const retryAfterMs = parseRetryAfterMs(error, message);
+
+  if (errName === "APIUserAbortError") {
+    return new ProviderError("aborted", "Geração interrompida pelo usuário.");
+  }
 
   const looksDaily =
     /per.?day|daily|requests? per day|RPD|TPD|free-models-per-day/i.test(

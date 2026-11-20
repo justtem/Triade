@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 import { ProviderError } from "./types.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const DATA_DIR = resolve(ROOT_DIR, "data");
+const DATA_DIR = process.env.AI_COUNCIL_DATA_DIR
+  ? resolve(process.env.AI_COUNCIL_DATA_DIR)
+  : resolve(ROOT_DIR, "data");
 const USAGE_FILE = resolve(DATA_DIR, "usage.json");
 
 const MAX_WAIT_MS = 3 * 60 * 1000;
@@ -85,8 +87,25 @@ function schedulePersist(): void {
     .catch(() => {});
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(
+      new ProviderError("aborted", "Geração interrompida pelo usuário.")
+    );
+  }
+  return new Promise((resolveSleep, rejectSleep) => {
+    const onAbort = () => {
+      clearTimeout(timerId);
+      rejectSleep(
+        new ProviderError("aborted", "Geração interrompida pelo usuário.")
+      );
+    };
+    const timerId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolveSleep();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 // ---------------------------------------------------------------
@@ -154,8 +173,15 @@ export class UsageGate {
    * Reserva uma chamada. Espera se o limite por minuto estiver cheio e
    * falha (quota_exhausted) se o limite diário já foi atingido.
    */
-  acquire(estimatedTokens: number): Promise<UsageTicket> {
-    const run = this.mutex.then(() => this.acquireInner(estimatedTokens));
+  acquire(estimatedTokens: number, signal?: AbortSignal): Promise<UsageTicket> {
+    if (signal?.aborted) {
+      return Promise.reject(
+        new ProviderError("aborted", "Geração interrompida pelo usuário.")
+      );
+    }
+    const run = this.mutex.then(() =>
+      this.acquireInner(estimatedTokens, signal)
+    );
     this.mutex = run.then(
       () => undefined,
       () => undefined
@@ -163,7 +189,13 @@ export class UsageGate {
     return run;
   }
 
-  private async acquireInner(estimatedTokens: number): Promise<UsageTicket> {
+  private async acquireInner(
+    estimatedTokens: number,
+    signal?: AbortSignal
+  ): Promise<UsageTicket> {
+    if (signal?.aborted) {
+      throw new ProviderError("aborted", "Geração interrompida pelo usuário.");
+    }
     await loadCounters();
 
     const counter = this.counter();
@@ -206,12 +238,16 @@ export class UsageGate {
         );
       }
 
+      if (signal?.aborted) {
+        throw new ProviderError("aborted", "Geração interrompida pelo usuário.");
+      }
+
       const oldest = this.events[0];
       const waitMs = oldest
         ? Math.max(250, 60_000 - (now - oldest.at) + 50)
         : 500;
 
-      await sleep(Math.min(waitMs, 15_000));
+      await sleep(Math.min(waitMs, 15_000), signal);
     }
 
     const event = { at: Date.now(), tokens: need };

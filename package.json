@@ -4,11 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx --test tests/*.test.ts",
     "build": "tsc",
     "start": "node dist/monitor.js",
     "dev": "tsx watch src/monitor.ts",
     "monitor": "tsx src/monitor.ts",
+    "tray": "wscript //B scripts/win/launch-tray.vbs",
+    "install:shortcuts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/install-shortcuts.ps1",
     "tunnel": "tsx scripts/tunnel.ts",
     "test:providers": "tsx scripts/test-providers.ts",
     "test:providers:dry": "tsx scripts/test-providers.ts --dry",
@@ -22,7 +24,9 @@
     "@google/genai": "^3.3.0",
     "@modelcontextprotocol/server": "^2.4.0",
     "dotenv": "^18.0.10",
+    "msedge-tts": "^2.1.1",
     "openai": "^7.57.0",
+    "unpdf": "^2.2.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

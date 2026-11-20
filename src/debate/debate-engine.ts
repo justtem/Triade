@@ -16,10 +16,13 @@ import {
   type DebateTask,
   type InteractionMode,
   type ParticipantState,
+  type ResolvedProjectContext,
   type ResponseMode,
   type SharedMemoryState,
   type SubmitResponseInput,
-  type SubmitResponseMeta
+  type SubmitResponseMeta,
+  type WebSearchMode,
+  type WebSource
 } from "../shared/debate-types.js";
 
 import {
@@ -27,6 +30,7 @@ import {
   readDebateSessionById,
   readDebateSessions,
   readDebateSummaries,
+  searchDebateSessionsByQuery,
   withDebateLock,
   writeDebateSessionAtomically
 } from "../persistence/debate-store.js";
@@ -34,7 +38,14 @@ import {
   budgetForPlatform,
   RECENT_FULL_TURNS
 } from "../shared/context-budget.js";
-import { emitDebateUpdated } from "./stream-hub.js";
+import {
+  buildWebContextBlock,
+  extractDomain,
+  isSafePublicUrl
+} from "../web/web-context.js";
+import { buildProjectContextBlock } from "../projects/project-rag.js";
+import { getProjectById } from "../persistence/project-store.js";
+import { emitDebateDeleted, emitDebateUpdated } from "./stream-hub.js";
 
 export { budgetForPlatform, RECENT_FULL_TURNS };
 
@@ -296,26 +307,71 @@ function responsesForTurn(
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_CHARS = 60_000;
 const MAX_TOTAL_ATTACHMENTS_CHARS = 150_000;
+const MAX_IMAGE_BASE64_CHARS = 3_600_000; // ~2.6 MB binário
+const MAX_PDF_BASE64_CHARS = 4_800_000; // ~3.5 MB binário
+const ALLOWED_IMAGE_MIMES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif"
+]);
 
 function sanitizeAttachments(raw?: ChatAttachment[]): ChatAttachment[] {
   if (!Array.isArray(raw) || raw.length === 0) return [];
   const result: ChatAttachment[] = [];
-  let totalChars = 0;
+  let totalTextChars = 0;
 
   for (const item of raw.slice(0, MAX_ATTACHMENTS)) {
-    if (!item || typeof item.name !== "string" || typeof item.content !== "string") {
+    if (!item || typeof item.name !== "string") {
       continue;
     }
     const name = item.name.trim().slice(0, 120);
-    const content = item.content.replace(/\0/g, "").slice(0, MAX_ATTACHMENT_CHARS);
-    if (!name || !content.trim()) continue;
-    if (totalChars + content.length > MAX_TOTAL_ATTACHMENTS_CHARS) break;
+    if (!name) continue;
 
-    totalChars += content.length;
+    // Anexo de Imagem ou PDF (multimodal)
+    if (
+      (item.kind === "image" || item.kind === "pdf") &&
+      typeof item.dataBase64 === "string" &&
+      typeof item.mimeType === "string"
+    ) {
+      const mime = item.mimeType.trim().toLowerCase();
+      const base64 = item.dataBase64.replace(/^data:[^;]+;base64,/i, "").trim();
+      if (!base64) continue;
+
+      if (item.kind === "image") {
+        if (!ALLOWED_IMAGE_MIMES.has(mime)) continue;
+        if (base64.length > MAX_IMAGE_BASE64_CHARS) continue;
+      } else {
+        if (mime !== "application/pdf") continue;
+        if (base64.length > MAX_PDF_BASE64_CHARS) continue;
+      }
+
+      result.push({
+        name,
+        content: "",
+        size:
+          typeof item.size === "number" && item.size >= 0
+            ? item.size
+            : Math.floor((base64.length * 3) / 4),
+        kind: item.kind,
+        mimeType: mime,
+        dataBase64: base64
+      });
+      continue;
+    }
+
+    // Anexo de texto / código
+    if (typeof item.content !== "string") continue;
+    const content = item.content.replace(/\0/g, "").slice(0, MAX_ATTACHMENT_CHARS);
+    if (!content.trim()) continue;
+    if (totalTextChars + content.length > MAX_TOTAL_ATTACHMENTS_CHARS) break;
+
+    totalTextChars += content.length;
     result.push({
       name,
       content,
-      size: typeof item.size === "number" && item.size >= 0 ? item.size : content.length
+      size: typeof item.size === "number" && item.size >= 0 ? item.size : content.length,
+      kind: "text"
     });
   }
 
@@ -356,14 +412,31 @@ function buildAttachmentsBlock(turn: ChatTurn, platform: AIPlatform): string {
   const files = turn.attachments;
   if (!Array.isArray(files) || files.length === 0) return "";
 
-  const budget = budgetForPlatform(platform).attachmentChars;
-  const perFile = Math.max(800, Math.floor(budget / files.length));
+  const textFiles = files.filter((f) => f.kind !== "image" && f.kind !== "pdf");
+  const mediaFiles = files.filter((f) => f.kind === "image" || f.kind === "pdf");
 
-  const blocks = files.map((file) => {
-    const lang = langFromFilename(file.name);
-    const snippet = compactForPrompt(file.content, perFile);
-    return `### Arquivo: ${file.name}\n\`\`\`${lang}\n${snippet}\n\`\`\``;
-  });
+  const blocks: string[] = [];
+
+  if (textFiles.length > 0) {
+    const budget = budgetForPlatform(platform).attachmentChars;
+    const perFile = Math.max(800, Math.floor(budget / textFiles.length));
+    for (const file of textFiles) {
+      const lang = langFromFilename(file.name);
+      const snippet = compactForPrompt(file.content, perFile);
+      blocks.push(`### Arquivo: ${file.name}\n\`\`\`${lang}\n${snippet}\n\`\`\``);
+    }
+  }
+
+  for (const media of mediaFiles) {
+    const kindLabel = media.kind === "pdf" ? "PDF" : "Imagem";
+    if (platform === "gemini" || (platform === "openrouter" && media.kind === "image")) {
+      blocks.push(`### Anexo (${kindLabel}): ${media.name} — enviado inline para análise visual/documental.`);
+    } else {
+      blocks.push(
+        `### Anexo (${kindLabel}): ${media.name} — enviado ao colega com suporte multimodal; responda com base no texto do usuário (e na análise dos colegas na crítica).`
+      );
+    }
+  }
 
   return `Arquivos anexados:\n\n${blocks.join("\n\n")}`;
 }
@@ -635,15 +708,27 @@ function buildPreviousBlock(
 function buildInitialUserPrompt(
   session: DebateSession,
   turn: ChatTurn,
-  platform: AIPlatform
+  platform: AIPlatform,
+  resolvedProjectContext?: ResolvedProjectContext
 ): string {
   const history = buildConversationHistoryBlock(session, turn.id, platform);
   const attachmentsBlock = buildAttachmentsBlock(turn, platform);
+  const webBlock = buildWebContextBlock(
+    turn.webSources,
+    budgetForPlatform(platform).webContextChars
+  );
+  const projectBlock = buildProjectContextBlock(
+    resolvedProjectContext,
+    budgetForPlatform(platform).projectContextChars
+  );
   const customRules = turn.rules.trim();
 
   // 1) Normal + Direto: conversa natural e direta
   if (turn.responseMode === "normal" && turn.interactionMode === "direct") {
     const parts: string[] = [];
+    if (projectBlock) {
+      parts.push(projectBlock, "", "---", "");
+    }
     if (history) {
       parts.push(history, "", "Mensagem atual:", turn.prompt);
     } else {
@@ -651,6 +736,9 @@ function buildInitialUserPrompt(
     }
     if (attachmentsBlock) {
       parts.push("", attachmentsBlock);
+    }
+    if (webBlock) {
+      parts.push("", webBlock);
     }
     if (customRules) {
       parts.push("", `Instrução adicional: ${customRules}`);
@@ -662,12 +750,18 @@ function buildInitialUserPrompt(
   if (turn.responseMode === "normal" && turn.interactionMode === "debate") {
     const role = normalRoleFor(platform);
     const parts: string[] = [];
+    if (projectBlock) {
+      parts.push(projectBlock, "", "---", "");
+    }
     if (history) {
       parts.push(history, "");
     }
     parts.push(`Pergunta:`, turn.prompt);
     if (attachmentsBlock) {
       parts.push("", attachmentsBlock);
+    }
+    if (webBlock) {
+      parts.push("", webBlock);
     }
     if (customRules) {
       parts.push("", `Diretriz: ${customRules}`);
@@ -694,6 +788,9 @@ function buildInitialUserPrompt(
           ? "Priorize simplicidade, validações essenciais e código limpo."
           : "";
     const parts: string[] = [];
+    if (projectBlock) {
+      parts.push(projectBlock, "", "---", "");
+    }
     if (history) {
       parts.push(history, "");
     }
@@ -703,6 +800,9 @@ function buildInitialUserPrompt(
     );
     if (attachmentsBlock) {
       parts.push("", attachmentsBlock);
+    }
+    if (webBlock) {
+      parts.push("", webBlock);
     }
     parts.push("", `Diretriz: ${effectiveRules}`);
     if (focusHint) {
@@ -716,6 +816,9 @@ function buildInitialUserPrompt(
   const role = roleFor(platform, turn.focus);
   const effectiveRules = customRules || DEFAULT_RULES;
   const parts: string[] = [];
+  if (projectBlock) {
+    parts.push(projectBlock, "", "---", "");
+  }
   if (history) {
     parts.push(history, "");
   }
@@ -727,6 +830,9 @@ function buildInitialUserPrompt(
   );
   if (attachmentsBlock) {
     parts.push("", attachmentsBlock);
+  }
+  if (webBlock) {
+    parts.push("", webBlock);
   }
   parts.push(
     "",
@@ -743,10 +849,16 @@ function buildCritiqueUserPrompt(
   session: DebateSession,
   turn: ChatTurn,
   round: number,
-  platform: AIPlatform
+  platform: AIPlatform,
+  resolvedProjectContext?: ResolvedProjectContext
 ): string {
   const budget = budgetForPlatform(platform);
   const history = buildConversationHistoryBlock(session, turn.id, platform);
+  const projectInstrBlock = buildProjectContextBlock(
+    resolvedProjectContext,
+    Math.min(budget.projectContextChars, 2_200),
+    { instructionsOnly: true }
+  );
   const previousRound = round - 1;
   const previousBlock = buildPreviousBlock(
     session,
@@ -759,6 +871,9 @@ function buildCritiqueUserPrompt(
   if (turn.responseMode === "normal") {
     const role = normalRoleFor(platform);
     const parts: string[] = [];
+    if (projectInstrBlock) {
+      parts.push(projectInstrBlock, "");
+    }
     if (history) {
       parts.push(history, "");
     }
@@ -782,6 +897,9 @@ function buildCritiqueUserPrompt(
   const role = roleFor(platform, turn.focus);
   const effectiveRules = customRules || DEFAULT_RULES;
   const parts: string[] = [];
+  if (projectInstrBlock) {
+    parts.push(projectInstrBlock, "");
+  }
   if (history) {
     parts.push(history, "");
   }
@@ -803,10 +921,16 @@ function buildCritiqueUserPrompt(
 function buildSynthesisUserPrompt(
   session: DebateSession,
   turn: ChatTurn,
-  relator: AIPlatform
+  relator: AIPlatform,
+  resolvedProjectContext?: ResolvedProjectContext
 ): string {
   const budget = budgetForPlatform(relator);
   const history = buildConversationHistoryBlock(session, turn.id, relator);
+  const projectInstrBlock = buildProjectContextBlock(
+    resolvedProjectContext,
+    Math.min(budget.projectContextChars, 2_200),
+    { instructionsOnly: true }
+  );
   const finalBlock = buildPreviousBlock(
     session,
     turn,
@@ -817,6 +941,9 @@ function buildSynthesisUserPrompt(
 
   if (turn.responseMode === "normal") {
     const parts: string[] = [];
+    if (projectInstrBlock) {
+      parts.push(projectInstrBlock, "");
+    }
     if (history) {
       parts.push(history, "");
     }
@@ -837,6 +964,9 @@ function buildSynthesisUserPrompt(
 
   const effectiveRules = customRules || DEFAULT_RULES;
   const parts: string[] = [];
+  if (projectInstrBlock) {
+    parts.push(projectInstrBlock, "");
+  }
   if (history) {
     parts.push(history, "");
   }
@@ -888,7 +1018,8 @@ function buildTask(
   turn: ChatTurn,
   round: number,
   stage: Exclude<DebateStage, "completed">,
-  platform: AIPlatform
+  platform: AIPlatform,
+  resolvedProjectContext?: ResolvedProjectContext
 ): DebateTask {
   const systemPrompt = systemPromptFor(turn.responseMode, turn.interactionMode);
   const roleLabel =
@@ -902,10 +1033,21 @@ function buildTask(
 
   const userPrompt =
     stage === "initial_response"
-      ? buildInitialUserPrompt(session, turn, platform)
+      ? buildInitialUserPrompt(session, turn, platform, resolvedProjectContext)
       : stage === "critique"
-        ? buildCritiqueUserPrompt(session, turn, round, platform)
-        : buildSynthesisUserPrompt(session, turn, platform);
+        ? buildCritiqueUserPrompt(
+            session,
+            turn,
+            round,
+            platform,
+            resolvedProjectContext
+          )
+        : buildSynthesisUserPrompt(
+            session,
+            turn,
+            platform,
+            resolvedProjectContext
+          );
 
   const budget = budgetForPlatform(platform);
 
@@ -930,17 +1072,45 @@ function createTasksForStage(
   session: DebateSession,
   turn: ChatTurn,
   round: number,
-  stage: Exclude<DebateStage, "completed">
+  stage: Exclude<DebateStage, "completed">,
+  resolvedProjectContext?: ResolvedProjectContext
 ): DebateTask[] {
   if (stage === "synthesis") {
     return [
-      buildTask(session, turn, round, "synthesis", pickRelator(turn.participants))
+      buildTask(
+        session,
+        turn,
+        round,
+        "synthesis",
+        pickRelator(turn.participants),
+        resolvedProjectContext
+      )
     ];
   }
 
   return turn.participants.map((platform) =>
-    buildTask(session, turn, round, stage, platform)
+    buildTask(session, turn, round, stage, platform, resolvedProjectContext)
   );
+}
+
+async function resolveProjectInstructionsOnly(
+  projectId: string | undefined
+): Promise<ResolvedProjectContext | undefined> {
+  if (!projectId) return undefined;
+  const proj = await getProjectById(projectId).catch(() => null);
+  if (!proj || !proj.instructions.trim()) return undefined;
+  return {
+    meta: {
+      projectId: proj.id,
+      projectName: proj.name,
+      instructionsApplied: true,
+      mode: "full",
+      totalFilesScanned: 0,
+      chunks: []
+    },
+    instructions: proj.instructions.trim(),
+    chunks: []
+  };
 }
 
 function ensureSessionTurns(session: DebateSession): ChatTurn[] {
@@ -1015,7 +1185,113 @@ export async function getDebateSessionById(
 export async function deleteDebateSession(
   debateId: string
 ): Promise<boolean> {
-  return withDebateLock(async () => deleteDebateSessionFile(debateId));
+  return withDebateLock(async () => {
+    const deleted = await deleteDebateSessionFile(debateId);
+    if (deleted) {
+      emitDebateDeleted(debateId);
+    }
+    return deleted;
+  });
+}
+
+export async function renameDebateSession(
+  debateId: string,
+  newTitle: string
+): Promise<DebateSession> {
+  const cleanTitle = newTitle.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!cleanTitle) {
+    throw new Error("O título da conversa não pode ficar vazio.");
+  }
+
+  return withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+    if (!session) {
+      throw new Error("Conversa não encontrada.");
+    }
+
+    session.title = cleanTitle;
+    session.updatedAt = new Date().toISOString();
+    await writeDebateSessionAtomically(session);
+    emitDebateUpdated(session);
+    return session;
+  });
+}
+
+export async function togglePinDebateSession(
+  debateId: string,
+  pinned?: boolean
+): Promise<DebateSession> {
+  return withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+    if (!session) {
+      throw new Error("Conversa não encontrada.");
+    }
+
+    const nextPinned = pinned !== undefined ? Boolean(pinned) : !session.pinned;
+    if (nextPinned) {
+      session.pinned = true;
+    } else {
+      delete session.pinned;
+    }
+    session.updatedAt = new Date().toISOString();
+    await writeDebateSessionAtomically(session);
+    emitDebateUpdated(session);
+    return session;
+  });
+}
+
+export async function searchDebateSessions(query: string): Promise<string[]> {
+  return searchDebateSessionsByQuery(query);
+}
+
+export async function assignDebateToProject(
+  debateId: string,
+  projectId: string | null
+): Promise<DebateSession> {
+  return withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+    if (!session) {
+      throw new Error("Conversa não encontrada.");
+    }
+
+    const cleanProjectId = projectId?.trim() || "";
+    if (cleanProjectId) {
+      const proj = await getProjectById(cleanProjectId);
+      if (!proj) {
+        throw new Error("Projeto não encontrado.");
+      }
+      session.projectId = proj.id;
+    } else {
+      delete session.projectId;
+    }
+
+    session.updatedAt = new Date().toISOString();
+    await writeDebateSessionAtomically(session);
+    emitDebateUpdated(session);
+    return session;
+  });
+}
+
+export async function clearDeletedProjectFromDebates(
+  projectId: string
+): Promise<number> {
+  return withDebateLock(async () => {
+    const summaries = await readDebateSummaries();
+    const affected = summaries.filter((s) => s.projectId === projectId);
+    let updatedCount = 0;
+
+    for (const summary of affected) {
+      const session = await readDebateSessionById(summary.id);
+      if (!session || session.projectId !== projectId) continue;
+      delete session.projectId;
+      session.updatedAt = new Date().toISOString();
+      await writeDebateSessionAtomically(session);
+      emitDebateUpdated(session);
+      updatedCount++;
+    }
+
+    return updatedCount;
+  });
 }
 
 async function pauseOtherRunningSessions(
@@ -1077,6 +1353,12 @@ export async function createDebateSession(
     responseMode === "prompt_markdown" ? rawRules || DEFAULT_RULES : rawRules;
   const focus = normalizeFocus(input.focus);
   const attachments = sanitizeAttachments(input.attachments);
+  const webSearchMode: WebSearchMode = input.webSearchMode === "off" ? "off" : "auto";
+  const webSources: WebSource[] = Array.isArray(input.webSources)
+    ? input.webSources.slice(0, 10)
+    : [];
+  const projectId = input.projectId?.trim() || undefined;
+  const resolvedProjectContext = input.resolvedProjectContext;
 
   if (!title || !topic) {
     throw new Error("Título e mensagem são obrigatórios.");
@@ -1102,7 +1384,10 @@ export async function createDebateSession(
       currentRound: 1,
       currentStage: "initial_response",
       status: "running",
+      webSearchMode,
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(webSources.length > 0 ? { webSources } : {}),
+      ...(resolvedProjectContext ? { projectContext: resolvedProjectContext.meta } : {}),
       createdAt: now
     };
 
@@ -1125,6 +1410,7 @@ export async function createDebateSession(
       focus,
       responseMode,
       interactionMode,
+      ...(projectId ? { projectId } : {}),
       engineVersion: ENGINE_VERSION
     };
 
@@ -1132,7 +1418,8 @@ export async function createDebateSession(
       newSession,
       firstTurn,
       1,
-      "initial_response"
+      "initial_response",
+      resolvedProjectContext
     );
 
     await writeDebateSessionAtomically(newSession);
@@ -1170,6 +1457,11 @@ export async function continueDebateSession(
   const rawRules = (input.rules ?? "").trim();
   const focus = normalizeFocus(input.focus);
   const attachments = sanitizeAttachments(input.attachments);
+  const webSearchMode: WebSearchMode = input.webSearchMode === "off" ? "off" : "auto";
+  const webSources: WebSource[] = Array.isArray(input.webSources)
+    ? input.webSources.slice(0, 10)
+    : [];
+  const resolvedProjectContext = input.resolvedProjectContext;
   const now = new Date().toISOString();
 
   return withDebateLock(async () => {
@@ -1213,7 +1505,10 @@ export async function continueDebateSession(
       currentRound: 1,
       currentStage: "initial_response",
       status: "running",
+      webSearchMode,
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(webSources.length > 0 ? { webSources } : {}),
+      ...(resolvedProjectContext ? { projectContext: resolvedProjectContext.meta } : {}),
       createdAt: now
     };
 
@@ -1235,7 +1530,8 @@ export async function continueDebateSession(
       session,
       nextTurn,
       1,
-      "initial_response"
+      "initial_response",
+      resolvedProjectContext
     );
     session.tasks.push(...nextTasks);
 
@@ -1403,24 +1699,28 @@ export async function submitDebateTaskResponse(
         const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;
         turnForStage.currentRound = session.currentRound;
         turnForStage.currentStage = "critique";
+        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
         session.tasks.push(
           ...createTasksForStage(
             session,
             turnForStage,
             session.currentRound,
-            "critique"
+            "critique",
+            projInstr
           )
         );
       } else {
         session.currentStage = "synthesis";
         const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;
         turnForStage.currentStage = "synthesis";
+        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
         session.tasks.push(
           ...createTasksForStage(
             session,
             turnForStage,
             session.currentRound,
-            "synthesis"
+            "synthesis",
+            projInstr
           )
         );
       }
@@ -1687,6 +1987,130 @@ export async function recordTaskFailure(
 // ============================================
 // PAUSA E RETOMADA
 // ============================================
+
+export async function mergeTurnWebSources(
+  debateId: string,
+  turnId: string | undefined,
+  extraSources: Array<{ title: string; url: string }>
+): Promise<void> {
+  if (!Array.isArray(extraSources) || extraSources.length === 0) return;
+
+  await withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+    if (!session || !Array.isArray(session.turns) || session.turns.length === 0) {
+      return;
+    }
+
+    const turn =
+      (turnId ? session.turns.find((t) => t.id === turnId) : undefined) ??
+      session.turns[session.turns.length - 1];
+    if (!turn) return;
+
+    const existing = Array.isArray(turn.webSources) ? [...turn.webSources] : [];
+    const seenUrls = new Set(existing.map((s) => s.url));
+    let added = 0;
+
+    for (const item of extraSources) {
+      if (!item.url || !isSafePublicUrl(item.url) || seenUrls.has(item.url)) {
+        continue;
+      }
+      if (existing.length >= 12) break;
+      seenUrls.add(item.url);
+      existing.push({
+        index: existing.length + 1,
+        title: (item.title || extractDomain(item.url)).slice(0, 140),
+        url: item.url,
+        domain: extractDomain(item.url),
+        snippet: "Fonte verificada via Google Search Grounding (Gemini).",
+        origin: "grounding",
+        fetchedOk: true
+      });
+      added++;
+    }
+
+    if (added > 0) {
+      turn.webSources = existing;
+      session.updatedAt = new Date().toISOString();
+      await writeDebateSessionAtomically(session);
+      emitDebateUpdated(session);
+    }
+  });
+}
+
+export async function stopDebateGeneration(
+  debateId: string,
+  partialByTaskId: Map<string, string> = new Map()
+): Promise<DebateSession> {
+  return withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+
+    if (!session) {
+      throw new Error("Sessão de debate não encontrada.");
+    }
+
+    if (session.status === "completed") {
+      return session;
+    }
+
+    const now = new Date().toISOString();
+    const activeTurn =
+      Array.isArray(session.turns) && session.turns.length > 0
+        ? session.turns[session.turns.length - 1]
+        : undefined;
+
+    for (const task of session.tasks) {
+      if (task.status !== "pending") continue;
+
+      task.status = "completed";
+      task.completedAt = now;
+      task.interrupted = true;
+
+      const rawPartial = partialByTaskId.get(task.id) ?? "";
+      const cleanPartial = stripLegacyWrappers(rawPartial);
+
+      if (cleanPartial.length > 0) {
+        const alreadySaved = session.responses.some((r) => r.taskId === task.id);
+        if (!alreadySaved) {
+          session.responses.push({
+            id: randomUUID(),
+            ...(task.turnId ? { turnId: task.turnId } : {}),
+            taskId: task.id,
+            round: task.round,
+            stage: task.stage,
+            platform: task.platform,
+            promptUsed: task.prompt,
+            content: cleanPartial,
+            submittedAt: now,
+            interrupted: true
+          });
+        }
+
+        if (task.stage === "synthesis") {
+          session.conclusion = cleanPartial;
+          if (activeTurn && (!task.turnId || task.turnId === activeTurn.id)) {
+            activeTurn.conclusion = cleanPartial;
+          }
+        }
+      }
+    }
+
+    session.status = "completed";
+    session.currentStage = "completed";
+    session.completedAt = now;
+    session.updatedAt = now;
+    delete session.pauseInfo;
+
+    if (activeTurn) {
+      activeTurn.status = "completed";
+      activeTurn.currentStage = "completed";
+      activeTurn.completedAt = now;
+    }
+
+    await writeDebateSessionAtomically(session);
+    emitDebateUpdated(session);
+    return session;
+  });
+}
 
 export async function pauseDebateManually(
   debateId: string,

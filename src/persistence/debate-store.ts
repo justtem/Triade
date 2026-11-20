@@ -14,7 +14,9 @@ import { fileURLToPath } from "node:url";
 import type { DebateSession, DebateSummary } from "../shared/debate-types.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const DATA_DIR = resolve(ROOT_DIR, "data");
+const DATA_DIR = process.env.AI_COUNCIL_DATA_DIR
+  ? resolve(process.env.AI_COUNCIL_DATA_DIR)
+  : resolve(ROOT_DIR, "data");
 const LEGACY_DEBATES_FILE = resolve(DATA_DIR, "debates.json");
 const SESSIONS_DIR = resolve(DATA_DIR, "sessions");
 const INDEX_FILE = resolve(SESSIONS_DIR, "index.json");
@@ -71,6 +73,21 @@ function isStoredDebateSummary(value: unknown): value is DebateSummary {
   );
 }
 
+function sortSummaries(list: DebateSummary[]): DebateSummary[] {
+  return [...list].sort((a, b) => {
+    const pinDiff = (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+    if (pinDiff !== 0) return pinDiff;
+    return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  });
+}
+
+function normalizeSearchText(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 export function summarizeDebateSession(session: DebateSession): DebateSummary {
   const topicClean = session.topic.trim();
   const topicPreview =
@@ -90,6 +107,8 @@ export function summarizeDebateSession(session: DebateSession): DebateSummary {
     ...(session.interactionMode
       ? { interactionMode: session.interactionMode }
       : {}),
+    ...(session.pinned ? { pinned: true } : {}),
+    ...(session.projectId ? { projectId: session.projectId } : {}),
     turnCount: Array.isArray(session.turns) && session.turns.length > 0
       ? session.turns.length
       : 1,
@@ -221,9 +240,7 @@ export async function readDebateSummaries(): Promise<DebateSummary[]> {
     throw new Error("O arquivo data/sessions/index.json possui uma estrutura inválida.");
   }
 
-  return parsed
-    .filter(isStoredDebateSummary)
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  return sortSummaries(parsed.filter(isStoredDebateSummary));
 }
 
 export async function readDebateSessionById(
@@ -269,8 +286,7 @@ export async function writeDebateSessionAtomically(
     summaries.unshift(nextSummary);
   }
 
-  summaries.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  await writeJsonAtomically(INDEX_FILE, summaries);
+  await writeJsonAtomically(INDEX_FILE, sortSummaries(summaries));
 }
 
 export async function deleteDebateSessionFile(id: string): Promise<boolean> {
@@ -297,4 +313,45 @@ export async function readDebateSessions(): Promise<DebateSession[]> {
     summaries.map((s) => readDebateSessionById(s.id).catch(() => null))
   );
   return loaded.filter((s): s is DebateSession => s !== null);
+}
+
+/** Busca full-text nas conversas (título, tema, turnos, respostas, síntese e memória). */
+export async function searchDebateSessionsByQuery(
+  rawQuery: string
+): Promise<string[]> {
+  const needle = normalizeSearchText(rawQuery.trim());
+  if (!needle) return [];
+
+  const summaries = await readDebateSummaries();
+  const matchingIds: string[] = [];
+
+  for (const summary of summaries) {
+    if (
+      normalizeSearchText(summary.title).includes(needle) ||
+      normalizeSearchText(summary.topic).includes(needle)
+    ) {
+      matchingIds.push(summary.id);
+      continue;
+    }
+
+    const session = await readDebateSessionById(summary.id).catch(() => null);
+    if (!session) continue;
+
+    const haystacks: string[] = [];
+    if (session.conclusion) haystacks.push(session.conclusion);
+    if (session.sharedMemory?.summary) haystacks.push(session.sharedMemory.summary);
+    for (const t of session.turns ?? []) {
+      haystacks.push(t.prompt);
+      if (t.conclusion) haystacks.push(t.conclusion);
+    }
+    for (const r of session.responses ?? []) {
+      haystacks.push(r.content);
+    }
+
+    if (haystacks.some((h) => normalizeSearchText(h).includes(needle))) {
+      matchingIds.push(summary.id);
+    }
+  }
+
+  return matchingIds;
 }

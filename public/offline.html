@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#181818">
+    <title>AI Council — Servidor Offline</title>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            min-height: 100dvh;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background: #141418;
+            background-image:
+                linear-gradient(rgba(141, 134, 240, 0.06) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(141, 134, 240, 0.06) 1px, transparent 1px);
+            background-size: 28px 28px;
+            color: #f4f4f6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+        }
+        .offline-card {
+            width: min(420px, 100%);
+            padding: 28px 24px;
+            border-radius: 16px;
+            background: #1a1a22;
+            border: 1px solid rgba(141, 134, 240, 0.35);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 16px;
+        }
+        .offline-logo {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: #141418;
+            border: 1px solid rgba(141, 134, 240, 0.45);
+            display: grid;
+            place-items: center;
+            color: #8d86f0;
+        }
+        .eyebrow {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #f6e287;
+        }
+        h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        p {
+            font-size: 14px;
+            line-height: 1.55;
+            color: #a9abb8;
+        }
+        .retry-btn {
+            margin-top: 4px;
+            width: 100%;
+            padding: 12px 18px;
+            border: none;
+            border-radius: 10px;
+            background: #ffffff;
+            color: #141418;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.16s ease, opacity 0.16s ease;
+        }
+        .retry-btn:active {
+            transform: scale(0.98);
+        }
+        .hint {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 11px;
+            color: #7c7f90;
+        }
+    </style>
+</head>
+<body>
+    <main class="offline-card">
+        <div class="offline-logo" aria-hidden="true">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                <polyline points="2 17 12 22 22 17"></polyline>
+                <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+        </div>
+        <span class="eyebrow">SERVIDOR DO PC DESLIGADO</span>
+        <h1>AI Council fora do ar</h1>
+        <p>
+            Não foi possível conectar ao servidor no seu computador. Verifique se o PC está ligado e ative o <strong>AI Council</strong> no ícone da bandeja do Windows (ou via Tailscale).
+        </p>
+        <button type="button" class="retry-btn" id="retry-btn">Tentar novamente →</button>
+        <span class="hint">Verificando conexão em tempo real · sem cache de respostas</span>
+    </main>
+    <script>
+        document.getElementById("retry-btn").addEventListener("click", () => {
+            window.location.reload();
+        });
+    </script>
+</body>
+</html>

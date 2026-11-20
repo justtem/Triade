@@ -54,6 +54,13 @@ export type StreamHubEvent =
       };
     }
   | {
+      type: "debate_deleted";
+      data: {
+        debateId: string;
+        at: string;
+      };
+    }
+  | {
       type: "providers_updated";
       data: {
         at: string;
@@ -158,6 +165,22 @@ export function emitDebateUpdated(session: DebateSession): void {
       currentRound: session.currentRound,
       currentStage: session.currentStage,
       updatedAt: session.updatedAt
+    }
+  });
+}
+
+export function emitDebateDeleted(debateId: string): void {
+  for (const [taskId, state] of activeStreams.entries()) {
+    if (state.debateId === debateId) {
+      activeStreams.delete(taskId);
+    }
+  }
+
+  broadcast({
+    type: "debate_deleted",
+    data: {
+      debateId,
+      at: new Date().toISOString()
     }
   });
 }
