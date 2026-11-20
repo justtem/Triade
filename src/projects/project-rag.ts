@@ -151,9 +151,63 @@ const STOPWORDS = new Set([
   "quero", "preciso", "ajude", "explique", "analise", "projeto", "arquivo"
 ]);
 
-// Cache em memória de PDFs lidos da pasta local (invalidado por mtimeMs)
-const diskPdfCache = new Map<string, { mtimeMs: number; text: string }>();
-const MAX_DISK_PDF_CACHE = 40;
+// Cache em memória de arquivos lidos da pasta local (texto e PDF, invalidados por mtimeMs + size)
+interface DiskFileCacheEntry {
+  mtimeMs: number;
+  size: number;
+  content: string;
+}
+const diskFileCache = new Map<string, DiskFileCacheEntry>();
+const MAX_DISK_FILE_CACHE = 400;
+
+// Cache em memória do índice BM25 pré-calculado por Projeto (invalidado por fingerprint de mtimeMs + size)
+interface FullDocIndexed {
+  doc: LoadedDocument;
+  textTokenSet: Set<string>;
+  nameTokens: Set<string>;
+}
+
+interface Bm25PrecomputedIndex {
+  chunks: RawChunk[];
+  termFreqsPerChunk: Array<Map<string, number>>;
+  docFreq: Map<string, number>;
+  avgDocLen: number;
+}
+
+interface CachedProjectIndex {
+  fingerprint: string;
+  totalFilesScanned: number;
+  mode: "full" | "bm25";
+  fullDocs?: FullDocIndexed[];
+  bm25?: Bm25PrecomputedIndex;
+}
+
+const projectIndexCache = new Map<string, CachedProjectIndex>();
+const MAX_PROJECT_INDEX_CACHE = 24;
+
+const ragCacheStats = {
+  indexHits: 0,
+  indexRebuilds: 0,
+  fileHits: 0,
+  fileReads: 0
+};
+
+export function getProjectRagCacheStats() {
+  return {
+    ...ragCacheStats,
+    cachedProjects: projectIndexCache.size,
+    cachedFiles: diskFileCache.size
+  };
+}
+
+export function clearProjectRagCache(): void {
+  diskFileCache.clear();
+  projectIndexCache.clear();
+  ragCacheStats.indexHits = 0;
+  ragCacheStats.indexRebuilds = 0;
+  ragCacheStats.fileHits = 0;
+  ragCacheStats.fileReads = 0;
+}
 
 /**
  * Trava rígida de segurança: bloqueia .env, chaves privadas, credenciais e bancos locais.
@@ -368,35 +422,50 @@ export async function inspectLinkedFolder(
   };
 }
 
-async function readLinkedFolderDocuments(
+interface FolderScannedEntry {
+  fullPath: string;
+  relPath: string;
+  kind: "text" | "pdf";
+  size: number;
+  mtimeMs: number;
+}
+
+/**
+ * Percorre a pasta local vinculada usando APENAS stat() (sem ler conteúdo dos arquivos)
+ * para construir uma assinatura determinística baseada em relPath + size + mtimeMs.
+ */
+async function scanLinkedFolderEntries(
   rawPath: string
-): Promise<LoadedDocument[]> {
+): Promise<{ entries: FolderScannedEntry[]; fingerprint: string }> {
   const trimmed = (rawPath ?? "").trim();
-  if (!trimmed) return [];
+  if (!trimmed) return { entries: [], fingerprint: "" };
 
   const rootDir = resolve(trimmed);
   try {
     const st = await stat(rootDir);
-    if (!st.isDirectory()) return [];
+    if (!st.isDirectory()) return { entries: [], fingerprint: "" };
   } catch {
-    return [];
+    return { entries: [], fingerprint: "" };
   }
 
-  const docs: LoadedDocument[] = [];
+  const found: FolderScannedEntry[] = [];
   let scannedCount = 0;
   let pdfCount = 0;
 
   async function walk(currentDir: string, depth: number): Promise<void> {
     if (depth > MAX_SCAN_DEPTH || scannedCount >= MAX_SCAN_FILES) return;
 
-    let entries;
+    let dirEntries;
     try {
-      entries = await readdir(currentDir, { withFileTypes: true });
+      dirEntries = await readdir(currentDir, { withFileTypes: true });
     } catch {
       return;
     }
 
-    for (const entry of entries) {
+    // Ordenação determinística garante fingerprint estável independente do sistema de arquivos
+    dirEntries.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of dirEntries) {
       if (scannedCount >= MAX_SCAN_FILES) break;
       if (entry.isSymbolicLink()) continue;
 
@@ -416,13 +485,11 @@ async function readLinkedFolderDocuments(
       if (!entry.isFile()) continue;
 
       const check = isSupportedProjectFileName(entry.name);
-      if (!check.supported) continue;
+      if (!check.supported || !check.kind) continue;
 
       try {
         const st = await stat(fullPath);
         if (st.size === 0) continue;
-
-        const relPath = relative(rootDir, fullPath).replace(/\\/g, "/");
 
         if (check.kind === "pdf") {
           if (st.size > MAX_DISK_PDF_BYTES || pdfCount >= MAX_DISK_PDF_FILES) {
@@ -430,49 +497,18 @@ async function readLinkedFolderDocuments(
           }
           pdfCount++;
           scannedCount++;
-
-          const cached = diskPdfCache.get(fullPath);
-          let text = "";
-          if (cached && cached.mtimeMs === st.mtimeMs) {
-            text = cached.text;
-          } else {
-            const buf = await readFile(fullPath);
-            text = await extractPdfTextFromBuffer(buf).catch(() => "");
-            if (diskPdfCache.size >= MAX_DISK_PDF_CACHE) {
-              const firstKey = diskPdfCache.keys().next().value;
-              if (firstKey) diskPdfCache.delete(firstKey);
-            }
-            diskPdfCache.set(fullPath, { mtimeMs: st.mtimeMs, text });
-          }
-
-          if (text.trim()) {
-            docs.push({
-              sourceName: relPath,
-              origin: "folder",
-              filePath: relPath,
-              content: text.trim()
-            });
-          }
-          continue;
+        } else {
+          if (st.size > MAX_DISK_TEXT_BYTES) continue;
+          scannedCount++;
         }
 
-        if (st.size > MAX_DISK_TEXT_BYTES) continue;
-        scannedCount++;
-
-        const buf = await readFile(fullPath);
-        // Bloqueia binários disfarçados com extensão de texto (presença de byte nulo)
-        if (buf.subarray(0, Math.min(buf.length, 4096)).includes(0)) {
-          continue;
-        }
-
-        const text = buf.toString("utf8").replace(/\r\n/g, "\n").trim();
-        if (!text) continue;
-
-        docs.push({
-          sourceName: relPath,
-          origin: "folder",
-          filePath: relPath,
-          content: text
+        const relPath = relative(rootDir, fullPath).replace(/\\/g, "/");
+        found.push({
+          fullPath,
+          relPath,
+          kind: check.kind,
+          size: st.size,
+          mtimeMs: Math.trunc(st.mtimeMs)
         });
       } catch {
         // Ignora arquivo ilegível sem quebrar a busca
@@ -481,6 +517,69 @@ async function readLinkedFolderDocuments(
   }
 
   await walk(rootDir, 0);
+
+  const fingerprint = found
+    .map((e) => `${e.relPath}|${e.size}|${e.mtimeMs}`)
+    .join("\n");
+
+  return { entries: found, fingerprint };
+}
+
+async function loadLinkedFolderDocuments(
+  entries: FolderScannedEntry[]
+): Promise<LoadedDocument[]> {
+  const docs: LoadedDocument[] = [];
+
+  for (const entry of entries) {
+    try {
+      const cached = diskFileCache.get(entry.fullPath);
+      let content = "";
+
+      if (
+        cached &&
+        cached.mtimeMs === entry.mtimeMs &&
+        cached.size === entry.size
+      ) {
+        ragCacheStats.fileHits++;
+        content = cached.content;
+      } else {
+        ragCacheStats.fileReads++;
+        const buf = await readFile(entry.fullPath);
+        if (entry.kind === "pdf") {
+          content = (await extractPdfTextFromBuffer(buf).catch(() => "")).trim();
+        } else {
+          // Bloqueia binários disfarçados com extensão de texto (presença de byte nulo)
+          if (buf.subarray(0, Math.min(buf.length, 4096)).includes(0)) {
+            content = "";
+          } else {
+            content = buf.toString("utf8").replace(/\r\n/g, "\n").trim();
+          }
+        }
+
+        if (diskFileCache.size >= MAX_DISK_FILE_CACHE) {
+          const firstKey = diskFileCache.keys().next().value;
+          if (firstKey) diskFileCache.delete(firstKey);
+        }
+        diskFileCache.set(entry.fullPath, {
+          mtimeMs: entry.mtimeMs,
+          size: entry.size,
+          content
+        });
+      }
+
+      if (content) {
+        docs.push({
+          sourceName: entry.relPath,
+          origin: "folder",
+          filePath: entry.relPath,
+          content
+        });
+      }
+    } catch {
+      // Ignora arquivo ilegível
+    }
+  }
+
   return docs;
 }
 
@@ -581,57 +680,41 @@ function makeSnippet(content: string, maxLen = 220): string {
   return `${flat.slice(0, maxLen).trim()}...`;
 }
 
-export function rankChunksBM25(
+function buildPrecomputedProjectIndex(
   docs: LoadedDocument[],
-  query: string,
-  maxChunks = MAX_RETURNED_CHUNKS
-): { mode: "full" | "bm25"; chunks: ProjectResolvedChunk[] } {
+  fingerprint: string
+): CachedProjectIndex {
   if (docs.length === 0) {
-    return { mode: "full", chunks: [] };
+    return {
+      fingerprint,
+      totalFilesScanned: 0,
+      mode: "full",
+      fullDocs: []
+    };
   }
 
   const totalChars = docs.reduce((acc, d) => acc + d.content.length, 0);
-  const queryTerms = Array.from(new Set(normalizeAndTokenize(query)));
 
-  // Se o projeto inteiro é pequeno, entrega todos os arquivos na íntegra (ordenados por relevância)
   if (
     totalChars <= FULL_CONTEXT_THRESHOLD_CHARS &&
     docs.length <= FULL_CONTEXT_MAX_FILES
   ) {
-    const scoredDocs = docs.map((doc) => {
-      const textTokens = normalizeAndTokenize(doc.content);
-      const nameTokens = new Set(normalizeAndTokenize(doc.sourceName));
-      let score = 0;
-      for (const term of queryTerms) {
-        if (nameTokens.has(term)) score += 3;
-        if (textTokens.includes(term)) score += 1;
-      }
-      return { doc, score };
-    });
-
-    scoredDocs.sort((a, b) => b.score - a.score);
-
+    const fullDocs: FullDocIndexed[] = docs.map((doc) => ({
+      doc,
+      textTokenSet: new Set(normalizeAndTokenize(doc.content)),
+      nameTokens: new Set(normalizeAndTokenize(doc.sourceName))
+    }));
     return {
+      fingerprint,
+      totalFilesScanned: docs.length,
       mode: "full",
-      chunks: scoredDocs.map(({ doc, score }) => ({
-        sourceName: doc.sourceName,
-        origin: doc.origin,
-        ...(doc.filePath ? { filePath: doc.filePath } : {}),
-        snippet: makeSnippet(doc.content),
-        content: doc.content,
-        score: Number(score.toFixed(2))
-      }))
+      fullDocs
     };
   }
 
-  // Projeto médio/grande: chunking + BM25 real
   const allChunks: RawChunk[] = [];
   for (const doc of docs) {
     allChunks.push(...splitIntoChunks(doc));
-  }
-
-  if (allChunks.length === 0) {
-    return { mode: "bm25", chunks: [] };
   }
 
   const N = allChunks.length;
@@ -652,6 +735,63 @@ export function rankChunksBM25(
     }
   }
 
+  return {
+    fingerprint,
+    totalFilesScanned: docs.length,
+    mode: "bm25",
+    bm25: {
+      chunks: allChunks,
+      termFreqsPerChunk,
+      docFreq,
+      avgDocLen
+    }
+  };
+}
+
+function queryPrecomputedProjectIndex(
+  index: CachedProjectIndex,
+  query: string,
+  maxChunks = MAX_RETURNED_CHUNKS
+): { mode: "full" | "bm25"; chunks: ProjectResolvedChunk[] } {
+  const queryTerms = Array.from(new Set(normalizeAndTokenize(query)));
+
+  if (index.mode === "full") {
+    const fullDocs = index.fullDocs ?? [];
+    if (fullDocs.length === 0) {
+      return { mode: "full", chunks: [] };
+    }
+
+    const scoredDocs = fullDocs.map((entry) => {
+      let score = 0;
+      for (const term of queryTerms) {
+        if (entry.nameTokens.has(term)) score += 3;
+        if (entry.textTokenSet.has(term)) score += 1;
+      }
+      return { doc: entry.doc, score };
+    });
+
+    scoredDocs.sort((a, b) => b.score - a.score);
+
+    return {
+      mode: "full",
+      chunks: scoredDocs.map(({ doc, score }) => ({
+        sourceName: doc.sourceName,
+        origin: doc.origin,
+        ...(doc.filePath ? { filePath: doc.filePath } : {}),
+        snippet: makeSnippet(doc.content),
+        content: doc.content,
+        score: Number(score.toFixed(2))
+      }))
+    };
+  }
+
+  const bm25 = index.bm25;
+  if (!bm25 || bm25.chunks.length === 0) {
+    return { mode: "bm25", chunks: [] };
+  }
+
+  const { chunks: allChunks, termFreqsPerChunk, docFreq, avgDocLen } = bm25;
+  const N = allChunks.length;
   const k1 = 1.5;
   const b = 0.75;
 
@@ -667,13 +807,11 @@ export function rankChunksBM25(
         const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
         score += idf * ((tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / avgDocLen))));
       }
-      // Bônus forte quando o nome/caminho do arquivo corresponde a um termo da pergunta
       if (chunk.nameTokens.has(term)) {
         score += 2.2;
       }
     }
 
-    // Leve bônus para arquivos enviados explicitamente ao projeto
     if (chunk.origin === "upload" && score > 0) {
       score += 0.35;
     }
@@ -684,8 +822,6 @@ export function rankChunksBM25(
   scored.sort((a, b) => b.score - a.score);
 
   const positive = scored.filter((item) => item.score > 0);
-
-  // Evita que um único arquivo domine todos os slots (máx 3 chunks por arquivo)
   const selected: ProjectResolvedChunk[] = [];
   const countBySource = new Map<string, number>();
 
@@ -705,7 +841,6 @@ export function rankChunksBM25(
       score: Number(item.score.toFixed(2))
     });
 
-    // Se caiu no fallback (sem termos coincidentes), pega só uma amostra leve de 4 arquivos
     if (positive.length === 0 && selected.length >= 4) {
       break;
     }
@@ -717,9 +852,130 @@ export function rankChunksBM25(
   };
 }
 
+export function rankChunksBM25(
+  docs: LoadedDocument[],
+  query: string,
+  maxChunks = MAX_RETURNED_CHUNKS
+): { mode: "full" | "bm25"; chunks: ProjectResolvedChunk[] } {
+  const index = buildPrecomputedProjectIndex(docs, "");
+  return queryPrecomputedProjectIndex(index, query, maxChunks);
+}
+
+/**
+ * Seleciona o texto extraído de um PDF avulso no chat respeitando o orçamento da IA:
+ * - Se couber inteiro em maxChars, devolve o texto completo.
+ * - Se exceder (ex.: PDF de 40 páginas), inclui o início do documento + os trechos
+ *   mais relevantes à pergunta ranqueados via BM25 local (evita perder cláusulas no meio).
+ */
+export function selectPdfTextForPrompt(
+  pdfName: string,
+  extractedText: string,
+  query: string,
+  maxChars: number
+): string {
+  const clean = (extractedText ?? "").trim();
+  if (!clean) return "";
+
+  const safeMax = Math.max(800, maxChars);
+  if (clean.length <= safeMax) {
+    return clean;
+  }
+
+  // Reserva parte do orçamento para o início do PDF (título, sumário, contexto geral)
+  const introBudget = Math.min(Math.floor(safeMax * 0.28), 1_400);
+  let introEnd = introBudget;
+  const nlBreak = clean.lastIndexOf("\n", introBudget);
+  if (nlBreak > introBudget * 0.6) {
+    introEnd = nlBreak;
+  }
+  const intro = clean.slice(0, introEnd).trim();
+  const remainder = clean.slice(introEnd).trim();
+
+  if (!remainder) {
+    return intro;
+  }
+
+  const remainderChunks = splitIntoChunks({
+    sourceName: pdfName,
+    origin: "upload",
+    content: remainder
+  });
+
+  if (remainderChunks.length === 0) {
+    return intro;
+  }
+
+  const N = remainderChunks.length;
+  const avgDocLen =
+    remainderChunks.reduce((sum, c) => sum + c.tokens.length, 0) / Math.max(1, N);
+  const docFreq = new Map<string, number>();
+  const termFreqs: Array<Map<string, number>> = [];
+
+  for (const ch of remainderChunks) {
+    const tf = new Map<string, number>();
+    for (const tok of ch.tokens) {
+      tf.set(tok, (tf.get(tok) ?? 0) + 1);
+    }
+    termFreqs.push(tf);
+    for (const uniqueTok of tf.keys()) {
+      docFreq.set(uniqueTok, (docFreq.get(uniqueTok) ?? 0) + 1);
+    }
+  }
+
+  const queryTerms = Array.from(new Set(normalizeAndTokenize(query)));
+  const k1 = 1.5;
+  const b = 0.75;
+
+  const scored = remainderChunks.map((chunk, idx) => {
+    const tfMap = termFreqs[idx]!;
+    const dl = Math.max(1, chunk.tokens.length);
+    let score = 0;
+
+    for (const term of queryTerms) {
+      const tf = tfMap.get(term) ?? 0;
+      if (tf > 0) {
+        const df = docFreq.get(term) ?? 0;
+        const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+        score += idf * ((tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / avgDocLen))));
+      }
+    }
+
+    return { idx, chunk, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+  const headerIntro = "[Início do PDF]";
+  const headerChunks = "[Trechos mais relevantes ao pedido (busca local BM25)]";
+  const picked: Array<{ idx: number; content: string }> = [];
+  let used = intro.length + headerIntro.length + headerChunks.length + 24;
+
+  for (const item of scored) {
+    const remainingBudget = safeMax - used;
+    if (remainingBudget < 220) break;
+
+    const snippet =
+      item.chunk.content.length > remainingBudget
+        ? `${item.chunk.content.slice(0, remainingBudget - 6).trim()} [...]`
+        : item.chunk.content;
+    picked.push({ idx: item.idx, content: snippet });
+    used += snippet.length + 12;
+  }
+
+  // Reordena os trechos selecionados na ordem natural do documento para facilitar a leitura da IA
+  picked.sort((a, b) => a.idx - b.idx);
+
+  const parts = [headerIntro, intro];
+  if (picked.length > 0) {
+    parts.push("", headerChunks, ...picked.map((p) => p.content));
+  }
+  return parts.join("\n");
+}
+
 /**
  * Carrega instruções + arquivos (uploads + pasta local somente leitura) do Projeto
- * e devolve o contexto pronto para ser injetado com orçamento por IA.
+ * utilizando cache completo em memória (arquivos + chunks + índice BM25 TF/IDF)
+ * validado instantaneamente por mtimeMs + size.
  */
 export async function gatherProjectContext(
   projectId: string | undefined,
@@ -730,28 +986,52 @@ export async function gatherProjectContext(
   const project: Project | null = await getProjectById(projectId);
   if (!project) return null;
 
-  const docs: LoadedDocument[] = [];
+  const folderScan = project.linkedFolderPath?.trim()
+    ? await scanLinkedFolderEntries(project.linkedFolderPath)
+    : { entries: [], fingerprint: "" };
 
-  // 1. Arquivos enviados ao projeto (acessíveis no PC e no celular)
-  for (const fileMeta of project.files) {
-    const text = await readProjectFileText(project.id, fileMeta.id);
-    if (text && text.trim()) {
-      docs.push({
-        sourceName: fileMeta.name,
-        origin: "upload",
-        content: text.trim()
-      });
+  const uploadsFingerprint = project.files
+    .map((f) => `${f.id}|${f.name}|${f.size}|${f.uploadedAt}`)
+    .sort()
+    .join("\n");
+
+  const fullFingerprint = `U:${uploadsFingerprint}\nF:${project.linkedFolderPath ?? ""}\n${folderScan.fingerprint}`;
+
+  let index = projectIndexCache.get(project.id);
+  if (index && index.fingerprint === fullFingerprint) {
+    ragCacheStats.indexHits++;
+  } else {
+    ragCacheStats.indexRebuilds++;
+    const docs: LoadedDocument[] = [];
+
+    // 1. Arquivos enviados ao projeto (acessíveis no PC e no celular)
+    for (const fileMeta of project.files) {
+      const text = await readProjectFileText(project.id, fileMeta.id);
+      if (text && text.trim()) {
+        docs.push({
+          sourceName: fileMeta.name,
+          origin: "upload",
+          content: text.trim()
+        });
+      }
     }
-  }
 
-  // 2. Pasta local do PC vinculada (somente leitura, segredos/binários bloqueados)
-  if (project.linkedFolderPath?.trim()) {
-    const folderDocs = await readLinkedFolderDocuments(project.linkedFolderPath);
-    docs.push(...folderDocs);
+    // 2. Pasta local do PC vinculada (somente leitura, segredos/binários bloqueados, cache por arquivo)
+    if (folderScan.entries.length > 0) {
+      const folderDocs = await loadLinkedFolderDocuments(folderScan.entries);
+      docs.push(...folderDocs);
+    }
+
+    index = buildPrecomputedProjectIndex(docs, fullFingerprint);
+    if (projectIndexCache.size >= MAX_PROJECT_INDEX_CACHE) {
+      const firstKey = projectIndexCache.keys().next().value;
+      if (firstKey) projectIndexCache.delete(firstKey);
+    }
+    projectIndexCache.set(project.id, index);
   }
 
   const instructions = project.instructions.trim();
-  const ranked = rankChunksBM25(docs, query);
+  const ranked = queryPrecomputedProjectIndex(index, query);
 
   return {
     meta: {
@@ -759,7 +1039,7 @@ export async function gatherProjectContext(
       projectName: project.name,
       instructionsApplied: instructions.length > 0,
       mode: ranked.mode,
-      totalFilesScanned: docs.length,
+      totalFilesScanned: index.totalFilesScanned,
       chunks: ranked.chunks.map((c) => ({
         sourceName: c.sourceName,
         origin: c.origin,

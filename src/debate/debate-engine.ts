@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   ALL_PLATFORMS,
@@ -14,6 +14,7 @@ import {
   type DebateStage,
   type DebateSummary,
   type DebateTask,
+  type EditTurnInput,
   type InteractionMode,
   type ParticipantState,
   type ResolvedProjectContext,
@@ -43,8 +44,17 @@ import {
   extractDomain,
   isSafePublicUrl
 } from "../web/web-context.js";
-import { buildProjectContextBlock } from "../projects/project-rag.js";
+import {
+  buildProjectContextBlock,
+  selectPdfTextForPrompt
+} from "../projects/project-rag.js";
+import { extractPdfTextFromBuffer } from "../projects/pdf-extract.js";
 import { getProjectById } from "../persistence/project-store.js";
+import {
+  buildUserMemoryPromptBlock,
+  readUserMemory,
+  type UserMemoryState
+} from "../persistence/user-memory-store.js";
 import { emitDebateDeleted, emitDebateUpdated } from "./stream-hub.js";
 
 export { budgetForPlatform, RECENT_FULL_TURNS };
@@ -306,6 +316,7 @@ function responsesForTurn(
 
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_CHARS = 60_000;
+const MAX_PDF_EXTRACTED_CHARS = 250_000;
 const MAX_TOTAL_ATTACHMENTS_CHARS = 150_000;
 const MAX_IMAGE_BASE64_CHARS = 3_600_000; // ~2.6 MB binário
 const MAX_PDF_BASE64_CHARS = 4_800_000; // ~3.5 MB binário
@@ -315,6 +326,67 @@ const ALLOWED_IMAGE_MIMES = new Set([
   "image/webp",
   "image/gif"
 ]);
+
+// Cache curto em memória para evitar re-extrair o mesmo PDF avulso via unpdf
+const chatPdfTextCache = new Map<string, string>();
+const MAX_CHAT_PDF_CACHE = 32;
+
+/**
+ * Extrai texto de anexos PDF avulsos do chat via unpdf para que TODAS as IAs
+ * (Groq, OpenRouter, manuais) leiam o documento, mantendo o binário inline para o Gemini.
+ */
+export async function enrichPdfAttachments(
+  raw?: ChatAttachment[]
+): Promise<ChatAttachment[] | undefined> {
+  if (!Array.isArray(raw) || raw.length === 0) return raw;
+
+  const hasPdfToExtract = raw.some(
+    (item) =>
+      item &&
+      item.kind === "pdf" &&
+      typeof item.dataBase64 === "string" &&
+      (!item.content || !item.content.trim())
+  );
+  if (!hasPdfToExtract) return raw;
+
+  const enriched: ChatAttachment[] = [];
+  for (const item of raw.slice(0, MAX_ATTACHMENTS)) {
+    if (
+      item &&
+      item.kind === "pdf" &&
+      typeof item.dataBase64 === "string" &&
+      (!item.content || !item.content.trim())
+    ) {
+      const base64 = item.dataBase64.replace(/^data:[^;]+;base64,/i, "").trim();
+      if (base64 && base64.length <= MAX_PDF_BASE64_CHARS) {
+        const hash = createHash("sha256").update(base64).digest("hex");
+        let extracted = chatPdfTextCache.get(hash);
+        if (extracted === undefined) {
+          try {
+            const buf = Buffer.from(base64, "base64");
+            extracted = (await extractPdfTextFromBuffer(buf))
+              .replace(/\0/g, "")
+              .slice(0, MAX_PDF_EXTRACTED_CHARS);
+          } catch {
+            extracted = "";
+          }
+          if (chatPdfTextCache.size >= MAX_CHAT_PDF_CACHE) {
+            const firstKey = chatPdfTextCache.keys().next().value;
+            if (firstKey) chatPdfTextCache.delete(firstKey);
+          }
+          chatPdfTextCache.set(hash, extracted);
+        }
+        enriched.push({
+          ...item,
+          content: extracted
+        });
+        continue;
+      }
+    }
+    enriched.push(item);
+  }
+  return enriched;
+}
 
 function sanitizeAttachments(raw?: ChatAttachment[]): ChatAttachment[] {
   if (!Array.isArray(raw) || raw.length === 0) return [];
@@ -346,9 +418,14 @@ function sanitizeAttachments(raw?: ChatAttachment[]): ChatAttachment[] {
         if (base64.length > MAX_PDF_BASE64_CHARS) continue;
       }
 
+      const extractedPdfText =
+        item.kind === "pdf" && typeof item.content === "string"
+          ? item.content.replace(/\0/g, "").trim().slice(0, MAX_PDF_EXTRACTED_CHARS)
+          : "";
+
       result.push({
         name,
-        content: "",
+        content: extractedPdfText,
         size:
           typeof item.size === "number" && item.size >= 0
             ? item.size
@@ -413,27 +490,62 @@ function buildAttachmentsBlock(turn: ChatTurn, platform: AIPlatform): string {
   if (!Array.isArray(files) || files.length === 0) return "";
 
   const textFiles = files.filter((f) => f.kind !== "image" && f.kind !== "pdf");
-  const mediaFiles = files.filter((f) => f.kind === "image" || f.kind === "pdf");
+  const imageFiles = files.filter((f) => f.kind === "image");
+  const pdfFiles = files.filter((f) => f.kind === "pdf");
 
   const blocks: string[] = [];
+  const totalBudget = budgetForPlatform(platform).attachmentChars;
+
+  // Para provedores não-Gemini, PDFs com texto extraído compartilham o orçamento de anexos com arquivos de texto
+  const extractedPdfsForText =
+    platform !== "gemini"
+      ? pdfFiles.filter((f) => typeof f.content === "string" && f.content.trim().length > 0)
+      : [];
+  const totalTextSlots = Math.max(1, textFiles.length + extractedPdfsForText.length);
+  const perTextSlot = Math.max(800, Math.floor(totalBudget / totalTextSlots));
 
   if (textFiles.length > 0) {
-    const budget = budgetForPlatform(platform).attachmentChars;
-    const perFile = Math.max(800, Math.floor(budget / textFiles.length));
     for (const file of textFiles) {
       const lang = langFromFilename(file.name);
-      const snippet = compactForPrompt(file.content, perFile);
+      const snippet = compactForPrompt(file.content, perTextSlot);
       blocks.push(`### Arquivo: ${file.name}\n\`\`\`${lang}\n${snippet}\n\`\`\``);
     }
   }
 
-  for (const media of mediaFiles) {
-    const kindLabel = media.kind === "pdf" ? "PDF" : "Imagem";
-    if (platform === "gemini" || (platform === "openrouter" && media.kind === "image")) {
-      blocks.push(`### Anexo (${kindLabel}): ${media.name} — enviado inline para análise visual/documental.`);
+  for (const pdf of pdfFiles) {
+    if (platform === "gemini") {
+      // Híbrido: Gemini recebe o binário nativo inline (vê gráficos, tabelas visuais e scans)
+      blocks.push(
+        `### Anexo (PDF): ${pdf.name} — enviado inline para análise visual/documental.`
+      );
+      continue;
+    }
+
+    const extracted = typeof pdf.content === "string" ? pdf.content.trim() : "";
+    if (extracted) {
+      const selected = selectPdfTextForPrompt(
+        pdf.name,
+        extracted,
+        turn.prompt,
+        perTextSlot
+      );
+      blocks.push(`### Arquivo PDF (texto extraído): ${pdf.name}\n${selected}`);
+    } else {
+      // PDF escaneado/somente imagem (sem camada de texto): aviso transparente interno no prompt
+      blocks.push(
+        `### Anexo (PDF): ${pdf.name} — este PDF parece escaneado/somente imagem (sem texto extraível). O colega Gemini recebeu o arquivo visualmente; responda com base no texto do usuário e na análise dos colegas quando disponível.`
+      );
+    }
+  }
+
+  for (const img of imageFiles) {
+    if (platform === "gemini" || platform === "openrouter") {
+      blocks.push(
+        `### Anexo (Imagem): ${img.name} — enviado inline para análise visual/documental.`
+      );
     } else {
       blocks.push(
-        `### Anexo (${kindLabel}): ${media.name} — enviado ao colega com suporte multimodal; responda com base no texto do usuário (e na análise dos colegas na crítica).`
+        `### Anexo (Imagem): ${img.name} — enviado ao colega com suporte multimodal; responda com base no texto do usuário (e na análise dos colegas na crítica).`
       );
     }
   }
@@ -709,23 +821,33 @@ function buildInitialUserPrompt(
   session: DebateSession,
   turn: ChatTurn,
   platform: AIPlatform,
-  resolvedProjectContext?: ResolvedProjectContext
+  resolvedProjectContext?: ResolvedProjectContext,
+  userMemory?: UserMemoryState
 ): string {
+  const budget = budgetForPlatform(platform);
   const history = buildConversationHistoryBlock(session, turn.id, platform);
   const attachmentsBlock = buildAttachmentsBlock(turn, platform);
   const webBlock = buildWebContextBlock(
     turn.webSources,
-    budgetForPlatform(platform).webContextChars
+    budget.webContextChars
   );
   const projectBlock = buildProjectContextBlock(
     resolvedProjectContext,
-    budgetForPlatform(platform).projectContextChars
+    budget.projectContextChars
+  );
+  const userMemoryBlock = buildUserMemoryPromptBlock(
+    userMemory,
+    budget.userMemoryChars,
+    { hasProjectContext: Boolean(projectBlock) }
   );
   const customRules = turn.rules.trim();
 
   // 1) Normal + Direto: conversa natural e direta
   if (turn.responseMode === "normal" && turn.interactionMode === "direct") {
     const parts: string[] = [];
+    if (userMemoryBlock) {
+      parts.push(userMemoryBlock, "", "---", "");
+    }
     if (projectBlock) {
       parts.push(projectBlock, "", "---", "");
     }
@@ -750,6 +872,9 @@ function buildInitialUserPrompt(
   if (turn.responseMode === "normal" && turn.interactionMode === "debate") {
     const role = normalRoleFor(platform);
     const parts: string[] = [];
+    if (userMemoryBlock) {
+      parts.push(userMemoryBlock, "", "---", "");
+    }
     if (projectBlock) {
       parts.push(projectBlock, "", "---", "");
     }
@@ -788,6 +913,9 @@ function buildInitialUserPrompt(
           ? "Priorize simplicidade, validações essenciais e código limpo."
           : "";
     const parts: string[] = [];
+    if (userMemoryBlock) {
+      parts.push(userMemoryBlock, "", "---", "");
+    }
     if (projectBlock) {
       parts.push(projectBlock, "", "---", "");
     }
@@ -816,6 +944,9 @@ function buildInitialUserPrompt(
   const role = roleFor(platform, turn.focus);
   const effectiveRules = customRules || DEFAULT_RULES;
   const parts: string[] = [];
+  if (userMemoryBlock) {
+    parts.push(userMemoryBlock, "", "---", "");
+  }
   if (projectBlock) {
     parts.push(projectBlock, "", "---", "");
   }
@@ -1019,7 +1150,8 @@ function buildTask(
   round: number,
   stage: Exclude<DebateStage, "completed">,
   platform: AIPlatform,
-  resolvedProjectContext?: ResolvedProjectContext
+  resolvedProjectContext?: ResolvedProjectContext,
+  userMemory?: UserMemoryState
 ): DebateTask {
   const systemPrompt = systemPromptFor(turn.responseMode, turn.interactionMode);
   const roleLabel =
@@ -1033,7 +1165,13 @@ function buildTask(
 
   const userPrompt =
     stage === "initial_response"
-      ? buildInitialUserPrompt(session, turn, platform, resolvedProjectContext)
+      ? buildInitialUserPrompt(
+          session,
+          turn,
+          platform,
+          resolvedProjectContext,
+          userMemory
+        )
       : stage === "critique"
         ? buildCritiqueUserPrompt(
             session,
@@ -1073,7 +1211,8 @@ function createTasksForStage(
   turn: ChatTurn,
   round: number,
   stage: Exclude<DebateStage, "completed">,
-  resolvedProjectContext?: ResolvedProjectContext
+  resolvedProjectContext?: ResolvedProjectContext,
+  userMemory?: UserMemoryState
 ): DebateTask[] {
   if (stage === "synthesis") {
     return [
@@ -1083,13 +1222,22 @@ function createTasksForStage(
         round,
         "synthesis",
         pickRelator(turn.participants),
-        resolvedProjectContext
+        resolvedProjectContext,
+        userMemory
       )
     ];
   }
 
   return turn.participants.map((platform) =>
-    buildTask(session, turn, round, stage, platform, resolvedProjectContext)
+    buildTask(
+      session,
+      turn,
+      round,
+      stage,
+      platform,
+      resolvedProjectContext,
+      userMemory
+    )
   );
 }
 
@@ -1352,7 +1500,8 @@ export async function createDebateSession(
   const storedRules =
     responseMode === "prompt_markdown" ? rawRules || DEFAULT_RULES : rawRules;
   const focus = normalizeFocus(input.focus);
-  const attachments = sanitizeAttachments(input.attachments);
+  const enrichedAttachments = await enrichPdfAttachments(input.attachments);
+  const attachments = sanitizeAttachments(enrichedAttachments);
   const webSearchMode: WebSearchMode = input.webSearchMode === "off" ? "off" : "auto";
   const webSources: WebSource[] = Array.isArray(input.webSources)
     ? input.webSources.slice(0, 10)
@@ -1388,6 +1537,8 @@ export async function createDebateSession(
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(webSources.length > 0 ? { webSources } : {}),
       ...(resolvedProjectContext ? { projectContext: resolvedProjectContext.meta } : {}),
+      ...(input.autoRoute ? { autoRoute: input.autoRoute } : {}),
+      ...(input.autoVerdict ? { autoVerdict: true } : {}),
       createdAt: now
     };
 
@@ -1414,12 +1565,14 @@ export async function createDebateSession(
       engineVersion: ENGINE_VERSION
     };
 
+    const userMemory = await readUserMemory().catch(() => undefined);
     newSession.tasks = createTasksForStage(
       newSession,
       firstTurn,
       1,
       "initial_response",
-      resolvedProjectContext
+      resolvedProjectContext,
+      userMemory
     );
 
     await writeDebateSessionAtomically(newSession);
@@ -1456,7 +1609,8 @@ export async function continueDebateSession(
       : Math.min(Math.max(Number(input.totalRounds) || 2, 1), 3);
   const rawRules = (input.rules ?? "").trim();
   const focus = normalizeFocus(input.focus);
-  const attachments = sanitizeAttachments(input.attachments);
+  const enrichedAttachments = await enrichPdfAttachments(input.attachments);
+  const attachments = sanitizeAttachments(enrichedAttachments);
   const webSearchMode: WebSearchMode = input.webSearchMode === "off" ? "off" : "auto";
   const webSources: WebSource[] = Array.isArray(input.webSources)
     ? input.webSources.slice(0, 10)
@@ -1509,6 +1663,8 @@ export async function continueDebateSession(
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(webSources.length > 0 ? { webSources } : {}),
       ...(resolvedProjectContext ? { projectContext: resolvedProjectContext.meta } : {}),
+      ...(input.autoRoute ? { autoRoute: input.autoRoute } : {}),
+      ...(input.autoVerdict ? { autoVerdict: true } : {}),
       createdAt: now
     };
 
@@ -1526,14 +1682,154 @@ export async function continueDebateSession(
     session.updatedAt = now;
     delete session.pauseInfo;
 
+    const userMemory = await readUserMemory().catch(() => undefined);
     const nextTasks = createTasksForStage(
       session,
       nextTurn,
       1,
       "initial_response",
-      resolvedProjectContext
+      resolvedProjectContext,
+      userMemory
     );
     session.tasks.push(...nextTasks);
+
+    await writeDebateSessionAtomically(session);
+    emitDebateUpdated(session);
+    return session;
+  });
+}
+
+/**
+ * Edita o prompt de qualquer turno do usuário na conversa e faz rewind limpo
+ * a partir daquele turno (descartando respostas/turnos posteriores), preservando
+ * anexos originais e recalculando Web, Projeto (BM25) e Modo Auto com o novo texto.
+ */
+export async function editTurnAndRewind(
+  debateId: string,
+  turnId: string,
+  input: EditTurnInput
+): Promise<DebateSession> {
+  const newMessage = (input.message ?? "").trim();
+  if (!newMessage) {
+    throw new Error("A mensagem editada não pode ficar vazia.");
+  }
+
+  const now = new Date().toISOString();
+
+  return withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+    if (!session) {
+      throw new Error("Conversa não encontrada.");
+    }
+
+    const turns = ensureSessionTurns(session);
+    const targetIdx = turns.findIndex((t) => t.id === turnId);
+    if (targetIdx < 0) {
+      throw new Error("Turno não encontrado nesta conversa.");
+    }
+
+    await pauseOtherRunningSessions(
+      session.id,
+      "Pausado automaticamente ao editar outra conversa.",
+      now
+    );
+
+    const targetTurn = turns[targetIdx]!;
+    const keptTurns = turns.slice(0, targetIdx + 1);
+    const priorTurnIds = new Set(keptTurns.slice(0, targetIdx).map((t) => t.id));
+    const isEditingFirst = targetIdx === 0;
+
+    // Descarta todas as tarefas e respostas do turno editado e dos turnos posteriores
+    session.tasks = session.tasks.filter((task) => {
+      if (!task.turnId) return !isEditingFirst;
+      return priorTurnIds.has(task.turnId);
+    });
+    session.responses = session.responses.filter((resp) => {
+      if (!resp.turnId) return !isEditingFirst;
+      return priorTurnIds.has(resp.turnId);
+    });
+
+    // Garante que Memória Compartilhada auto-compactada não vaze turnos futuros descartados
+    if (session.sharedMemory && session.sharedMemory.coveredTurnCount > targetIdx) {
+      if (session.sharedMemory.model === "manual") {
+        session.sharedMemory.coveredTurnCount = Math.min(
+          session.sharedMemory.coveredTurnCount,
+          targetIdx
+        );
+      } else {
+        delete session.sharedMemory;
+      }
+    }
+
+    const updatedParticipants =
+      Array.isArray(input.participants) && input.participants.length > 0
+        ? Array.from(new Set(input.participants))
+        : targetTurn.participants;
+
+    for (const platform of updatedParticipants) {
+      if (!session.participantStates[platform]) {
+        session.participantStates[platform] = {
+          platform,
+          availability: "unknown"
+        };
+      }
+    }
+
+    targetTurn.prompt = newMessage;
+    targetTurn.participants = updatedParticipants;
+    targetTurn.currentRound = 1;
+    targetTurn.currentStage = "initial_response";
+    targetTurn.status = "running";
+    delete targetTurn.verdict;
+    delete targetTurn.conclusion;
+    delete targetTurn.completedAt;
+
+    if (input.autoRoute) {
+      targetTurn.autoRoute = input.autoRoute;
+    } else if (!targetTurn.autoRoute) {
+      delete targetTurn.autoRoute;
+    }
+
+    if (Array.isArray(input.webSources) && input.webSources.length > 0) {
+      targetTurn.webSources = input.webSources.slice(0, 10);
+    } else {
+      delete targetTurn.webSources;
+    }
+
+    if (input.resolvedProjectContext) {
+      targetTurn.projectContext = input.resolvedProjectContext.meta;
+    } else if (input.resolvedProjectContext === null) {
+      delete targetTurn.projectContext;
+    }
+
+    session.turns = keptTurns;
+    if (isEditingFirst) {
+      session.topic = newMessage;
+    }
+    session.participants = updatedParticipants;
+    session.totalRounds = targetTurn.totalRounds;
+    session.currentRound = 1;
+    session.currentStage = "initial_response";
+    session.status = "running";
+    session.focus = targetTurn.focus;
+    session.responseMode = targetTurn.responseMode;
+    session.interactionMode = targetTurn.interactionMode;
+    session.engineVersion = ENGINE_VERSION;
+    session.updatedAt = now;
+    delete session.pauseInfo;
+    delete session.conclusion;
+    delete session.completedAt;
+
+    const userMemory = await readUserMemory().catch(() => undefined);
+    const freshTasks = createTasksForStage(
+      session,
+      targetTurn,
+      1,
+      "initial_response",
+      input.resolvedProjectContext ?? undefined,
+      userMemory
+    );
+    session.tasks.push(...freshTasks);
 
     await writeDebateSessionAtomically(session);
     emitDebateUpdated(session);

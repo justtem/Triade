@@ -11,20 +11,41 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  decodeStorageText,
+  encodeStorageText
+} from "../security/data-protection.js";
 import type { DebateSession, DebateSummary } from "../shared/debate-types.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const DATA_DIR = process.env.AI_COUNCIL_DATA_DIR
-  ? resolve(process.env.AI_COUNCIL_DATA_DIR)
-  : resolve(ROOT_DIR, "data");
-const LEGACY_DEBATES_FILE = resolve(DATA_DIR, "debates.json");
-const SESSIONS_DIR = resolve(DATA_DIR, "sessions");
-const INDEX_FILE = resolve(SESSIONS_DIR, "index.json");
-
 const SAFE_SESSION_ID = /^[0-9a-fA-F-]{8,64}$/;
 
 let debateWriteQueue: Promise<void> = Promise.resolve();
 let migrationPromise: Promise<void> | null = null;
+let migratedDataDir = "";
+
+function getDataDir(): string {
+  return process.env.AI_COUNCIL_DATA_DIR
+    ? resolve(process.env.AI_COUNCIL_DATA_DIR)
+    : resolve(ROOT_DIR, "data");
+}
+
+function getLegacyDebatesFile(): string {
+  return resolve(getDataDir(), "debates.json");
+}
+
+function getSessionsDir(): string {
+  return resolve(getDataDir(), "sessions");
+}
+
+function getIndexFile(): string {
+  return resolve(getSessionsDir(), "index.json");
+}
+
+export function resetDebateStorageState(): void {
+  migrationPromise = null;
+  migratedDataDir = "";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return (
@@ -128,8 +149,9 @@ function sessionFilePath(id: string): string {
   if (!SAFE_SESSION_ID.test(id)) {
     throw new Error("ID de sessão inválido.");
   }
-  const filePath = resolve(SESSIONS_DIR, `${id}.json`);
-  if (!filePath.startsWith(SESSIONS_DIR + sep)) {
+  const sessionsDir = getSessionsDir();
+  const filePath = resolve(sessionsDir, `${id}.json`);
+  if (!filePath.startsWith(sessionsDir + sep)) {
     throw new Error("Caminho de sessão inválido.");
   }
   return filePath;
@@ -140,7 +162,8 @@ async function writeJsonAtomically(filePath: string, data: unknown): Promise<voi
   const temporaryFile = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
 
   try {
-    await writeFile(temporaryFile, JSON.stringify(data, null, 2), "utf8");
+    const serialized = await encodeStorageText(JSON.stringify(data, null, 2));
+    await writeFile(temporaryFile, serialized, { encoding: "utf8", mode: 0o600 });
     await rename(temporaryFile, filePath);
   } finally {
     await rm(temporaryFile, { force: true }).catch(() => {});
@@ -157,19 +180,25 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 async function ensureSessionsStorageReady(): Promise<void> {
-  if (!migrationPromise) {
-    migrationPromise = (async () => {
-      await mkdir(SESSIONS_DIR, { recursive: true });
+  const currentDir = getDataDir();
+  if (!migrationPromise || migratedDataDir !== currentDir) {
+    migratedDataDir = currentDir;
+    const sessionsDir = getSessionsDir();
+    const indexFile = getIndexFile();
+    const legacyFile = getLegacyDebatesFile();
 
-      if (await fileExists(INDEX_FILE)) {
+    migrationPromise = (async () => {
+      await mkdir(sessionsDir, { recursive: true });
+
+      if (await fileExists(indexFile)) {
         return;
       }
 
       const summaries: DebateSummary[] = [];
 
-      if (await fileExists(LEGACY_DEBATES_FILE)) {
+      if (await fileExists(legacyFile)) {
         try {
-          const raw = await readFile(LEGACY_DEBATES_FILE, "utf8");
+          const raw = await decodeStorageText(await readFile(legacyFile, "utf8"));
           const clean = raw.replace(/^\uFEFF/, "").trim();
           if (clean) {
             const parsed: unknown = JSON.parse(clean);
@@ -199,7 +228,7 @@ async function ensureSessionsStorageReady(): Promise<void> {
       }
 
       summaries.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-      await writeJsonAtomically(INDEX_FILE, summaries);
+      await writeJsonAtomically(indexFile, summaries);
     })();
   }
 
@@ -224,7 +253,7 @@ export async function readDebateSummaries(): Promise<DebateSummary[]> {
 
   let content: string;
   try {
-    content = await readFile(INDEX_FILE, "utf8");
+    content = await decodeStorageText(await readFile(getIndexFile(), "utf8"));
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
       return [];
@@ -251,7 +280,7 @@ export async function readDebateSessionById(
 
   let content: string;
   try {
-    content = await readFile(sessionFilePath(id), "utf8");
+    content = await decodeStorageText(await readFile(sessionFilePath(id), "utf8"));
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
       return null;
@@ -286,7 +315,7 @@ export async function writeDebateSessionAtomically(
     summaries.unshift(nextSummary);
   }
 
-  await writeJsonAtomically(INDEX_FILE, sortSummaries(summaries));
+  await writeJsonAtomically(getIndexFile(), sortSummaries(summaries));
 }
 
 export async function deleteDebateSessionFile(id: string): Promise<boolean> {
@@ -300,7 +329,7 @@ export async function deleteDebateSessionFile(id: string): Promise<boolean> {
   await rm(sessionFilePath(id), { force: true }).catch(() => {});
 
   if (existedInIndex) {
-    await writeJsonAtomically(INDEX_FILE, filtered);
+    await writeJsonAtomically(getIndexFile(), filtered);
   }
 
   return existedInIndex;

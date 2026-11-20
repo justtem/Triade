@@ -135,11 +135,18 @@ describe("Frontend ESM Integrity — Zero Quebras de Modularização", () => {
     assert.ok(stateKeys.length > 10);
 
     const issues: string[] = [];
+    const stateLines = stateSrc.split(/\r?\n/);
+    const stateStartIdx = stateLines.findIndex((l) => l.startsWith("export const state = {"));
+    const stateEndIdx =
+      stateStartIdx >= 0
+        ? stateLines.findIndex((l, i) => i > stateStartIdx && l.trim() === "};")
+        : -1;
+
     for (const filePath of getFrontendModulePaths()) {
       const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
       const isStateFile = filePath.endsWith("state.js");
       lines.forEach((line, idx) => {
-        if (isStateFile && idx >= 150 && idx <= 230) return;
+        if (isStateFile && stateStartIdx >= 0 && idx >= stateStartIdx && idx <= stateEndIdx) return;
         const trimmed = line.trim();
         if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
         for (const key of stateKeys) {

@@ -21,21 +21,9 @@ export function setServerStatus(online) {
   setText("#server-status", online ? "Servidor online" : "Servidor offline");
 }
 
-export function getStoredSessionToken() {
+export function clearLegacyStoredSessionToken() {
   try {
-    return localStorage.getItem("ai-council-session-token") || "";
-  } catch {
-    return "";
-  }
-}
-
-export function setStoredSessionToken(token) {
-  try {
-    if (token) {
-      localStorage.setItem("ai-council-session-token", token);
-    } else {
-      localStorage.removeItem("ai-council-session-token");
-    }
+    localStorage.removeItem("ai-council-session-token");
   } catch {
     // Ignora
   }
@@ -62,7 +50,6 @@ export function hideAuthLockOverlay() {
 }
 
 export async function fetchJson(endpoint, options = {}) {
-  const sessionToken = getStoredSessionToken();
   const method = options.method || "GET";
   const timeoutMs = options.timeoutMs || (method === "GET" ? 15000 : 25000);
   const controller = new AbortController();
@@ -72,9 +59,9 @@ export async function fetchJson(endpoint, options = {}) {
   try {
     response = await fetch(endpoint, {
       method,
+      credentials: "same-origin",
       headers: {
         ...(options.body ? { "Content-Type": "application/json" } : {}),
-        ...(sessionToken ? { "X-AI-Council-Session": sessionToken } : {}),
         ...(options.headers || {})
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
@@ -90,7 +77,10 @@ export async function fetchJson(endpoint, options = {}) {
     showAuthLockOverlay();
   }
   if (!response.ok) {
-    throw new Error(data.error || `Erro HTTP ${response.status}`);
+    const err = new Error(data.error || `Erro HTTP ${response.status}`);
+    err.status = response.status;
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -238,13 +228,9 @@ export function connectEventStream() {
   if (typeof EventSource === "undefined") return;
   if (state.eventSource) return;
 
-  const token = getStoredSessionToken();
-  const streamUrl = token
-    ? `/events/stream?session=${encodeURIComponent(token)}`
-    : "/events/stream";
-
   try {
-    const es = new EventSource(streamUrl);
+    // Mesmo domínio envia cookie HttpOnly automaticamente, sem expor token na URL
+    const es = new EventSource("/events/stream");
     state.eventSource = es;
 
     es.addEventListener("open", () => {
@@ -493,6 +479,7 @@ export function updateDashboard(data, providers) {
   uiHooks.updateRightAiPanel();
   uiHooks.syncComposerModeUi();
   uiHooks.syncComposerProjectPill();
+  uiHooks.syncSetupUi(data?.setup);
 }
 
 export async function refreshDashboard() {

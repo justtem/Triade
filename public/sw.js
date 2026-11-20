@@ -43,6 +43,10 @@ self.addEventListener("fetch", (event) => {
     url.pathname.startsWith("/debates") ||
     url.pathname.startsWith("/providers") ||
     url.pathname.startsWith("/templates") ||
+    url.pathname.startsWith("/projects") ||
+    url.pathname.startsWith("/user-memory") ||
+    url.pathname.startsWith("/privacy") ||
+    url.pathname.startsWith("/setup") ||
     url.pathname.startsWith("/audio") ||
     url.pathname.startsWith("/auth")
   ) {

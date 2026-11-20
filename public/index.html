@@ -16,8 +16,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Oswald:wght@700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=20261120d">
-    <script type="module" src="dashboard.js?v=20261120d"></script>
+    <link rel="stylesheet" href="styles.css?v=20261120m">
+    <script type="module" src="dashboard.js?v=20261120m"></script>
 </head>
 <body>
 
@@ -63,6 +63,116 @@
         </div>
     </div>
 
+    <!-- ASSISTENTE DE CONFIGURAÇÃO INICIAL / CHAVES DAS IAS (LOCALHOST APENAS) -->
+    <div class="setup-wizard-overlay" id="setup-wizard-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="setup-wizard-title">
+        <div class="setup-wizard-card">
+            <div class="setup-wizard-header">
+                <div class="setup-wizard-head-left">
+                    <span class="eyebrow" id="setup-wizard-eyebrow">CONFIGURAÇÃO INICIAL // CUSTO ZERO</span>
+                    <h2 id="setup-wizard-title">AI COUNCIL // CHAVES DAS IAS</h2>
+                    <p class="setup-wizard-desc" id="setup-wizard-desc">
+                        Cole suas 3 chaves gratuitas para ativar o conselho completo (Gemini, Groq e OpenRouter). Tudo é salvo apenas no arquivo <code>.env</code> deste PC.
+                    </p>
+                </div>
+                <button type="button" class="icon-btn" id="setup-wizard-close" aria-label="Fechar configuração" hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <form id="setup-wizard-form" class="setup-wizard-form" novalidate>
+                <div class="setup-providers-list">
+                    <div class="setup-provider-row" data-setup-provider="gemini">
+                        <div class="setup-provider-top">
+                            <div class="setup-provider-title">
+                                <span class="setup-provider-dot dot-sky" aria-hidden="true"></span>
+                                <strong>Gemini (Google AI Studio)</strong>
+                                <span class="setup-provider-status" id="setup-status-gemini">Pendente</span>
+                            </div>
+                            <a class="setup-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Gerar chave grátis →</a>
+                        </div>
+                        <input
+                            type="password"
+                            id="setup-key-gemini"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Cole sua GEMINI_API_KEY (AIza...)"
+                        >
+                        <span class="setup-field-msg" id="setup-msg-gemini" role="status"></span>
+                    </div>
+
+                    <div class="setup-provider-row" data-setup-provider="groq">
+                        <div class="setup-provider-top">
+                            <div class="setup-provider-title">
+                                <span class="setup-provider-dot dot-saffron" aria-hidden="true"></span>
+                                <strong>Groq (Llama / GPT-OSS / Whisper)</strong>
+                                <span class="setup-provider-status" id="setup-status-groq">Pendente</span>
+                            </div>
+                            <a class="setup-key-link" href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Gerar chave grátis →</a>
+                        </div>
+                        <input
+                            type="password"
+                            id="setup-key-groq"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Cole sua GROQ_API_KEY (gsk_...)"
+                        >
+                        <span class="setup-field-msg" id="setup-msg-groq" role="status"></span>
+                    </div>
+
+                    <div class="setup-provider-row" data-setup-provider="openrouter">
+                        <div class="setup-provider-top">
+                            <div class="setup-provider-title">
+                                <span class="setup-provider-dot dot-iris" aria-hidden="true"></span>
+                                <strong>OpenRouter (Modelos :free)</strong>
+                                <span class="setup-provider-status" id="setup-status-openrouter">Pendente</span>
+                            </div>
+                            <a class="setup-key-link" href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">Gerar chave grátis →</a>
+                        </div>
+                        <input
+                            type="password"
+                            id="setup-key-openrouter"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Cole sua OPENROUTER_API_KEY (sk-or-...)"
+                        >
+                        <span class="setup-field-msg" id="setup-msg-openrouter" role="status"></span>
+                    </div>
+                </div>
+
+                <div class="setup-access-section">
+                    <div class="setup-provider-top">
+                        <label for="setup-access-password" class="setup-access-label">Senha de acesso remoto (opcional — celular / Wi-Fi / Tailscale)</label>
+                        <span class="setup-provider-status" id="setup-status-password">Opcional</span>
+                    </div>
+                    <input
+                        type="password"
+                        id="setup-access-password"
+                        autocomplete="new-password"
+                        placeholder="Defina uma senha forte (mínimo 8 caracteres) ou deixe em branco"
+                    >
+                </div>
+
+                <div class="setup-privacy-notice" role="note">
+                    <strong>Privacidade &amp; operadores de IA:</strong> conversas, projetos e chaves ficam apenas neste PC. Ao enviar prompts, anexos ou voz, o conteúdo é processado pelas APIs escolhidas (Google Gemini, Groq e OpenRouter) conforme as políticas de cada provedor. Evite enviar senhas ou dados pessoais sensíveis.
+                </div>
+
+                <div class="setup-wizard-footer">
+                    <span class="form-feedback" id="setup-wizard-feedback" role="status" aria-live="polite"></span>
+                    <div class="setup-wizard-actions">
+                        <button type="button" class="btn-ghost-pill" id="setup-cancel-btn" hidden>Fechar</button>
+                        <button type="submit" class="btn-primary" id="setup-save-btn">
+                            <span>Testar e Salvar</span>
+                            <span class="cta-arrow" aria-hidden="true">→</span>
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- MODAL: EDITOR DE MEMÓRIA COMPARTILHADA -->
     <div class="memory-modal-overlay" id="memory-modal" hidden>
         <div class="memory-modal-card" role="dialog" aria-modal="true" aria-labelledby="memory-modal-title">
@@ -92,6 +202,41 @@
                     <button type="button" class="btn-secondary" id="memory-clear-btn">Limpar</button>
                     <button type="button" class="btn-ghost-pill" id="memory-cancel-btn">Cancelar</button>
                     <button type="button" class="btn-primary" id="memory-save-btn">Salvar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: ESCUDO DE PRIVACIDADE (CONFIRMAÇÃO ANTES DE ENVIAR DADOS SENSÍVEIS ÀS IAS) -->
+    <div class="memory-modal-overlay" id="privacy-shield-modal" hidden>
+        <div class="memory-modal-card privacy-shield-modal-card" role="dialog" aria-modal="true" aria-labelledby="privacy-shield-modal-title">
+            <div class="memory-modal-header">
+                <div class="memory-modal-title-group">
+                    <span class="eyebrow">ESCUDO DE PRIVACIDADE // DLP LOCAL</span>
+                    <h3 id="privacy-shield-modal-title">Dados sensíveis detectados antes do envio</h3>
+                </div>
+                <button type="button" class="icon-btn" id="privacy-shield-close" aria-label="Fechar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <p class="privacy-meta">
+                Sua mensagem contém possíveis dados pessoais ou credenciais que seriam enviados às APIs externas de IA. Anexos, PDFs e arquivos de Projeto já são mascarados automaticamente.
+            </p>
+
+            <div class="privacy-shield-list" id="privacy-shield-findings-list"></div>
+
+            <div class="memory-modal-footer">
+                <button type="button" class="btn-ghost-pill btn-danger-outline" id="privacy-shield-allow-btn">Enviar sem mascarar</button>
+                <div class="memory-modal-actions">
+                    <button type="button" class="btn-ghost-pill" id="privacy-shield-cancel-btn">Cancelar e Editar</button>
+                    <button type="button" class="btn-primary" id="privacy-shield-mask-btn">
+                        <span>Mascarar e Enviar</span>
+                        <span class="cta-arrow" aria-hidden="true">→</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -210,11 +355,11 @@
                         <label>Cor na barra lateral</label>
                         <input type="hidden" id="proj-color" value="iris">
                         <div class="project-color-picker" role="radiogroup" aria-label="Cor do projeto">
-                            <button type="button" class="project-color-swatch is-selected" data-proj-color="iris" style="--swatch:#8D86F0" title="Íris"></button>
-                            <button type="button" class="project-color-swatch" data-proj-color="sky" style="--swatch:#85C6FA" title="Azul Sky"></button>
-                            <button type="button" class="project-color-swatch" data-proj-color="saffron" style="--swatch:#F6E287" title="Saffron"></button>
-                            <button type="button" class="project-color-swatch" data-proj-color="rose" style="--swatch:#ED6C93" title="Rose"></button>
-                            <button type="button" class="project-color-swatch" data-proj-color="emerald" style="--swatch:#4ADE80" title="Esmeralda"></button>
+                            <button type="button" class="project-color-swatch is-selected" data-proj-color="iris" style="--swatch:#9985ff" title="Iris Glow"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="sky" style="--swatch:#94dbff" title="Sky Pulse"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="saffron" style="--swatch:#d6ca6f" title="Saffron Whisper"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="rose" style="--swatch:#ffa3c2" title="Rose Quartz"></button>
+                            <button type="button" class="project-color-swatch" data-proj-color="emerald" style="--swatch:#e3e3e3" title="Bone"></button>
                         </div>
                     </div>
                 </div>
@@ -328,42 +473,33 @@
                 </button>
             </div>
 
-            <!-- SEÇÃO COLAPSÁVEL 1: NAVEGAÇÃO DO SISTEMA (ABAS) -->
-            <div class="sidebar-section" data-sidebar-section="nav">
-                <button type="button" class="sidebar-section-toggle" data-toggle-section="nav" aria-expanded="true">
-                    <span class="nav-label">NAVEGAÇÃO DO SISTEMA</span>
-                    <svg class="section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="6 9 12 15 18 9"></polyline>
+            <!-- NAVEGAÇÃO COMPACTA EM 1 LINHA (CHAT · MONITOR · HISTÓRICO) -->
+            <nav class="navigation sidebar-nav-strip" aria-label="Visualizações do Sistema">
+                <button type="button" class="nav-item active" data-view-target="chat" title="Chat Central">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                     </svg>
+                    <span>Chat</span>
                 </button>
 
-                <nav class="navigation sidebar-section-body" aria-label="Visualizações do Sistema">
-                    <button type="button" class="nav-item active" data-view-target="chat">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                        </svg>
-                        <span>Chat Central</span>
-                    </button>
+                <button type="button" class="nav-item" data-view-target="dashboard" title="Resumo &amp; Monitoramento">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                        <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                        <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                        <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                    </svg>
+                    <span>Monitor</span>
+                </button>
 
-                    <button type="button" class="nav-item" data-view-target="dashboard">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-                            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
-                            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
-                            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-                        </svg>
-                        <span>Resumo &amp; Monitoramento</span>
-                    </button>
-
-                    <button type="button" class="nav-item" data-view-target="history">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <circle cx="12" cy="12" r="9"></circle>
-                            <polyline points="12 7 12 12 15 15"></polyline>
-                        </svg>
-                        <span>Atividade &amp; Histórico</span>
-                    </button>
-                </nav>
-            </div>
+                <button type="button" class="nav-item" data-view-target="history" title="Atividade &amp; Histórico">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9"></circle>
+                        <polyline points="12 7 12 12 15 15"></polyline>
+                    </svg>
+                    <span>Histórico</span>
+                </button>
+            </nav>
 
             <!-- SEÇÃO COLAPSÁVEL 2: PROJETOS / PASTAS COM CÉREBRO LOCAL -->
             <div class="sidebar-section sidebar-projects" data-sidebar-section="projects">
@@ -448,16 +584,19 @@
         ====================================================== -->
         <main class="main-stage" id="main-stage">
 
-            <!-- CAMADA DE FUNDO BLUEPRINT PARALLAX (MULTI-LAYER) -->
+            <!-- CAMADA DE FUNDO PRANCHETA TÉCNICA MINIMALISTA (PARALLAX POR SCROLL, SEM GRADE) -->
             <div class="blueprint-parallax-bg" id="blueprint-parallax-bg" aria-hidden="true">
-                <div class="parallax-layer parallax-grid-layer" id="parallax-grid-layer"></div>
+                <div class="parallax-layer parallax-guides-layer" id="parallax-grid-layer">
+                    <span class="bp-guide-line bp-guide-left"></span>
+                    <span class="bp-guide-line bp-guide-right"></span>
+                    <span class="bp-ruler bp-ruler-left"></span>
+                    <span class="bp-ruler bp-ruler-right"></span>
+                </div>
                 <div class="parallax-layer parallax-nodes-layer" id="parallax-nodes-layer">
                     <span class="bp-cross bp-c1">+</span>
                     <span class="bp-cross bp-c2">+</span>
                     <span class="bp-cross bp-c3">+</span>
                     <span class="bp-cross bp-c4">+</span>
-                    <span class="bp-coord bp-coord-1">SYS // 01.4317</span>
-                    <span class="bp-coord bp-coord-2">COUNCIL // SYNC</span>
                 </div>
             </div>
 
@@ -530,39 +669,21 @@
                 <!-- ÁREA DE MENSAGENS ROLÁVEL -->
                 <div class="chat-scroll-area" id="chat-scroll-area">
 
-                    <!-- ZERO STATE COM PARALLAX EM CAMADAS + HORIZONTAL SCROLL CAROUSEL -->
+                    <!-- ZERO STATE MINIMALISTA ERASER: DISPLAY HEADLINE + FLOATING PILLS DE TEMPLATES -->
                     <div class="chat-zero-state" id="chat-zero-state">
                         <div class="zero-state-inner">
-                            <h3 class="zero-state-heading" id="zero-parallax-heading" aria-label="Qual problema analisar hoje? AI Council">
-                                <span class="word-iris parallax-word" data-parallax-depth="1.2">QUAL</span>
-                                <span class="word-sky parallax-word" data-parallax-depth="-0.9">PROBLEMA</span>
-                                <span class="word-saffron parallax-word" data-parallax-depth="1.4">ANALISAR</span>
-                                <span class="word-rose parallax-word" data-parallax-depth="-1.1">HOJE?</span>
-                                <span class="word-bone parallax-word" data-parallax-depth="0.6">AI COUNCIL</span>
+                            <h3 class="zero-state-heading" id="zero-parallax-heading" aria-label="Qual problema analisar hoje?">
+                                <span class="word-iris parallax-word" data-parallax-depth="1.1">QUAL</span>
+                                <span class="word-sky parallax-word" data-parallax-depth="-0.8">PROBLEMA</span>
+                                <span class="word-saffron parallax-word" data-parallax-depth="1.2">ANALISAR</span>
+                                <span class="word-rose parallax-word" data-parallax-depth="-0.9">HOJE?</span>
                             </h3>
-                            <p class="zero-state-subtitle">
-                                Escolha o modo abaixo: resposta normal ou Prompt Markdown, direto ou em debate.
-                            </p>
 
-                            <!-- TRILHA HORIZONTAL SCROLL NO ZERO STATE (TEMPLATES & DEBATES RECENTES) -->
-                            <div class="zero-horizontal-showcase" id="zero-horizontal-showcase">
-                                <div class="h-scroll-header">
-                                    <span class="h-scroll-eyebrow">BLUEPRINTS &amp; SESSÕES RÁPIDAS // HORIZONTAL SCROLL</span>
-                                    <div class="h-scroll-controls">
-                                        <button type="button" class="btn-ghost-pill zero-manage-tpl-btn" id="zero-manage-templates-btn" title="Gerenciar biblioteca de templates">
-                                            <span>Templates</span>
-                                        </button>
-                                        <div class="h-scroll-mini-progress" aria-hidden="true">
-                                            <div class="h-scroll-mini-fill" id="zero-h-progress-fill"></div>
-                                        </div>
-                                        <button type="button" class="h-scroll-arrow" id="zero-h-prev" aria-label="Rolar para esquerda">←</button>
-                                        <button type="button" class="h-scroll-arrow" id="zero-h-next" aria-label="Rolar para direita">→</button>
-                                    </div>
-                                </div>
-
-                                <div class="h-scroll-viewport" id="zero-h-viewport">
-                                    <div class="h-scroll-track" id="zero-h-track"></div>
-                                </div>
+                            <div class="zero-templates-strip" id="zero-horizontal-showcase">
+                                <div class="zero-pills-row" id="zero-h-track" role="list" aria-label="Templates rápidos"></div>
+                                <button type="button" class="zero-manage-tpl-link" id="zero-manage-templates-btn" title="Gerenciar biblioteca de templates">
+                                    Gerenciar templates
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -683,54 +804,41 @@
                             ></textarea>
                         </div>
 
-                        <!-- GAVETA COLAPSÁVEL: OPÇÕES AVANÇADAS (TÍTULO E DIRETRIZES) -->
-                        <div class="composer-advanced" id="composer-advanced" hidden>
-                            <div class="composer-advanced-grid">
-                                <div class="form-group">
-                                    <label for="debate-title">Título (opcional)</label>
-                                    <input
-                                        type="text"
-                                        id="debate-title"
-                                        placeholder="Gerado automaticamente se vazio"
-                                        maxlength="120"
-                                    >
-                                </div>
+                        <!-- POPOVER DE CONFIGURAÇÃO DO COMPOSER (TODAS AS OPÇÕES EM 1 CLIQUE) -->
+                        <div class="composer-config-popover" id="composer-config-popover" hidden role="dialog" aria-label="Configurações da mensagem">
+                            <div class="composer-pop-section">
+                                <span class="composer-pop-label">FORMATO &amp; DINÂMICA</span>
+                                <div class="composer-pop-row">
+                                    <div class="mode-segmented-pill" id="response-mode-toggle" role="group" aria-label="Formato da resposta">
+                                        <button type="button" class="mode-seg-btn is-active" data-response-mode="normal" aria-pressed="true">Normal</button>
+                                        <button type="button" class="mode-seg-btn" data-response-mode="prompt_markdown" aria-pressed="false">Prompt MD</button>
+                                    </div>
 
-                                <div class="form-group">
-                                    <label for="debate-rules">Instruções extras (opcional)</label>
-                                    <input
-                                        type="text"
-                                        id="debate-rules"
-                                        placeholder="Ex.: Seja breve, use exemplos práticos..."
-                                    >
+                                    <div class="mode-segmented-pill" id="interaction-mode-toggle" role="group" aria-label="Dinâmica das IAs">
+                                        <button type="button" class="mode-seg-btn is-active" data-interaction-mode="direct" aria-pressed="true">Direto</button>
+                                        <button type="button" class="mode-seg-btn" data-interaction-mode="debate" aria-pressed="false">Debate</button>
+                                    </div>
+
+                                    <div class="mode-segmented-pill ai-preset-toggle" id="ai-preset-toggle" role="group" aria-label="Atalho de seleção de IAs">
+                                        <button type="button" class="mode-seg-btn" data-ai-preset="auto" aria-pressed="false" title="Roteador Inteligente: escolhe Groq, Gemini ou Trio conforme complexidade, anexos e cota">Auto</button>
+                                        <button type="button" class="mode-seg-btn" data-ai-preset="single" aria-pressed="false" title="Selecionar apenas 1 IA (modo Direto)">1 IA</button>
+                                        <button type="button" class="mode-seg-btn is-active" data-ai-preset="trio" aria-pressed="true" title="Selecionar o trio automático (Gemini + Groq + OpenRouter)">Trio</button>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <!-- BARRA ESSENCIAL DE CONTROLES -->
-                        <div class="composer-footer">
-                            <div class="composer-controls">
-                                <!-- Modo de Resposta: Normal | Prompt MD -->
-                                <div class="mode-segmented-pill" id="response-mode-toggle" role="group" aria-label="Formato da resposta">
-                                    <button type="button" class="mode-seg-btn is-active" data-response-mode="normal" aria-pressed="true">Normal</button>
-                                    <button type="button" class="mode-seg-btn" data-response-mode="prompt_markdown" aria-pressed="false">Prompt MD</button>
+                            <div class="composer-pop-section">
+                                <span class="composer-pop-label">VEREDITO AUTOMÁTICO (MULTI-IA)</span>
+                                <div class="composer-pop-row">
+                                    <div class="mode-segmented-pill" id="auto-verdict-toggle" role="group" aria-label="Veredito automático ao concluir respostas de 2+ IAs">
+                                        <button type="button" class="mode-seg-btn is-active" data-auto-verdict="off" aria-pressed="true" title="Padrão: preserva cota gratuita (gere o Veredito manualmente quando quiser)">Off</button>
+                                        <button type="button" class="mode-seg-btn" data-auto-verdict="on" aria-pressed="false" title="Gera o Veredito do Conselho automaticamente após 2+ IAs responderem (pula se cota < 15%)">Auto</button>
+                                    </div>
                                 </div>
+                            </div>
 
-                                <!-- Dinâmica: Direto | Debate -->
-                                <div class="mode-segmented-pill" id="interaction-mode-toggle" role="group" aria-label="Dinâmica das IAs">
-                                    <button type="button" class="mode-seg-btn is-active" data-interaction-mode="direct" aria-pressed="true">Direto</button>
-                                    <button type="button" class="mode-seg-btn" data-interaction-mode="debate" aria-pressed="false">Debate</button>
-                                </div>
-
-                                <span class="controls-divider" aria-hidden="true"></span>
-
-                                <!-- Atalho Rápido de IAs: 1 IA | Trio -->
-                                <div class="mode-segmented-pill ai-preset-toggle" id="ai-preset-toggle" role="group" aria-label="Atalho de seleção de IAs">
-                                    <button type="button" class="mode-seg-btn" data-ai-preset="single" aria-pressed="false" title="Selecionar apenas 1 IA (modo Direto)">1 IA</button>
-                                    <button type="button" class="mode-seg-btn is-active" data-ai-preset="trio" aria-pressed="true" title="Selecionar o trio automático (Gemini + Groq + OpenRouter)">Trio</button>
-                                </div>
-
-                                <!-- Participantes -->
+                            <div class="composer-pop-section">
+                                <span class="composer-pop-label">INTELIGÊNCIAS ATIVAS</span>
                                 <div class="participant-pills" role="group" aria-label="IAs">
                                     <label class="participant-pill is-selected" title="Gemini">
                                         <input type="checkbox" name="participants" value="gemini" checked>
@@ -757,10 +865,9 @@
                                         <span class="pill-name">Claude</span>
                                     </label>
                                 </div>
+                            </div>
 
-                                <span class="controls-divider" id="composer-extra-divider" aria-hidden="true" hidden></span>
-
-                                <!-- Rodadas (visível apenas em Debate) -->
+                            <div class="composer-pop-row composer-pop-extras" id="composer-extra-divider" hidden>
                                 <div class="compact-control" id="rounds-control-wrap" hidden>
                                     <label for="debate-rounds">Rodadas</label>
                                     <select id="debate-rounds">
@@ -770,7 +877,6 @@
                                     </select>
                                 </div>
 
-                                <!-- Foco (visível apenas em Prompt MD) -->
                                 <div class="compact-control" id="focus-control-wrap" hidden>
                                     <label for="debate-focus">Foco</label>
                                     <select id="debate-focus">
@@ -779,8 +885,49 @@
                                         <option value="frontend">Frontend</option>
                                     </select>
                                 </div>
+                            </div>
 
-                                <!-- Busca Web + Leitor de Links -->
+                            <div class="composer-pop-section composer-advanced" id="composer-advanced">
+                                <div class="composer-advanced-grid">
+                                    <div class="form-group">
+                                        <label for="debate-title">Título (opcional)</label>
+                                        <input
+                                            type="text"
+                                            id="debate-title"
+                                            placeholder="Gerado automaticamente se vazio"
+                                            maxlength="120"
+                                        >
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label for="debate-rules">Instruções extras (opcional)</label>
+                                        <input
+                                            type="text"
+                                            id="debate-rules"
+                                            placeholder="Ex.: Seja breve, use exemplos práticos..."
+                                        >
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="composer-pop-footer">
+                                <button type="button" class="btn-secondary" id="composer-templates-btn" title="Abrir biblioteca de prompts e templates salvos">
+                                    <span>Biblioteca de Templates</span>
+                                </button>
+                                <button type="button" class="btn-ghost-pill" id="composer-config-done">Concluir</button>
+                            </div>
+                        </div>
+
+                        <!-- BARRA ESSENCIAL ULTRA-LIMPA -->
+                        <div class="composer-footer">
+                            <div class="composer-controls">
+                                <button type="button" class="btn-ghost-pill composer-tool-btn" id="composer-attach-btn" title="Anexar imagem, PDF ou código (ou cole print com Ctrl+V)">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                                    </svg>
+                                    <span>Anexar</span>
+                                </button>
+
                                 <button type="button" class="btn-ghost-pill btn-web-toggle is-web-active" id="composer-web-btn" aria-pressed="true" title="Busca na Web e leitura automática de links (Auto / Off)">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <circle cx="12" cy="12" r="9"></circle>
@@ -788,22 +935,12 @@
                                         <path d="M12 3a14 14 0 0 1 0 18"></path>
                                         <path d="M12 3a14 14 0 0 0 0 18"></path>
                                     </svg>
-                                    <span>Web: Auto</span>
+                                    <span>Web</span>
                                 </button>
 
-                                <!-- Anexar imagem, PDF ou código -->
-                                <button type="button" class="btn-ghost-pill" id="composer-attach-btn" title="Anexar imagem, PDF ou código (ou cole print com Ctrl+V)">
-                                    <span>+ Anexar</span>
-                                </button>
-
-                                <!-- Biblioteca de Templates -->
-                                <button type="button" class="btn-ghost-pill" id="composer-templates-btn" title="Abrir biblioteca de prompts e templates salvos">
-                                    <span>Templates</span>
-                                </button>
-
-                                <!-- Opções Avançadas -->
-                                <button type="button" class="btn-ghost-pill" id="toggle-advanced-btn" aria-expanded="false" aria-controls="composer-advanced">
-                                    <span>+ Opções</span>
+                                <button type="button" class="btn-ghost-pill composer-config-trigger" id="composer-config-btn" aria-expanded="false" aria-controls="composer-config-popover" title="Configurar IAs, formato, modo debate, templates e instruções">
+                                    <span id="composer-config-summary">Trio · Normal</span>
+                                    <span class="topbar-ai-caret" aria-hidden="true">▾</span>
                                 </button>
                             </div>
 
@@ -849,6 +986,9 @@
                                 <span class="eyebrow">VISÃO GERAL</span>
                                 <h3>Resumo do sistema</h3>
                             </div>
+                            <button type="button" class="btn-secondary" id="open-setup-wizard-btn" hidden title="Configurar ou atualizar chaves das IAs e senha de acesso remoto (somente no PC local)">
+                                <span>Chaves &amp; Acesso</span>
+                            </button>
                         </div>
 
                         <div class="stats-grid">
@@ -1043,6 +1183,110 @@
                         </div>
                     </section>
 
+                    <!-- MEMÓRIA PESSOAL AUTOMÁTICA (APENAS VISUALIZAÇÃO / EXCLUSÃO — 0 PREENCHIMENTO MANUAL) -->
+                    <section class="user-memory-section" id="user-memory-section" data-scroll-reveal>
+                        <div class="section-heading">
+                            <div>
+                                <span class="eyebrow">APRENDIZADO CONTÍNUO // AUTOMÁTICO</span>
+                                <h3>Memória pessoal automática</h3>
+                                <p class="user-memory-sub">Fatos e preferências aprendidos automaticamente nas suas conversas. Remova qualquer item com um clique.</p>
+                            </div>
+                            <div class="user-memory-controls">
+                                <div class="mode-segmented-pill" id="user-memory-toggle" role="group" aria-label="Aprendizado automático de memória pessoal">
+                                    <button type="button" class="mode-seg-btn is-active" data-user-memory-enabled="true" aria-pressed="true">Ativa</button>
+                                    <button type="button" class="mode-seg-btn" data-user-memory-enabled="false" aria-pressed="false">Pausada</button>
+                                </div>
+                                <button type="button" class="btn-ghost-pill" id="user-memory-clear-btn" hidden>Limpar tudo</button>
+                            </div>
+                        </div>
+
+                        <div id="user-memory-facts-list" class="user-memory-facts-list">
+                            <div class="user-memory-empty">Nenhum fato memorizado ainda — converse normalmente e o AI Council aprenderá suas preferências automaticamente.</div>
+                        </div>
+                    </section>
+
+                    <!-- PRIVACIDADE & DADOS LOCAIS (LGPD: TRANSPARÊNCIA, PORTABILIDADE E ELIMINAÇÃO) -->
+                    <section class="privacy-section" id="privacy-section" data-scroll-reveal>
+                        <div class="section-heading">
+                            <div>
+                                <span class="eyebrow">PRIVACIDADE &amp; CONTROLE // LGPD</span>
+                                <h3>Privacidade e dados locais</h3>
+                            </div>
+                        </div>
+
+                        <div class="privacy-card">
+                            <div class="privacy-controls-grid">
+                                <div class="privacy-control-row">
+                                    <div class="privacy-control-info">
+                                        <strong>Escudo de Privacidade (DLP Híbrido)</strong>
+                                        <small>Pede confirmação para textos digitados no chat e mascara automaticamente anexos, PDFs e projetos antes do envio às IAs.</small>
+                                    </div>
+                                    <div class="mode-segmented-pill" id="privacy-shield-mode-toggle" role="group" aria-label="Modo do Escudo de Privacidade">
+                                        <button type="button" class="mode-seg-btn is-active" data-shield-mode="strict" aria-pressed="true" title="Segredos, CPF, CNPJ, cartão, e-mail e telefone">Estrito</button>
+                                        <button type="button" class="mode-seg-btn" data-shield-mode="standard" aria-pressed="false" title="Segredos, CPF, CNPJ e cartão (sem e-mail/telefone)">Padrão</button>
+                                        <button type="button" class="mode-seg-btn" data-shield-mode="off" aria-pressed="false" title="Desativa o filtro local">Desligado</button>
+                                    </div>
+                                </div>
+
+                                <div class="privacy-control-row" id="privacy-encrypt-row">
+                                    <div class="privacy-control-info">
+                                        <div class="privacy-control-title-line">
+                                            <strong>Criptografia em repouso (AES-256-GCM + Windows DPAPI)</strong>
+                                            <span class="privacy-control-badge" id="privacy-encrypt-status">Desativada</span>
+                                        </div>
+                                        <small>Cifra debates, projetos e memória em <code>data/</code> usando chave amarrada ao seu usuário Windows. Inicia em 1 clique sem senha extra.</small>
+                                    </div>
+                                    <div class="mode-segmented-pill" id="privacy-encrypt-toggle" role="group" aria-label="Criptografia em repouso">
+                                        <button type="button" class="mode-seg-btn" data-encrypt-rest="true" aria-pressed="false">Ativa</button>
+                                        <button type="button" class="mode-seg-btn is-active" data-encrypt-rest="false" aria-pressed="true">Desativada</button>
+                                    </div>
+                                </div>
+
+                                <div class="privacy-control-row" id="privacy-ntfs-row">
+                                    <div class="privacy-control-info">
+                                        <div class="privacy-control-title-line">
+                                            <strong>Permissões NTFS (Windows)</strong>
+                                            <span class="privacy-control-badge" id="privacy-ntfs-status">Verificando...</span>
+                                        </div>
+                                        <small>Restringe <code>.env</code> e <code>data/</code> exclusivamente à sua conta de usuário Windows + SYSTEM.</small>
+                                    </div>
+                                    <button type="button" class="btn-secondary" id="privacy-ntfs-harden-btn">Reaplicar NTFS</button>
+                                </div>
+                            </div>
+
+                            <p class="privacy-meta">
+                                Seus debates, projetos, templates e memória pessoal ficam salvos localmente neste PC. Apenas o conteúdo que você enviar no chat é transmitido às APIs externas configuradas (Google Gemini, Groq, OpenRouter e Microsoft Edge TTS quando usar voz). A exportação inclui todos os seus dados pessoais, mas <strong>nunca</strong> inclui seu arquivo <code>.env</code>, chaves de API ou senhas.
+                            </p>
+
+                            <div class="privacy-actions">
+                                <button type="button" class="btn-secondary" id="privacy-export-btn">
+                                    <span>Exportar meus dados (.json)</span>
+                                </button>
+                                <button type="button" class="btn-ghost-pill btn-danger-outline" id="privacy-wipe-toggle-btn" hidden>
+                                    <span>Apagar dados locais</span>
+                                </button>
+                                <span class="form-feedback" id="privacy-feedback" role="status" aria-live="polite"></span>
+                            </div>
+
+                            <div class="privacy-wipe-box" id="privacy-wipe-confirm-box" hidden>
+                                <p class="privacy-wipe-warning">
+                                    Esta ação apaga permanentemente todas as conversas, projetos, memória pessoal, histórico de eventos e desconecta sessões remotas. Suas chaves no <code>.env</code> serão preservadas. Digite <code>APAGAR TUDO</code> para confirmar:
+                                </p>
+                                <div class="privacy-wipe-row">
+                                    <input
+                                        type="text"
+                                        id="privacy-wipe-input"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        placeholder="Digite APAGAR TUDO"
+                                    >
+                                    <button type="button" class="btn-ghost-pill" id="privacy-wipe-cancel-btn">Cancelar</button>
+                                    <button type="button" class="btn-ghost-pill btn-danger-outline" id="privacy-wipe-confirm-btn">Confirmar eliminação</button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
                     <!-- LISTA RESUMIDA DE SESSÕES NO DASHBOARD -->
                     <section class="debates-section" id="debates" data-scroll-reveal>
                         <div class="section-heading">
@@ -1191,9 +1435,6 @@
                     </article>
 
                 </div>
-
-                <!-- FEED DE TELEMETRIA E USO EM TEMPO REAL (ABA ROLÁVEL ABAIXO DO STICKY STACK) -->
-                <div class="ai-telemetry-feed" id="ai-usage-telemetry-feed"></div>
 
             </div>
 

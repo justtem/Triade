@@ -1,7 +1,10 @@
 {
   "name": "ai-council",
   "version": "1.0.0",
-  "description": "",
+  "description": "AI Council — Intelligence Hub local multi-IA (Gemini, Groq e OpenRouter) com custo zero",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "main": "index.js",
   "scripts": {
     "test": "tsx --test tests/*.test.ts",

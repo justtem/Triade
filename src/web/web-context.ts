@@ -1,11 +1,73 @@
+import { lookup } from "node:dns/promises";
 import type { WebSearchMode, WebSource } from "../shared/debate-types.js";
 
 const MAX_PASTED_URLS = 3;
 const MAX_SEARCH_RESULTS = 5;
 const MAX_DEEP_FETCH_SEARCH_PAGES = 2;
 const MAX_HTML_BYTES = 400 * 1024; // 400 KB por página
+export const WEB_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutos
+const MAX_SEARCH_CACHE_ENTRIES = 120;
+const MAX_PAGE_CACHE_ENTRIES = 160;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+interface CachedSearchEntry {
+  expiresAt: number;
+  hits: RawSearchHit[];
+}
+
+interface CachedPageEntry {
+  expiresAt: number;
+  title: string;
+  excerpt: string;
+  ok: boolean;
+}
+
+const searchCache = new Map<string, CachedSearchEntry>();
+const pageCache = new Map<string, CachedPageEntry>();
+const webCacheStats = {
+  searchHits: 0,
+  searchMisses: 0,
+  pageHits: 0,
+  pageMisses: 0
+};
+
+export function normalizeSearchCacheKey(query: string): string {
+  return query
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+export function getWebCacheStats() {
+  return {
+    ...webCacheStats,
+    searchEntries: searchCache.size,
+    pageEntries: pageCache.size
+  };
+}
+
+export function clearWebCache(): void {
+  searchCache.clear();
+  pageCache.clear();
+  webCacheStats.searchHits = 0;
+  webCacheStats.searchMisses = 0;
+  webCacheStats.pageHits = 0;
+  webCacheStats.pageMisses = 0;
+}
+
+function setBoundedCache<T>(map: Map<string, T>, key: string, value: T, maxSize: number): void {
+  if (map.has(key)) {
+    map.delete(key);
+  } else if (map.size >= maxSize) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey !== undefined) map.delete(oldestKey);
+  }
+  map.set(key, value);
+}
 
 const GREETING_ONLY_REGEX =
   /^(oi+|ol[aá]+|opa+|e\s*a[ií]|fala+|salve|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem\??|obrigad[oa]+|valeu+|vlw|ok+|blz|beleza|show|perfeito|entendi|sim|n[aã]o|t[aá]\s+bom|legal|massa|top|hello|hi|hey|thanks|thank\s+you)[\s!.,?]*$/i;
@@ -74,6 +136,52 @@ export function extractUrlsFromText(text: string): string[] {
   return out;
 }
 
+/** Verifica se um endereço IP literal (IPv4 ou IPv6) pertence à internet pública (bloqueia privado/loopback/CGNAT/link-local). */
+export function isPublicIpAddress(rawIp: string): boolean {
+  const ip = (rawIp ?? "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!ip) return false;
+
+  // Desembrulha IPv4-mapped IPv6 (::ffff:127.0.0.1 ou hex ::ffff:7f00:1)
+  if (ip.startsWith("::ffff:")) {
+    const mapped = ip.slice(7);
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(mapped)) {
+      return isPublicIpAddress(mapped);
+    }
+    return false;
+  }
+
+  const ipv4Match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const a = Number(ipv4Match[1]);
+    const b = Number(ipv4Match[2]);
+    const c = Number(ipv4Match[3]);
+    const d = Number(ipv4Match[4]);
+    if (a > 255 || b > 255 || c > 255 || d > 255) return false;
+    if (a === 0 || a === 10 || a === 127) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT / Tailscale
+    if (a >= 224) return false;
+    return true;
+  }
+
+  if (ip.includes(":")) {
+    if (
+      ip === "::1" ||
+      ip === "::" ||
+      ip === "0:0:0:0:0:0:0:1" ||
+      ip === "0:0:0:0:0:0:0:0" ||
+      /^(fe80|fe9|fea|feb|fc|fd|ff)/i.test(ip)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 /** Proteção anti-SSRF: permite apenas URLs http(s) públicas (bloqueia localhost, LAN e Tailscale). */
 export function isSafePublicUrl(rawUrl: string): boolean {
   let parsed: URL;
@@ -103,30 +211,52 @@ export function isSafePublicUrl(rawUrl: string): boolean {
     return false;
   }
 
-  // Bloqueia faixas IPv4 privadas, loopback, link-local e CGNAT (inclui Tailscale 100.64.0.0/10)
-  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const a = Number(ipv4Match[1]);
-    const b = Number(ipv4Match[2]);
-    const c = Number(ipv4Match[3]);
-    const d = Number(ipv4Match[4]);
-    if (a > 255 || b > 255 || c > 255 || d > 255) return false;
-    if (a === 0 || a === 10 || a === 127) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a === 100 && b >= 64 && b <= 127) return false;
-    if (a >= 224) return false;
-  }
-
-  // Bloqueia IPv6 link-local / unique-local (fe80::, fc00::, fd00::)
-  if (host.includes(":")) {
-    if (/^(fe80|fc|fd|::1$|::ffff:127\.|::ffff:10\.|::ffff:192\.168\.)/i.test(host)) {
-      return false;
-    }
+  // Se for IP literal (IPv4 ou IPv6), valida diretamente
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) {
+    return isPublicIpAddress(host);
   }
 
   return true;
+}
+
+export type DnsLookupFn = (
+  hostname: string
+) => Promise<Array<{ address: string }>>;
+
+const defaultDnsLookup: DnsLookupFn = async (hostname: string) => {
+  const res = await lookup(hostname, { all: true, verbatim: true });
+  return Array.isArray(res) ? res : [res];
+};
+
+/**
+ * Proteção anti-SSRF contra DNS Rebinding:
+ * resolve o hostname via DNS antes da conexão e exige que TODOS os IPs retornados sejam públicos.
+ */
+export async function isSafeResolvedUrl(
+  rawUrl: string,
+  lookupFn: DnsLookupFn = defaultDnsLookup
+): Promise<boolean> {
+  if (!isSafePublicUrl(rawUrl)) return false;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) {
+    return isPublicIpAddress(host);
+  }
+
+  try {
+    const records = await lookupFn(host);
+    if (!Array.isArray(records) || records.length === 0) return false;
+    return records.every((rec) => isPublicIpAddress(rec.address));
+  } catch {
+    return false;
+  }
 }
 
 export function extractDomain(rawUrl: string): string {
@@ -268,33 +398,93 @@ async function readLimitedText(response: Response, maxBytes: number): Promise<st
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Lê e extrai o texto principal de uma URL pública com timeout e limite de bytes. */
+/** Lê e extrai o texto principal de uma URL pública com anti-SSRF (DNS + redirects manuais), timeout e cache TTL de 15 min. */
 export async function fetchPageContent(
   url: string,
   timeoutMs = 5_000,
-  maxExcerptChars = 3_200
+  maxExcerptChars = 3_200,
+  cacheOptions: {
+    nowMs?: number;
+    ttlMs?: number;
+    lookupFn?: DnsLookupFn;
+    skipDnsCheck?: boolean;
+  } = {}
 ): Promise<{ title: string; excerpt: string; ok: boolean }> {
   if (!isSafePublicUrl(url)) {
     return { title: extractDomain(url), excerpt: "", ok: false };
   }
 
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"
-      },
-      signal: AbortSignal.timeout(timeoutMs)
-    });
+  const now = cacheOptions.nowMs ?? Date.now();
+  const ttlMs = cacheOptions.ttlMs ?? WEB_CACHE_TTL_MS;
+  const cached = pageCache.get(url);
+  if (cached && cached.expiresAt > now) {
+    webCacheStats.pageHits++;
+    return {
+      title: cached.title,
+      excerpt: cached.excerpt.slice(0, maxExcerptChars),
+      ok: cached.ok
+    };
+  }
+  if (cached) {
+    pageCache.delete(url);
+  }
+  webCacheStats.pageMisses++;
 
-    if (!response.ok) {
+  const MAX_REDIRECT_HOPS = 3;
+  let currentUrl = url;
+
+  try {
+    let response: Response | null = null;
+
+    for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+      const safeHop = cacheOptions.skipDnsCheck
+        ? isSafePublicUrl(currentUrl)
+        : await isSafeResolvedUrl(currentUrl, cacheOptions.lookupFn);
+      if (!safeHop) {
+        return { title: extractDomain(url), excerpt: "", ok: false };
+      }
+
+      // Usa redirect: "manual" para validar cada hop ANTES de abrir conexão (evita Blind SSRF)
+      const res = await fetch(currentUrl, {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          "User-Agent": USER_AGENT,
+          "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.8",
+          "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"
+        },
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+
+      if (
+        (res.status === 301 ||
+          res.status === 302 ||
+          res.status === 303 ||
+          res.status === 307 ||
+          res.status === 308) &&
+        hop < MAX_REDIRECT_HOPS
+      ) {
+        const loc = res.headers.get("location");
+        await res.body?.cancel().catch(() => {});
+        if (!loc) {
+          return { title: extractDomain(url), excerpt: "", ok: false };
+        }
+        try {
+          currentUrl = new URL(loc, currentUrl).href;
+        } catch {
+          return { title: extractDomain(url), excerpt: "", ok: false };
+        }
+        continue;
+      }
+
+      response = res;
+      break;
+    }
+
+    if (!response || !response.ok) {
       return { title: extractDomain(url), excerpt: "", ok: false };
     }
 
-    // Revalida URL final após possíveis redirecionamentos (evita SSRF via redirect!)
     if (response.url && !isSafePublicUrl(response.url)) {
       return { title: extractDomain(url), excerpt: "", ok: false };
     }
@@ -313,22 +503,51 @@ export async function fetchPageContent(
     }
 
     const raw = await readLimitedText(response, MAX_HTML_BYTES);
+    const cacheMaxChars = Math.max(maxExcerptChars, 3_600);
 
     if (contentType.includes("text/html") || raw.trimStart().startsWith("<")) {
       const { title, text } = htmlToCleanText(raw);
-      return {
+      const result = {
         title: title || extractDomain(url),
         excerpt: text.slice(0, maxExcerptChars),
         ok: text.length > 40
       };
+      if (result.ok) {
+        setBoundedCache(
+          pageCache,
+          url,
+          {
+            expiresAt: now + ttlMs,
+            title: result.title,
+            excerpt: text.slice(0, cacheMaxChars),
+            ok: true
+          },
+          MAX_PAGE_CACHE_ENTRIES
+        );
+      }
+      return result;
     }
 
     const clean = raw.replace(/\s+/g, " ").trim();
-    return {
+    const result = {
       title: extractDomain(url),
       excerpt: clean.slice(0, maxExcerptChars),
       ok: clean.length > 10
     };
+    if (result.ok) {
+      setBoundedCache(
+        pageCache,
+        url,
+        {
+          expiresAt: now + ttlMs,
+          title: result.title,
+          excerpt: clean.slice(0, cacheMaxChars),
+          ok: true
+        },
+        MAX_PAGE_CACHE_ENTRIES
+      );
+    }
+    return result;
   } catch {
     return { title: extractDomain(url), excerpt: "", ok: false };
   }
@@ -529,25 +748,63 @@ async function searchWikipediaFallback(
   }
 }
 
-async function performWebSearch(query: string): Promise<RawSearchHit[]> {
+export async function performWebSearch(
+  query: string,
+  cacheOptions: { nowMs?: number; ttlMs?: number } = {}
+): Promise<RawSearchHit[]> {
   const cleanQuery = query.replace(/\s+/g, " ").trim().slice(0, 200);
   if (!cleanQuery) return [];
 
+  const cacheKey = normalizeSearchCacheKey(cleanQuery);
+  const now = cacheOptions.nowMs ?? Date.now();
+  const ttlMs = cacheOptions.ttlMs ?? WEB_CACHE_TTL_MS;
+
+  const cached = searchCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    webCacheStats.searchHits++;
+    return cached.hits.map((h) => ({ ...h }));
+  }
+  if (cached) {
+    searchCache.delete(cacheKey);
+  }
+  webCacheStats.searchMisses++;
+
+  let hits: RawSearchHit[] = [];
+
   try {
     const ddgHtml = await searchDuckDuckGoHtml(cleanQuery, MAX_SEARCH_RESULTS);
-    if (ddgHtml.length > 0) return ddgHtml;
+    if (ddgHtml.length > 0) hits = ddgHtml;
   } catch {
     // Tenta fallback
   }
 
-  try {
-    const ddgLite = await searchDuckDuckGoLite(cleanQuery, MAX_SEARCH_RESULTS);
-    if (ddgLite.length > 0) return ddgLite;
-  } catch {
-    // Tenta fallback
+  if (hits.length === 0) {
+    try {
+      const ddgLite = await searchDuckDuckGoLite(cleanQuery, MAX_SEARCH_RESULTS);
+      if (ddgLite.length > 0) hits = ddgLite;
+    } catch {
+      // Tenta fallback
+    }
   }
 
-  return searchWikipediaFallback(cleanQuery, 3);
+  if (hits.length === 0) {
+    hits = await searchWikipediaFallback(cleanQuery, 3);
+  }
+
+  // Nunca cacheia respostas vazias/falhas
+  if (hits.length > 0) {
+    setBoundedCache(
+      searchCache,
+      cacheKey,
+      {
+        expiresAt: now + ttlMs,
+        hits: hits.map((h) => ({ ...h }))
+      },
+      MAX_SEARCH_CACHE_ENTRIES
+    );
+  }
+
+  return hits;
 }
 
 /**

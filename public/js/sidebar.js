@@ -39,6 +39,7 @@ import {
 } from "./projects.js";
 import {
   getActiveResponderInfo,
+  setAutoRouteMode,
   setSelectedParticipants,
   syncComposerWithDebate,
   syncComposerModeUi,
@@ -48,11 +49,7 @@ import {
 
 export function renderZeroStateHorizontalShowcase() {
   const track = $("#zero-h-track");
-  const viewport = $("#zero-h-viewport");
-  const progressFill = $("#zero-h-progress-fill");
-  const prevBtn = $("#zero-h-prev");
-  const nextBtn = $("#zero-h-next");
-  if (!track || !viewport) return;
+  if (!track) return;
 
   const templatesSource =
     Array.isArray(state.promptTemplates) && state.promptTemplates.length > 0
@@ -67,93 +64,30 @@ export function renderZeroStateHorizontalShowcase() {
           interactionMode: "debate"
         }));
 
-  const recentSignature = JSON.stringify({
-    debates: state.latestDebates
-      .slice(0, 4)
-      .map((d) => ({ id: d.id, title: d.title, status: d.status, pinned: Boolean(d.pinned) })),
-    templates: templatesSource.map((t) => ({
+  const recentSignature = JSON.stringify(
+    templatesSource.slice(0, 6).map((t) => ({
       id: t.id,
-      tag: t.tag,
       title: t.title,
-      prompt: t.prompt,
       updatedAt: t.updatedAt
     }))
-  });
+  );
   if (recentSignature === state.lastZeroShowcaseSignature && track.children.length > 0) {
     return;
   }
   state.lastZeroShowcaseSignature = recentSignature;
   track.replaceChildren();
 
-  // 1. Cards de Debates Recentes / Fixados (se existirem)
-  for (const debate of state.latestDebates.slice(0, 3)) {
-    const card = document.createElement("article");
-    card.className = "zero-h-card";
-
-    const top = document.createElement("div");
-    top.className = "zero-h-card-top";
-
-    const tag = document.createElement("span");
-    tag.className = "zero-h-tag tag-recent";
-    tag.textContent =
-      debate.status === "running"
-        ? `ATIVO • R${debate.currentRound}/${debate.totalRounds}`
-        : debate.pinned
-          ? `FIXADA • ${debate.totalRounds} RODADAS`
-          : `SESSÃO • ${debate.totalRounds} RODADAS`;
-
-    const arrow = document.createElement("span");
-    arrow.className = "cta-arrow";
-    arrow.textContent = "→";
-
-    top.append(tag, arrow);
-
-    const h4 = document.createElement("h4");
-    h4.textContent = debate.title;
-
-    const p = document.createElement("p");
-    p.textContent = debate.topic;
-
-    card.append(top, h4, p);
-    card.addEventListener("click", () => selectDebate(debate.id));
-    track.appendChild(card);
+  // Floating Pill Annotations (Eraser Design System §9.4) — apenas templates rápidos sem repetir a sidebar
+  for (const tpl of templatesSource.slice(0, 5)) {
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "zero-template-pill";
+    pill.setAttribute("role", "listitem");
+    pill.title = tpl.prompt || tpl.topic || tpl.title;
+    pill.textContent = tpl.title;
+    pill.addEventListener("click", () => applyPromptTemplate(tpl));
+    track.appendChild(pill);
   }
-
-  // 2. Cards de Templates / Blueprints Editáveis
-  for (const tpl of templatesSource) {
-    const card = document.createElement("article");
-    card.className = "zero-h-card";
-
-    const top = document.createElement("div");
-    top.className = "zero-h-card-top";
-
-    const tag = document.createElement("span");
-    tag.className = "zero-h-tag";
-    tag.textContent = tpl.tag || "TEMPLATE";
-
-    const arrow = document.createElement("span");
-    arrow.className = "cta-arrow";
-    arrow.textContent = "↗";
-
-    top.append(tag, arrow);
-
-    const h4 = document.createElement("h4");
-    h4.textContent = tpl.title;
-
-    const p = document.createElement("p");
-    p.textContent = tpl.prompt || tpl.topic || "";
-
-    card.append(top, h4, p);
-    card.addEventListener("click", () => applyPromptTemplate(tpl));
-    track.appendChild(card);
-  }
-
-  attachHorizontalScrollPhysics(viewport, {
-    progressFillEl: progressFill,
-    prevBtn,
-    nextBtn,
-    cardSelector: ".zero-h-card"
-  });
 }
 
 export function switchView(targetView) {
@@ -295,6 +229,33 @@ export function updateStageTopbar() {
   const switcherMenu = document.createElement("div");
   switcherMenu.className = "topbar-ai-menu";
   switcherMenu.hidden = true;
+
+  const autoOpt = document.createElement("button");
+  autoOpt.type = "button";
+  autoOpt.className = "topbar-ai-option";
+  autoOpt.setAttribute("data-ai-switch", "auto");
+  if (responderInfo.isAuto) {
+    autoOpt.classList.add("is-active");
+  }
+  autoOpt.innerHTML = `
+    <span class="topbar-ai-opt-left">
+      <span class="topbar-ai-icon" data-active-ai="auto" aria-hidden="true">${getAiBrandSvg("auto")}</span>
+      <span>Auto (Roteador)</span>
+      <span class="topbar-ai-opt-tag">0ms</span>
+    </span>
+    <span class="topbar-ai-opt-check" aria-hidden="true">✔</span>
+  `;
+  autoOpt.addEventListener("click", (e) => {
+    e.stopPropagation();
+    switcherMenu.hidden = true;
+    setAutoRouteMode(true);
+    $("#debate-topic")?.focus();
+  });
+  switcherMenu.appendChild(autoOpt);
+
+  const autoDivider = document.createElement("div");
+  autoDivider.className = "topbar-ai-menu-divider";
+  switcherMenu.appendChild(autoDivider);
 
   const singleHeader = document.createElement("div");
   singleHeader.className = "topbar-ai-menu-heading";
@@ -868,14 +829,18 @@ export function renderSidebarDebatesList() {
     const rightSlot = document.createElement("div");
     rightSlot.className = "conv-top-right";
 
-    const statePill = document.createElement("span");
     const isRunning = debate.status === "running";
-    statePill.className = `conv-state-pill${isRunning ? " running" : ""}`;
-    statePill.textContent = isRunning
-      ? "Ativo"
-      : debate.status === "completed"
-        ? "OK"
-        : "Pausa";
+    const isPaused =
+      debate.status === "paused_limit" ||
+      debate.status === "paused_error" ||
+      debate.status === "paused_manual";
+
+    if (isRunning || isPaused) {
+      const statePill = document.createElement("span");
+      statePill.className = `conv-state-pill${isRunning ? " running" : ""}`;
+      statePill.textContent = isRunning ? "Ativo" : "Pausa";
+      rightSlot.appendChild(statePill);
+    }
 
     const actions = document.createElement("div");
     actions.className = "conv-actions";
@@ -923,7 +888,7 @@ export function renderSidebarDebatesList() {
     });
 
     actions.append(pinBtn, renameBtn, deleteBtn);
-    rightSlot.append(statePill, actions);
+    rightSlot.append(actions);
     topRow.append(titleWrap, rightSlot);
 
     if (isConfirmingDelete) {

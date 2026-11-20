@@ -4,6 +4,8 @@ import {
   RESPONSE_MODE_STORAGE_KEY,
   INTERACTION_MODE_STORAGE_KEY,
   WEB_SEARCH_STORAGE_KEY,
+  AUTO_VERDICT_STORAGE_KEY,
+  AUTO_ROUTE_STORAGE_KEY,
   $,
   $$,
   saveStoredOption,
@@ -15,8 +17,7 @@ import {
 } from "./js/state.js";
 import {
   fetchJson,
-  getStoredSessionToken,
-  setStoredSessionToken,
+  clearLegacyStoredSessionToken,
   showAuthLockOverlay,
   hideAuthLockOverlay,
   disconnectEventStream,
@@ -54,6 +55,7 @@ import {
 import {
   getSelectedParticipants,
   syncAiSelectionUi,
+  setAutoRouteMode,
   setSelectedParticipants,
   syncComposerWithDebate,
   syncComposerModeUi,
@@ -84,6 +86,25 @@ import {
   renderChatStage
 } from "./js/chat.js";
 import { initVoicePlayerUi, initVoiceRecorder, stopSpeech } from "./js/voice.js";
+import {
+  openSetupWizard,
+  closeSetupWizard,
+  handleSaveSetupForm,
+  syncSetupUi
+} from "./js/setup.js";
+import {
+  loadUserMemory,
+  renderUserMemoryPanel,
+  toggleUserMemoryEnabled,
+  handleClearUserMemory,
+  handleExportPrivacyData,
+  handleWipeLocalData,
+  closePrivacyShieldModal,
+  loadPrivacyStatus,
+  setPrivacyShieldMode,
+  setEncryptAtRest,
+  handleReapplyNtfs
+} from "./js/user-memory.js";
 
 // Registra hooks de UI para manter o grafo de módulos 100% acíclico
 registerUiHooks({
@@ -108,6 +129,8 @@ registerUiHooks({
   renderProjectsSidebar,
   openProjectModal,
   syncComposerProjectPill,
+  syncSetupUi,
+  renderUserMemoryPanel,
   sortEventsDescending
 });
 
@@ -118,11 +141,13 @@ function initializeCollapsibleLayout() {
     if (localStorage.getItem("ai-council-left-collapsed") === "true") {
       appShell?.classList.add("is-left-collapsed");
     }
-    if (localStorage.getItem("ai-council-right-collapsed") === "true") {
+    // Dock direito recolhido por padrão no desktop para priorizar o palco do chat
+    const rightPref = localStorage.getItem("ai-council-right-collapsed");
+    if (rightPref !== "false") {
       appShell?.classList.add("is-right-collapsed");
     }
   } catch {
-    // Ignora
+    appShell?.classList.add("is-right-collapsed");
   }
 
   $("#toggle-left-sidebar")?.addEventListener("click", () => {
@@ -308,8 +333,36 @@ function initializeUiBindings() {
     handleSidebarSearchInput("");
   });
 
+  const composerPopover = $("#composer-config-popover");
+  const composerConfigBtn = $("#composer-config-btn");
+  const closeComposerPopover = () => {
+    if (composerPopover && !composerPopover.hidden) {
+      composerPopover.hidden = true;
+      composerConfigBtn?.setAttribute("aria-expanded", "false");
+    }
+  };
+
+  composerConfigBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!composerPopover) return;
+    const willOpen = composerPopover.hidden;
+    composerPopover.hidden = !willOpen;
+    composerConfigBtn.setAttribute("aria-expanded", String(willOpen));
+  });
+
+  composerPopover?.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  $("#composer-config-done")?.addEventListener("click", closeComposerPopover);
+  $("#debate-rounds")?.addEventListener("change", syncComposerModeUi);
+  $("#debate-focus")?.addEventListener("change", syncComposerModeUi);
+
   // Modal de Biblioteca de Templates
-  $("#composer-templates-btn")?.addEventListener("click", openTemplatesModal);
+  $("#composer-templates-btn")?.addEventListener("click", () => {
+    closeComposerPopover();
+    openTemplatesModal();
+  });
   $("#zero-manage-templates-btn")?.addEventListener("click", openTemplatesModal);
   $("#templates-modal-close")?.addEventListener("click", closeTemplatesModal);
   $("#templates-modal")?.addEventListener("click", (e) => {
@@ -366,6 +419,79 @@ function initializeUiBindings() {
     });
   }
 
+  // Assistente de Configuração Inicial / Chaves & Acesso (somente PC local)
+  $("#open-setup-wizard-btn")?.addEventListener("click", () => {
+    void openSetupWizard({ locked: false });
+  });
+  $("#setup-wizard-close")?.addEventListener("click", closeSetupWizard);
+  $("#setup-cancel-btn")?.addEventListener("click", closeSetupWizard);
+  $("#setup-wizard-overlay")?.addEventListener("click", (e) => {
+    if (e.target === $("#setup-wizard-overlay")) closeSetupWizard();
+  });
+  $("#setup-wizard-form")?.addEventListener("submit", handleSaveSetupForm);
+
+  // Memória Pessoal Automática (visualização / pausa / exclusão no Monitor)
+  for (const btn of $$("#user-memory-toggle .mode-seg-btn")) {
+    btn.addEventListener("click", () => {
+      const enabled = btn.getAttribute("data-user-memory-enabled") === "true";
+      void toggleUserMemoryEnabled(enabled);
+    });
+  }
+  $("#user-memory-clear-btn")?.addEventListener("click", () => {
+    void handleClearUserMemory();
+  });
+
+  // Privacidade & Dados Locais (LGPD: Escudo DLP, Criptografia, NTFS, Exportação e Eliminação)
+  for (const btn of $$("#privacy-shield-mode-toggle .mode-seg-btn")) {
+    btn.addEventListener("click", () => {
+      const mode = btn.getAttribute("data-shield-mode");
+      if (mode === "strict" || mode === "standard" || mode === "off") {
+        void setPrivacyShieldMode(mode);
+      }
+    });
+  }
+  for (const btn of $$("#privacy-encrypt-toggle .mode-seg-btn")) {
+    btn.addEventListener("click", () => {
+      const enabled = btn.getAttribute("data-encrypt-rest") === "true";
+      void setEncryptAtRest(enabled);
+    });
+  }
+  $("#privacy-ntfs-harden-btn")?.addEventListener("click", () => {
+    void handleReapplyNtfs();
+  });
+  $("#privacy-export-btn")?.addEventListener("click", () => {
+    void handleExportPrivacyData();
+  });
+  $("#privacy-wipe-toggle-btn")?.addEventListener("click", () => {
+    const box = $("#privacy-wipe-confirm-box");
+    const input = $("#privacy-wipe-input");
+    const feedback = $("#privacy-feedback");
+    if (!box) return;
+    box.hidden = !box.hidden;
+    if (feedback) feedback.textContent = "";
+    if (!box.hidden) {
+      if (input) input.value = "";
+      input?.focus();
+    }
+  });
+  $("#privacy-wipe-cancel-btn")?.addEventListener("click", () => {
+    const box = $("#privacy-wipe-confirm-box");
+    const input = $("#privacy-wipe-input");
+    const feedback = $("#privacy-feedback");
+    if (box) box.hidden = true;
+    if (input) input.value = "";
+    if (feedback) feedback.textContent = "";
+  });
+  $("#privacy-wipe-confirm-btn")?.addEventListener("click", () => {
+    void handleWipeLocalData();
+  });
+  $("#privacy-wipe-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void handleWipeLocalData();
+    }
+  });
+
   // Modal de Memória Compartilhada
   $("#memory-modal-close")?.addEventListener("click", closeMemoryModal);
   $("#memory-cancel-btn")?.addEventListener("click", closeMemoryModal);
@@ -383,6 +509,7 @@ function initializeUiBindings() {
   });
 
   document.addEventListener("click", () => {
+    closeComposerPopover();
     for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
       openMenu.hidden = true;
     }
@@ -391,10 +518,18 @@ function initializeUiBindings() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       stopSpeech();
+      closeComposerPopover();
       closeImageLightbox();
       closeTemplatesModal();
       closeProjectModal();
       closeMemoryModal();
+      closeSetupWizard();
+      closePrivacyShieldModal();
+      if (state.editingTurnKey) {
+        state.editingTurnKey = null;
+        state.lastRenderedChatSignature = "";
+        renderChatStage();
+      }
       if (state.confirmDeleteDebateId) {
         state.confirmDeleteDebateId = null;
         renderSidebarDebatesList();
@@ -465,6 +600,11 @@ function initializeUiBindings() {
 
   for (const checkbox of $$('input[name="participants"]')) {
     checkbox.addEventListener("change", () => {
+      if (state.isAutoRouteMode) {
+        // Ao escolher uma IA específica manualmente, sai do modo Auto
+        state.isAutoRouteMode = false;
+        saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
+      }
       if (state.isSingleAiMode) {
         // No modo "1 IA", clicar em qualquer IA troca diretamente para ela (estilo rádio, 1 clique)
         setSelectedParticipants([checkbox.value], { singleMode: true });
@@ -478,7 +618,9 @@ function initializeUiBindings() {
   for (const btn of $$("#ai-preset-toggle .mode-seg-btn")) {
     btn.addEventListener("click", () => {
       const preset = btn.getAttribute("data-ai-preset");
-      if (preset === "single") {
+      if (preset === "auto") {
+        setAutoRouteMode(true);
+      } else if (preset === "single") {
         const current = getSelectedParticipants();
         const chosen =
           current.length === 1
@@ -511,12 +653,27 @@ function initializeUiBindings() {
       if (mode === "direct" || mode === "debate") {
         state.selectedInteractionMode = mode;
         saveStoredOption(INTERACTION_MODE_STORAGE_KEY, mode);
-        // Debate exige 2+ IAs: sai automaticamente do modo 1 IA e ativa o Trio
-        if (mode === "debate" && (state.isSingleAiMode || getSelectedParticipants().length < 2)) {
+        // Debate exige 2+ IAs: no modo manual sai de 1 IA e ativa o Trio; no modo Auto o roteador já garante 2-3 IAs
+        if (
+          mode === "debate" &&
+          !state.isAutoRouteMode &&
+          (state.isSingleAiMode || getSelectedParticipants().length < 2)
+        ) {
           setSelectedParticipants(AUTO_PLATFORM_IDS, { singleMode: false });
         } else {
           syncComposerModeUi();
         }
+      }
+    });
+  }
+
+  for (const btn of $$("#auto-verdict-toggle .mode-seg-btn")) {
+    btn.addEventListener("click", () => {
+      const val = btn.getAttribute("data-auto-verdict");
+      if (val === "off" || val === "on") {
+        state.selectedAutoVerdict = val;
+        saveStoredOption(AUTO_VERDICT_STORAGE_KEY, val);
+        syncComposerModeUi();
       }
     });
   }
@@ -550,6 +707,10 @@ function initializeUiBindings() {
     navBtn.addEventListener("click", () => {
       const target = navBtn.getAttribute("data-view-target") || "chat";
       switchView(target);
+      if (target === "dashboard") {
+        void loadUserMemory();
+        void loadPrivacyStatus();
+      }
     });
   }
 
@@ -580,11 +741,14 @@ function initializeUiBindings() {
   const authSubmit = $("#auth-submit-btn");
   const lockBtn = $("#btn-lock-session");
 
+  // Limpa eventual token legado do localStorage (autenticação agora via cookie HttpOnly)
+  clearLegacyStoredSessionToken();
+
   if (lockBtn) {
     const isLocalHost =
       window.location.hostname === "127.0.0.1" ||
       window.location.hostname === "localhost";
-    lockBtn.hidden = isLocalHost && !getStoredSessionToken();
+    lockBtn.hidden = isLocalHost;
   }
 
   authForm?.addEventListener("submit", async (e) => {
@@ -600,14 +764,10 @@ function initializeUiBindings() {
       if (authSubmit) authSubmit.disabled = true;
       if (authError) authError.textContent = "Verificando...";
 
-      const res = await fetchJson("/auth/login", {
+      await fetchJson("/auth/login", {
         method: "POST",
         body: { password }
       });
-
-      if (res?.sessionToken) {
-        setStoredSessionToken(res.sessionToken);
-      }
 
       if (authInput) authInput.value = "";
       if (lockBtn) lockBtn.hidden = false;
@@ -629,7 +789,7 @@ function initializeUiBindings() {
 
   lockBtn?.addEventListener("click", async () => {
     disconnectEventStream();
-    setStoredSessionToken("");
+    clearLegacyStoredSessionToken();
     await fetchJson("/auth/logout", { method: "POST" }).catch(() => {});
     showAuthLockOverlay("Sessão bloqueada neste dispositivo.");
   });
@@ -643,6 +803,7 @@ function initializeDashboard() {
   updateClock();
   void loadPromptTemplates();
   void loadProjects();
+  void loadPrivacyStatus();
   void refreshDashboard();
 
   setInterval(updateClock, 1000);

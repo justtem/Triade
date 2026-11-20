@@ -55,6 +55,7 @@ import {
   openImageLightbox
 } from "./motion.js";
 import { updateRightAiPanel } from "./telemetry.js";
+import { promptPrivacyShieldDecision } from "./user-memory.js";
 import {
   renderZeroStateHorizontalShowcase,
   updateStageTopbar,
@@ -119,46 +120,207 @@ export function buildTurnUserMessage(debate, turn, isMultiTurn) {
   time.className = "chat-user-time";
   time.textContent = formatShortTime(turn.createdAt) || formatDate(turn.createdAt);
 
-  header.append(author, time);
+  const turnEditKey = `${debate.id}:${turn.id}`;
+  const isEditingThisTurn = state.editingTurnKey === turnEditKey;
+  const canEditTurn =
+    Boolean(debate.id) &&
+    Boolean(turn.id) &&
+    turn.id !== "optimistic" &&
+    debate.status !== "running";
+
+  const headerRight = document.createElement("div");
+  headerRight.className = "chat-user-header-right";
+
+  if (canEditTurn && !isEditingThisTurn) {
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "icon-btn chat-user-edit-btn";
+    editBtn.title = "Editar mensagem e reenviar";
+    editBtn.setAttribute("aria-label", "Editar mensagem e reenviar");
+    editBtn.innerHTML = SVG_ICONS.pencil;
+    editBtn.addEventListener("click", () => {
+      state.editingTurnKey = turnEditKey;
+      state.lastRenderedChatSignature = "";
+      renderChatStage();
+      const input = userCard.parentElement?.querySelector(".chat-user-edit-input") || $(".chat-user-edit-input");
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+    headerRight.appendChild(editBtn);
+  }
+
+  headerRight.appendChild(time);
+  header.append(author, headerRight);
 
   const topic = document.createElement("div");
   topic.className = "chat-user-topic";
   topic.textContent = turn.prompt;
+
+  let editBox = null;
+  if (isEditingThisTurn) {
+    editBox = document.createElement("div");
+    editBox.className = "chat-user-edit-box";
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "chat-user-edit-input";
+    textarea.rows = Math.min(8, Math.max(2, turn.prompt.split("\n").length + 1));
+    textarea.value = turn.prompt;
+    textarea.setAttribute("aria-label", "Editar mensagem");
+
+    const allTurns = getSessionTurns(debate);
+    const turnPos = allTurns.findIndex((t) => t.id === turn.id);
+    const hasLaterTurns = turnPos >= 0 && turnPos < allTurns.length - 1;
+
+    const editFooter = document.createElement("div");
+    editFooter.className = "chat-user-edit-footer";
+
+    const editHint = document.createElement("span");
+    editHint.className = "chat-user-edit-hint";
+    editHint.textContent = hasLaterTurns
+      ? "Turnos posteriores serão substituídos · Enter envia"
+      : "Enter envia · Shift + Enter quebra linha";
+
+    const editActions = document.createElement("div");
+    editActions.className = "chat-user-edit-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "btn-ghost-pill";
+    cancelBtn.textContent = "Cancelar";
+    cancelBtn.addEventListener("click", () => {
+      state.editingTurnKey = null;
+      state.lastRenderedChatSignature = "";
+      renderChatStage();
+    });
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "btn-primary chat-user-edit-save";
+    saveBtn.innerHTML = `<span>Salvar e Reenviar</span><span class="cta-arrow" aria-hidden="true">→</span>`;
+
+    const submitEdit = async () => {
+      const nextText = textarea.value.trim();
+      if (!nextText) {
+        editHint.textContent = "Digite uma mensagem antes de reenviar.";
+        textarea.focus();
+        return;
+      }
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      textarea.disabled = true;
+      editHint.textContent = "Recalculando contexto e reenviando...";
+
+      try {
+        const sendEditRequest = (privacyAction) =>
+          fetchJson(`/debates/${debate.id}/edit`, {
+            method: "POST",
+            timeoutMs: 32000,
+            body: {
+              turnId: turn.id,
+              message: nextText,
+              ...(privacyAction ? { privacyAction } : {})
+            }
+          });
+
+        let res;
+        try {
+          res = await sendEditRequest(undefined);
+        } catch (firstErr) {
+          if (
+            firstErr?.status === 409 &&
+            firstErr?.data?.code === "PRIVACY_SHIELD_WARNING"
+          ) {
+            const decision = await promptPrivacyShieldDecision(firstErr.data.findings);
+            if (decision === "cancel") {
+              saveBtn.disabled = false;
+              cancelBtn.disabled = false;
+              textarea.disabled = false;
+              editHint.textContent = "Edição cancelada pelo Escudo de Privacidade.";
+              textarea.focus();
+              return;
+            }
+            res = await sendEditRequest(decision);
+          } else {
+            throw firstErr;
+          }
+        }
+        state.editingTurnKey = null;
+        if (res?.debate) {
+          const activeTurnId = res.debate.turns?.at(-1)?.id;
+          for (const t of res.debate.tasks || []) {
+            if (t.status === "pending" && (!activeTurnId || t.turnId === activeTurnId)) {
+              localTaskStartMs.set(t.id, Date.now());
+            }
+          }
+          upsertDebateSessionLocally(res.debate);
+        }
+        state.lastDebatesSignature = "";
+        state.lastRenderedChatSignature = "";
+        updateStageTopbar();
+        renderChatStage();
+        updateRightAiPanel();
+        void refreshDashboard();
+      } catch (error) {
+        saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+        textarea.disabled = false;
+        editHint.textContent =
+          error instanceof Error ? error.message : "Erro ao editar mensagem.";
+      }
+    };
+
+    saveBtn.addEventListener("click", () => void submitEdit());
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        state.editingTurnKey = null;
+        state.lastRenderedChatSignature = "";
+        renderChatStage();
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void submitEdit();
+      }
+    });
+
+    editActions.append(cancelBtn, saveBtn);
+    editFooter.append(editHint, editActions);
+    editBox.append(textarea, editFooter);
+  }
 
   const tagsRow = document.createElement("div");
   tagsRow.className = "chat-user-tags";
 
   const modeLabel = RESPONSE_MODE_LABELS[turn.responseMode] || "Prompt MD";
   const dynLabel = INTERACTION_MODE_LABELS[turn.interactionMode] || "Debate";
-
-  const tagMode = document.createElement("span");
-  tagMode.className = "chat-config-tag";
-  tagMode.textContent = `${modeLabel} · ${dynLabel}`;
-  tagsRow.appendChild(tagMode);
-
   const participantsNames = (turn.participants || [])
     .map((p) => PLATFORMS[p] || p)
     .join(", ");
-  if (participantsNames) {
-    const tagParticipants = document.createElement("span");
-    tagParticipants.className = "chat-config-tag";
-    tagParticipants.textContent = participantsNames;
-    tagsRow.appendChild(tagParticipants);
-  }
 
+  const metaParts = [`${modeLabel} · ${dynLabel}`];
+  if (turn.autoRoute && participantsNames) {
+    const routeTarget =
+      (turn.participants || []).length === AUTO_PLATFORM_IDS.length &&
+      AUTO_PLATFORM_IDS.every((id) => (turn.participants || []).includes(id))
+        ? "Trio"
+        : participantsNames;
+    const reasonText = turn.autoRoute.reason ? ` (${turn.autoRoute.reason})` : "";
+    metaParts.push(`Auto → ${routeTarget}${reasonText}`);
+  } else if (participantsNames) {
+    metaParts.push(participantsNames);
+  }
   if (turn.interactionMode === "debate") {
-    const tagRounds = document.createElement("span");
-    tagRounds.className = "chat-config-tag";
-    tagRounds.textContent = `${turn.totalRounds}x + Síntese`;
-    tagsRow.appendChild(tagRounds);
+    metaParts.push(`${turn.totalRounds}x + Síntese`);
+  }
+  if (turn.responseMode === "prompt_markdown" && turn.focus && turn.focus !== "geral") {
+    metaParts.push(FOCUS_LABELS[turn.focus] || turn.focus);
   }
 
-  if (turn.responseMode === "prompt_markdown" && turn.focus && turn.focus !== "geral") {
-    const tagFocus = document.createElement("span");
-    tagFocus.className = "chat-config-tag";
-    tagFocus.textContent = FOCUS_LABELS[turn.focus] || turn.focus;
-    tagsRow.appendChild(tagFocus);
-  }
+  const metaLine = document.createElement("span");
+  metaLine.className = "chat-user-meta-inline";
+  metaLine.textContent = metaParts.join(" · ");
+  tagsRow.appendChild(metaLine);
 
   const imageAttachments = [];
   if (Array.isArray(turn.attachments) && turn.attachments.length > 0) {
@@ -174,13 +336,13 @@ export function buildTurnUserMessage(debate, turn, isMultiTurn) {
       } else if (file.kind === "image") {
         tagFile.innerHTML = `${SVG_ICONS.image}<span>${escapeHtml(file.name)}</span>`;
       } else {
-        tagFile.textContent = `[${file.name}]`;
+        tagFile.textContent = file.name;
       }
       tagsRow.appendChild(tagFile);
     }
   }
 
-  userCard.append(header, topic);
+  userCard.append(header, editBox || topic);
 
   if (imageAttachments.length > 0) {
     const mediaGrid = document.createElement("div");
@@ -768,58 +930,7 @@ export function buildResponseCard(debate, resp, turn) {
   if (!isStreaming) {
     const isBusy = debate.status === "running";
 
-    const regenBtn = document.createElement("button");
-    regenBtn.type = "button";
-    regenBtn.className = "icon-btn";
-    regenBtn.title = `Regenerar só ${PLATFORMS[resp.platform] || resp.platform}`;
-    regenBtn.setAttribute("aria-label", regenBtn.title);
-    regenBtn.textContent = "↻";
-    regenBtn.disabled = isBusy;
-    regenBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void handleRegenerateResponse(debate.id, resp.id);
-    });
-
-    const otherAuto = AUTO_PLATFORM_IDS.filter((p) => p !== resp.platform);
-    const reviewWrap = document.createElement("div");
-    reviewWrap.className = "review-dropdown-wrap";
-
-    const reviewBtn = document.createElement("button");
-    reviewBtn.type = "button";
-    reviewBtn.className = "btn-secondary";
-    reviewBtn.textContent = "Revisar";
-    reviewBtn.title = "Pedir para outra IA revisar esta resposta";
-    reviewBtn.disabled = isBusy;
-
-    const reviewMenu = document.createElement("div");
-    reviewMenu.className = "review-dropdown-menu";
-    reviewMenu.hidden = true;
-
-    for (const candidate of otherAuto) {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "review-menu-item";
-      item.textContent = `Com ${PLATFORMS[candidate]}`;
-      item.addEventListener("click", (e) => {
-        e.stopPropagation();
-        reviewMenu.hidden = true;
-        void handleReviewResponse(debate.id, resp.id, candidate);
-      });
-      reviewMenu.appendChild(item);
-    }
-
-    reviewBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const willOpen = reviewMenu.hidden;
-      for (const openMenu of $$(".review-dropdown-menu")) {
-        openMenu.hidden = true;
-      }
-      reviewMenu.hidden = !willOpen;
-    });
-
-    reviewWrap.append(reviewBtn, reviewMenu);
-
-    const speakBtn = createSpeakButton(resp.content, "btn-secondary", {
+    const speakBtn = createSpeakButton(resp.content, "btn-secondary card-act-btn", {
       persona: resp.platform,
       label: PLATFORMS[resp.platform] || resp.platform,
       cardId: `resp-card-${resp.id}`
@@ -828,8 +939,66 @@ export function buildResponseCard(debate, resp, turn) {
     const copyBtn = createCopyMarkdownButton(
       resp.content,
       isNormal ? "Copiar" : "Copiar .md",
-      "btn-secondary"
+      "btn-secondary card-act-btn"
     );
+
+    // Menu "⋯" agrupando Regenerar + Revisar com outra IA (mantém o cabeçalho limpo sem encavalar)
+    const otherAuto = AUTO_PLATFORM_IDS.filter((p) => p !== resp.platform);
+    const moreWrap = document.createElement("div");
+    moreWrap.className = "review-dropdown-wrap";
+
+    const moreBtn = document.createElement("button");
+    moreBtn.type = "button";
+    moreBtn.className = "icon-btn card-more-btn";
+    moreBtn.textContent = "⋯";
+    moreBtn.title = "Mais ações (Regenerar ou Revisar com outra IA)";
+    moreBtn.setAttribute("aria-label", "Mais ações desta resposta");
+    moreBtn.disabled = isBusy;
+
+    const moreMenu = document.createElement("div");
+    moreMenu.className = "review-dropdown-menu";
+    moreMenu.hidden = true;
+
+    const regenItem = document.createElement("button");
+    regenItem.type = "button";
+    regenItem.className = "review-menu-item";
+    regenItem.textContent = `↻ Regenerar ${PLATFORMS[resp.platform] || resp.platform}`;
+    regenItem.addEventListener("click", (e) => {
+      e.stopPropagation();
+      moreMenu.hidden = true;
+      void handleRegenerateResponse(debate.id, resp.id);
+    });
+    moreMenu.appendChild(regenItem);
+
+    if (otherAuto.length > 0) {
+      const sep = document.createElement("div");
+      sep.className = "review-menu-sep";
+      moreMenu.appendChild(sep);
+
+      for (const candidate of otherAuto) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "review-menu-item";
+        item.textContent = `Revisar com ${PLATFORMS[candidate]}`;
+        item.addEventListener("click", (e) => {
+          e.stopPropagation();
+          moreMenu.hidden = true;
+          void handleReviewResponse(debate.id, resp.id, candidate);
+        });
+        moreMenu.appendChild(item);
+      }
+    }
+
+    moreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = moreMenu.hidden;
+      for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
+        openMenu.hidden = true;
+      }
+      moreMenu.hidden = !willOpen;
+    });
+
+    moreWrap.append(moreBtn, moreMenu);
 
     const toggleBtn = document.createElement("button");
     toggleBtn.type = "button";
@@ -849,7 +1018,7 @@ export function buildResponseCard(debate, resp, turn) {
     metaLeft.addEventListener("click", toggleCollapse);
     toggleBtn.addEventListener("click", toggleCollapse);
 
-    actions.append(regenBtn, reviewWrap, speakBtn, copyBtn, toggleBtn);
+    actions.append(speakBtn, copyBtn, moreWrap, toggleBtn);
   }
 
   header.append(metaLeft, actions);
@@ -1114,12 +1283,27 @@ export function buildWebSourcesPanel(debate, turn) {
   list.className = "web-sources-list";
   list.hidden = !isExpanded;
 
+function safeExternalHttpUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || "").trim());
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.href;
+    }
+  } catch {
+    // URL inválida
+  }
+  return null;
+}
+
   for (const src of sources) {
-    const item = document.createElement("a");
+    const safeUrl = safeExternalHttpUrl(src.url);
+    const item = document.createElement(safeUrl ? "a" : "div");
     item.className = "web-source-item";
-    item.href = src.url;
-    item.target = "_blank";
-    item.rel = "noopener noreferrer";
+    if (safeUrl) {
+      item.href = safeUrl;
+      item.target = "_blank";
+      item.rel = "noopener noreferrer";
+    }
 
     const top = document.createElement("div");
     top.className = "web-source-item-top";
@@ -1317,13 +1501,45 @@ export function buildVerdictSection(debate, turn, turnResponses) {
   const headActions = document.createElement("div");
   headActions.className = "verdict-header-actions";
 
+  if (distinctPlatforms.size >= 2) {
+    headActions.appendChild(createCouncilPodcastButton(turn, turnResponses));
+  }
+
+  if (verdict.practicalSummary) {
+    headActions.appendChild(
+      createCopyMarkdownButton(
+        verdict.practicalSummary,
+        "Copiar",
+        "btn-secondary"
+      )
+    );
+  }
+
+  // Menu "⋯" agrupando Ir para vencedora, Ouvir síntese e Reavaliar com outro Juiz
+  const moreWrap = document.createElement("div");
+  moreWrap.className = "review-dropdown";
+
+  const moreBtn = document.createElement("button");
+  moreBtn.type = "button";
+  moreBtn.className = "icon-btn verdict-more-btn";
+  moreBtn.disabled = isLoading || debate.status === "running";
+  moreBtn.textContent = isLoading ? "..." : "⋯";
+  moreBtn.title = "Mais opções do Veredito";
+  moreBtn.setAttribute("aria-label", "Mais opções do Veredito");
+
+  const moreMenu = document.createElement("div");
+  moreMenu.className = "review-dropdown-menu";
+  moreMenu.hidden = true;
+
   const winnerRespId = getWinnerResponseIdForTurn(turn, nonSynth);
   if (winnerRespId && verdict.winner !== "tie") {
-    const jumpBtn = document.createElement("button");
-    jumpBtn.type = "button";
-    jumpBtn.className = "btn-secondary verdict-jump-btn";
-    jumpBtn.textContent = `Ir para ${PLATFORMS[verdict.winner] || verdict.winner}`;
-    jumpBtn.addEventListener("click", () => {
+    const jumpOpt = document.createElement("button");
+    jumpOpt.type = "button";
+    jumpOpt.className = "review-dropdown-item";
+    jumpOpt.textContent = `Ir para ${PLATFORMS[verdict.winner] || verdict.winner}`;
+    jumpOpt.addEventListener("click", (e) => {
+      e.stopPropagation();
+      moreMenu.hidden = true;
       const targetCard = document.getElementById(`resp-card-${winnerRespId}`);
       if (targetCard) {
         collapsedResponseIds.delete(winnerRespId);
@@ -1331,48 +1547,34 @@ export function buildVerdictSection(debate, turn, turnResponses) {
         targetCard.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
       }
     });
-    headActions.appendChild(jumpBtn);
-  }
-
-  if (distinctPlatforms.size >= 2) {
-    headActions.appendChild(createCouncilPodcastButton(turn, turnResponses));
+    moreMenu.appendChild(jumpOpt);
   }
 
   if (verdict.practicalSummary) {
-    headActions.appendChild(
-      createSpeakButton(verdict.practicalSummary, "btn-secondary", {
-        persona: "judge",
-        label: "Veredito do Conselho"
-      })
-    );
-    headActions.appendChild(
-      createCopyMarkdownButton(
-        verdict.practicalSummary,
-        "Copiar síntese",
-        "btn-secondary"
-      )
-    );
+    const speakSummaryOpt = document.createElement("button");
+    speakSummaryOpt.type = "button";
+    speakSummaryOpt.className = "review-dropdown-item";
+    speakSummaryOpt.textContent = "Ouvir síntese do Juiz";
+    speakSummaryOpt.addEventListener("click", (e) => {
+      e.stopPropagation();
+      moreMenu.hidden = true;
+      playVoiceQueue(
+        [{ persona: "judge", label: "Veredito do Conselho", text: verdict.practicalSummary }],
+        moreBtn
+      );
+    });
+    moreMenu.appendChild(speakSummaryOpt);
   }
 
-  // Dropdown "Reavaliar ▾" para trocar o Juiz em 1 clique
-  const reevalWrap = document.createElement("div");
-  reevalWrap.className = "review-dropdown";
-
-  const reevalBtn = document.createElement("button");
-  reevalBtn.type = "button";
-  reevalBtn.className = "btn-ghost-pill verdict-reeval-btn";
-  reevalBtn.disabled = isLoading || debate.status === "running";
-  reevalBtn.textContent = isLoading ? "Analisando..." : "Reavaliar ▾";
-
-  const reevalMenu = document.createElement("div");
-  reevalMenu.className = "review-dropdown-menu";
-  reevalMenu.hidden = true;
+  const sep = document.createElement("div");
+  sep.className = "review-menu-sep";
+  moreMenu.appendChild(sep);
 
   const judgeOptions = [
-    { id: "auto", label: "Auto (melhor cota)" },
-    { id: "gemini", label: "Juiz: Gemini" },
-    { id: "openrouter", label: "Juiz: OpenRouter" },
-    { id: "groq", label: "Juiz: Groq" }
+    { id: "auto", label: "Reavaliar · Auto" },
+    { id: "gemini", label: "Reavaliar · Gemini" },
+    { id: "openrouter", label: "Reavaliar · OpenRouter" },
+    { id: "groq", label: "Reavaliar · Groq" }
   ];
 
   for (const opt of judgeOptions) {
@@ -1382,33 +1584,55 @@ export function buildVerdictSection(debate, turn, turnResponses) {
     optBtn.textContent = opt.label;
     optBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      reevalMenu.hidden = true;
+      moreMenu.hidden = true;
       void handleGenerateVerdict(debate.id, turn.id, opt.id);
     });
-    reevalMenu.appendChild(optBtn);
+    moreMenu.appendChild(optBtn);
   }
 
-  reevalBtn.addEventListener("click", (e) => {
+  moreBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const willOpen = reevalMenu.hidden;
+    const willOpen = moreMenu.hidden;
     for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
       openMenu.hidden = true;
     }
-    reevalMenu.hidden = !willOpen;
+    moreMenu.hidden = !willOpen;
   });
 
-  reevalWrap.append(reevalBtn, reevalMenu);
-  headActions.appendChild(reevalWrap);
+  moreWrap.append(moreBtn, moreMenu);
+  headActions.appendChild(moreWrap);
 
   header.append(headLeft, headActions);
 
-  // Corpo com os 4 blocos estruturados
-  const grid = document.createElement("div");
-  grid.className = "verdict-grid";
+  // Destaque principal no topo: Síntese Prática + motivo da vencedora (sem caixas aninhadas)
+  const leadSection = document.createElement("div");
+  leadSection.className = "verdict-lead";
 
-  const makeListBlock = (title, items, modClass) => {
-    const box = document.createElement("div");
-    box.className = `verdict-block ${modClass}`;
+  if (verdict.practicalSummary) {
+    const sumP = document.createElement("p");
+    sumP.className = "verdict-lead-summary";
+    sumP.textContent = verdict.practicalSummary;
+    leadSection.appendChild(sumP);
+  }
+
+  if (verdict.winnerReason) {
+    const whyP = document.createElement("p");
+    whyP.className = "verdict-lead-reason";
+    const prefix =
+      verdict.winner && verdict.winner !== "tie"
+        ? `Por que ${PLATFORMS[verdict.winner] || verdict.winner}: `
+        : "Avaliação: ";
+    whyP.innerHTML = `<strong>${escapeHtml(prefix)}</strong>${escapeHtml(verdict.winnerReason)}`;
+    leadSection.appendChild(whyP);
+  }
+
+  // Consenso vs. Divergências em 2 colunas limpas separadas apenas por divisor fino (#2a2b2b)
+  const columns = document.createElement("div");
+  columns.className = "verdict-columns";
+
+  const makeListCol = (title, items, modClass) => {
+    const col = document.createElement("div");
+    col.className = `verdict-col ${modClass}`;
     const h = document.createElement("h4");
     h.textContent = title;
     const ul = document.createElement("ul");
@@ -1417,50 +1641,22 @@ export function buildVerdictSection(debate, turn, turnResponses) {
       li.textContent = txt;
       ul.appendChild(li);
     }
-    box.append(h, ul);
-    return box;
+    col.append(h, ul);
+    return col;
   };
 
-  grid.appendChild(
-    makeListBlock("1. Consenso", verdict.consensus, "verdict-block-consensus")
+  columns.appendChild(
+    makeListCol("Consenso", verdict.consensus, "verdict-col-consensus")
   );
-  grid.appendChild(
-    makeListBlock(
-      "2. Divergências & Alertas",
+  columns.appendChild(
+    makeListCol(
+      "Divergências & Alertas",
       verdict.divergences,
-      "verdict-block-divergences"
+      "verdict-col-divergences"
     )
   );
 
-  const reasonBox = document.createElement("div");
-  reasonBox.className = "verdict-block verdict-block-winner";
-  const reasonH = document.createElement("h4");
-  reasonH.textContent =
-    verdict.winner && verdict.winner !== "tie"
-      ? `3. Por que ${PLATFORMS[verdict.winner] || verdict.winner} venceu`
-      : "3. Avaliação comparativa";
-  const reasonP = document.createElement("p");
-  reasonP.textContent = verdict.winnerReason || "";
-  reasonBox.append(reasonH, reasonP);
-
-  const summaryBox = document.createElement("div");
-  summaryBox.className = "verdict-block verdict-block-summary";
-  const summaryH = document.createElement("h4");
-  summaryH.textContent = "4. Síntese prática";
-  const summaryP = document.createElement("p");
-  summaryP.textContent = verdict.practicalSummary || "";
-  summaryBox.append(summaryH, summaryP);
-
-  grid.append(reasonBox, summaryBox);
-
-  const footNote = document.createElement("div");
-  footNote.className = "verdict-footnote";
-  footNote.textContent =
-    verdict.winner && verdict.winner !== "tie"
-      ? "As demais respostas foram recolhidas automaticamente para limpeza visual — clique em qualquer card abaixo para expandir."
-      : "Clique em qualquer card abaixo para comparar as respostas completas.";
-
-  card.append(header, grid, footNote);
+  card.append(header, leadSection, columns);
   return card;
 }
 

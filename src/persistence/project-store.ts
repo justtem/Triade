@@ -16,6 +16,10 @@ import type {
   ProjectFileMeta
 } from "../shared/debate-types.js";
 import { extractPdfTextFromBuffer } from "../projects/pdf-extract.js";
+import {
+  decodeStorageText,
+  encodeStorageText
+} from "../security/data-protection.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{6,64}$/;
@@ -89,7 +93,8 @@ async function writeJsonAtomically(filePath: string, data: unknown): Promise<voi
   await mkdir(dirname(filePath), { recursive: true });
   const tempFile = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(tempFile, JSON.stringify(data, null, 2), "utf8");
+    const serialized = await encodeStorageText(JSON.stringify(data, null, 2));
+    await writeFile(tempFile, serialized, { encoding: "utf8", mode: 0o600 });
     await rename(tempFile, filePath);
   } finally {
     await rm(tempFile, { force: true }).catch(() => {});
@@ -130,7 +135,7 @@ async function readAllProjectsUnlocked(): Promise<Project[]> {
   }
 
   try {
-    const raw = await readFile(indexFile, "utf8");
+    const raw = await decodeStorageText(await readFile(indexFile, "utf8"));
     const clean = raw.replace(/^\uFEFF/, "").trim();
     if (!clean) return [];
     const parsed: unknown = JSON.parse(clean);
@@ -379,7 +384,8 @@ export async function addProjectFile(
 
     const targetPath = getProjectFilePath(projectId, fileId);
     await mkdir(dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, extractedText, "utf8");
+    const encodedText = await encodeStorageText(extractedText);
+    await writeFile(targetPath, encodedText, { encoding: "utf8", mode: 0o600 });
 
     const now = new Date().toISOString();
     const meta: ProjectFileMeta = {
@@ -438,7 +444,8 @@ export async function readProjectFileText(
 ): Promise<string | null> {
   try {
     const filePath = getProjectFilePath(projectId, fileId);
-    return await readFile(filePath, "utf8");
+    const raw = await readFile(filePath, "utf8");
+    return await decodeStorageText(raw);
   } catch {
     return null;
   }

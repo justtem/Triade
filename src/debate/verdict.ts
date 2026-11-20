@@ -188,43 +188,86 @@ export function buildVerdictUserPrompt(
   ].join("\n");
 }
 
+export const AUTO_VERDICT_MIN_QUOTA_RATIO = 0.15;
+
+/**
+ * Verifica se um turno concluído atende todos os requisitos para o Veredito Automático:
+ * - Opt-in ativado no turno (autoVerdict === true)
+ * - Sessão e turno concluídos (nunca interrompidos/pausados)
+ * - Ainda sem veredito gerado
+ * - Pelo menos 2 IAs diferentes responderam integralmente (sem interrupção)
+ */
+export function shouldTriggerAutoVerdict(
+  session: DebateSession,
+  turn: ChatTurn
+): boolean {
+  if (session.status !== "completed") return false;
+  if (!turn.autoVerdict || turn.status !== "completed" || turn.verdict) {
+    return false;
+  }
+  const responses = getLatestResponsesPerPlatformForTurn(session, turn).filter(
+    (r) => !r.interrupted && r.content.trim().length > 0
+  );
+  return responses.length >= 2;
+}
+
 /**
  * Ordena os juízes automáticos por melhor custo-benefício no momento:
  * - Prioriza Gemini / OpenRouter (janela de contexto maior para ler as 3 respostas inteiras),
- *   ponderando pela % de cota diária ainda disponível no UsageGate.
+ *   ponderando pela % de cota diária ainda disponível no UsageGate (requisições e tokens).
+ * - Quando minRemainingQuotaRatio é informado (ex.: 0.15 no Veredito Automático),
+ *   ignora juízes abaixo dessa margem para preservar a cota gratuita.
  * - Se preferredJudge for informado, coloca-o em 1º lugar.
  */
 export async function rankJudgeCandidates(
-  preferredJudge?: AutoPlatform
+  preferredJudge?: AutoPlatform,
+  options: { minRemainingQuotaRatio?: number } = {}
 ): Promise<AutoPlatform[]> {
   initProviders();
   const statuses = await getProvidersStatus();
+  const minRatio = options.minRemainingQuotaRatio ?? 0;
 
   const available = statuses.filter(
     (s) => s.ready && Boolean(getProvider(s.id))
   );
 
-  const scored = available.map((s) => {
-    const cap = Math.max(1, s.usage?.requestsDailyCap ?? 100);
-    const used = s.usage?.requestsToday ?? 0;
-    const remainingRatio = Math.max(0, 1 - used / cap);
-    // Bônus de contexto para OpenRouter e Gemini (Groq gratuito tem 8k TPM)
-    const contextBonus = s.id === "openrouter" ? 0.18 : s.id === "gemini" ? 0.14 : 0;
-    return {
-      id: s.id,
-      score: remainingRatio + contextBonus
-    };
-  });
+  const scored = available
+    .map((s) => {
+      const cap = Math.max(1, s.usage?.requestsDailyCap ?? 100);
+      const used = s.usage?.requestsToday ?? 0;
+      const reqRatio = Math.max(0, 1 - used / cap);
+      const tokCap = s.usage?.tokensDailyCap;
+      const tokUsed = s.usage?.tokensToday ?? 0;
+      const tokRatio =
+        tokCap && tokCap > 0 ? Math.max(0, 1 - tokUsed / tokCap) : 1;
+      const remainingRatio = Math.min(reqRatio, tokRatio);
+
+      // Bônus de contexto para OpenRouter e Gemini (Groq gratuito tem 8k TPM)
+      const contextBonus =
+        s.id === "openrouter" ? 0.18 : s.id === "gemini" ? 0.14 : 0;
+      return {
+        id: s.id,
+        remainingRatio,
+        score: remainingRatio + contextBonus
+      };
+    })
+    .filter((item) => item.remainingRatio >= minRatio);
 
   scored.sort((a, b) => b.score - a.score);
   const ordered = scored.map((s) => s.id);
 
   if (preferredJudge && getProvider(preferredJudge)) {
-    return [preferredJudge, ...ordered.filter((id) => id !== preferredJudge)];
+    if (minRatio <= 0 || ordered.includes(preferredJudge)) {
+      return [preferredJudge, ...ordered.filter((id) => id !== preferredJudge)];
+    }
   }
 
-  return ordered.length > 0
-    ? ordered
+  if (ordered.length > 0) {
+    return ordered;
+  }
+
+  return minRatio > 0
+    ? []
     : AUTO_PLATFORMS.filter((id) => Boolean(getProvider(id)));
 }
 
@@ -275,7 +318,11 @@ function ensureTurnsForVerdict(session: DebateSession): ChatTurn[] {
 
 export async function generateTurnVerdict(
   debateId: string,
-  options: { turnId?: string; judge?: AutoPlatform } = {}
+  options: {
+    turnId?: string;
+    judge?: AutoPlatform;
+    minRemainingQuotaRatio?: number;
+  } = {}
 ): Promise<{ debate: DebateSession; verdict: TurnVerdict }> {
   const initialSession = await readDebateSessionById(debateId);
   if (!initialSession) {
@@ -303,9 +350,17 @@ export async function generateTurnVerdict(
     );
   }
 
-  const judgeOrder = await rankJudgeCandidates(options.judge);
+  const judgeOrder = await rankJudgeCandidates(options.judge, {
+    ...(options.minRemainingQuotaRatio !== undefined
+      ? { minRemainingQuotaRatio: options.minRemainingQuotaRatio }
+      : {})
+  });
   if (judgeOrder.length === 0) {
-    throw new Error("Nenhuma IA automática está configurada para gerar o Veredito.");
+    throw new Error(
+      options.minRemainingQuotaRatio
+        ? "Cota livre insuficiente para Veredito Automático."
+        : "Nenhuma IA automática está configurada para gerar o Veredito."
+    );
   }
 
   const allowedPlatforms = candidateResponses.map((r) => r.platform);

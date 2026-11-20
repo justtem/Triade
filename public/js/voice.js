@@ -1,5 +1,5 @@
 import { $, PLATFORMS, SVG_ICONS, getAiBrandSvg } from "./state.js";
-import { fetchJson, getStoredSessionToken } from "./api.js";
+import { fetchJson } from "./api.js";
 
 const MAX_RECORD_SECONDS = 120;
 const MIN_RECORD_MS = 380;
@@ -308,13 +308,12 @@ export function stopSpeech() {
 async function fetchNeuralAudioBlob(track, signal) {
   const persona = track.persona || "gemini";
   const voiceKey = voiceCast[persona] || DEFAULT_VOICE_CAST[persona] || "thalita";
-  const sessionToken = getStoredSessionToken();
 
   const response = await fetch("/audio/speak", {
     method: "POST",
+    credentials: "same-origin",
     headers: {
-      "Content-Type": "application/json",
-      ...(sessionToken ? { "X-AI-Council-Session": sessionToken } : {})
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
       text: track.text,
