@@ -33,6 +33,10 @@ export function isAutoPlatform(
 
 export type DebateFocus = "geral" | "backend" | "frontend";
 
+export type ResponseMode = "normal" | "prompt_markdown";
+
+export type InteractionMode = "direct" | "debate";
+
 export type DebateStatus =
   | "running"
   | "paused_limit"
@@ -60,6 +64,7 @@ export interface ParticipantState {
 
 export interface DebateTask {
   id: string;
+  turnId?: string;
   round: number;
   stage: Exclude<DebateStage, "completed">;
   platform: AIPlatform;
@@ -79,10 +84,19 @@ export interface DebateTask {
   maxTokens?: number;
   attempts?: number;
   lastError?: string;
+  /** Quando true, concluir esta tarefa finaliza o turno sem gerar novas rodadas/síntese. */
+  singleTaskOnly?: boolean;
+}
+
+export interface ChatAttachment {
+  name: string;
+  content: string;
+  size: number;
 }
 
 export interface DebateResponse {
   id: string;
+  turnId?: string;
   taskId: string;
   round: number;
   stage: Exclude<DebateStage, "completed">;
@@ -92,6 +106,32 @@ export interface DebateResponse {
   submittedAt: string;
   model?: string;
   tokens?: number;
+}
+
+export interface ChatTurn {
+  id: string;
+  index: number;
+  prompt: string;
+  rules: string;
+  participants: AIPlatform[];
+  responseMode: ResponseMode;
+  interactionMode: InteractionMode;
+  totalRounds: number;
+  focus: DebateFocus;
+  currentRound: number;
+  currentStage: DebateStage;
+  status: DebateStatus;
+  attachments?: ChatAttachment[];
+  conclusion?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface SharedMemoryState {
+  summary: string;
+  coveredTurnCount: number;
+  updatedAt: string;
+  model?: string;
 }
 
 export interface DebatePauseInfo {
@@ -121,8 +161,32 @@ export interface DebateSession {
   completedAt?: string;
 
   focus?: DebateFocus;
+  responseMode?: ResponseMode;
+  interactionMode?: InteractionMode;
+  turns?: ChatTurn[];
+  sharedMemory?: SharedMemoryState;
 
   /** 2 = debates criados pela engine nova (o runner só automatiza estes). */
+  engineVersion?: number;
+}
+
+export interface DebateSummary {
+  id: string;
+  title: string;
+  topic: string;
+  participants: AIPlatform[];
+  totalRounds: number;
+  currentRound: number;
+  currentStage: DebateStage;
+  status: DebateStatus;
+  focus?: DebateFocus;
+  responseMode?: ResponseMode;
+  interactionMode?: InteractionMode;
+  turnCount: number;
+  sharedMemoryTurns?: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
   engineVersion?: number;
 }
 
@@ -133,6 +197,20 @@ export interface CreateDebateInput {
   participants: AIPlatform[];
   totalRounds: number;
   focus?: DebateFocus;
+  responseMode?: ResponseMode;
+  interactionMode?: InteractionMode;
+  attachments?: ChatAttachment[];
+}
+
+export interface ContinueDebateInput {
+  message: string;
+  rules?: string;
+  participants: AIPlatform[];
+  totalRounds?: number;
+  focus?: DebateFocus;
+  responseMode?: ResponseMode;
+  interactionMode?: InteractionMode;
+  attachments?: ChatAttachment[];
 }
 
 export interface SubmitResponseInput {

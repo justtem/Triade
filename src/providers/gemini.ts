@@ -45,16 +45,51 @@ export function makeGemini(options: GeminiOptions): Provider {
         headroom: 1_000,
         call: async (model) => {
           const noThinking = canDisableThinking(model);
+          const config = {
+            systemInstruction: request.system,
+            maxOutputTokens: request.maxTokens + (noThinking ? 0 : 1_500),
+            temperature: 0.4,
+            ...(noThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {})
+          };
+
+          if (request.onDelta) {
+            const stream = await ai.models.generateContentStream({
+              model,
+              contents: request.user,
+              config
+            });
+
+            let fullText = "";
+            let inputTokens: number | undefined;
+            let outputTokens: number | undefined;
+            let totalTokens: number | undefined;
+
+            for await (const chunk of stream) {
+              const piece = chunk.text ?? "";
+              if (piece) {
+                fullText += piece;
+                request.onDelta(piece);
+              }
+              if (chunk.usageMetadata) {
+                inputTokens = chunk.usageMetadata.promptTokenCount ?? inputTokens;
+                outputTokens =
+                  chunk.usageMetadata.candidatesTokenCount ?? outputTokens;
+                totalTokens = chunk.usageMetadata.totalTokenCount ?? totalTokens;
+              }
+            }
+
+            return {
+              text: fullText,
+              inputTokens,
+              outputTokens,
+              totalTokens
+            };
+          }
 
           const response = await ai.models.generateContent({
             model,
             contents: request.user,
-            config: {
-              systemInstruction: request.system,
-              maxOutputTokens: request.maxTokens + (noThinking ? 0 : 1_500),
-              temperature: 0.4,
-              ...(noThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {})
-            }
+            config
           });
 
           return {

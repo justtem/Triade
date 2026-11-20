@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { budgetForPlatform } from "../shared/context-budget.js";
 import type { AutoPlatform } from "../shared/debate-types.js";
 import { makeGemini } from "./gemini.js";
 import { makeOpenAICompat } from "./openai-compat.js";
@@ -238,6 +239,11 @@ export interface ProviderStatus {
   reason: string | null;
   models: string[];
   usage: GateSnapshot | null;
+  contextBudget: {
+    historyChars: number;
+    maxOutputTokens: number;
+    synthesisOutputTokens: number;
+  };
 }
 
 export async function getProvidersStatus(): Promise<ProviderStatus[]> {
@@ -248,6 +254,7 @@ export async function getProvidersStatus(): Promise<ProviderStatus[]> {
 
   for (const id of ids) {
     const gate = gates.get(id);
+    const budget = budgetForPlatform(id);
 
     result.push({
       id,
@@ -255,7 +262,12 @@ export async function getProvidersStatus(): Promise<ProviderStatus[]> {
       ready: providers.has(id),
       reason: issues.get(id) ?? null,
       models: configuredModels.get(id) ?? [],
-      usage: gate ? await gate.snapshot() : null
+      usage: gate ? await gate.snapshot() : null,
+      contextBudget: {
+        historyChars: budget.historyChars,
+        maxOutputTokens: budget.maxTokens.initial_response,
+        synthesisOutputTokens: budget.maxTokens.synthesis
+      }
     });
   }
 

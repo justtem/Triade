@@ -1,5 +1,6 @@
-const IDLE_REFRESH_INTERVAL = 4500;
-const ACTIVE_REFRESH_INTERVAL = 1500;
+const IDLE_REFRESH_INTERVAL = 5000;
+const ACTIVE_REFRESH_INTERVAL = 2000;
+const SSE_FALLBACK_REFRESH_INTERVAL = 15000;
 const LIVE_TIMER_INTERVAL = 100;
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -99,6 +100,58 @@ const collapsedResponseIds = new Set();
 const stackedRoundKeys = new Set(); // Permite alternar Horizontal Scroll <-> Empilhado por rodada
 const localTaskStartMs = new Map();
 
+const RESPONSE_MODE_STORAGE_KEY = "ai-council-response-mode";
+const INTERACTION_MODE_STORAGE_KEY = "ai-council-interaction-mode";
+
+const RESPONSE_MODE_LABELS = {
+  normal: "Normal",
+  prompt_markdown: "Prompt MD"
+};
+
+const INTERACTION_MODE_LABELS = {
+  direct: "Direto",
+  debate: "Debate"
+};
+
+function loadStoredOption(key, fallback, allowed) {
+  try {
+    const val = localStorage.getItem(key);
+    if (val && allowed.includes(val)) return val;
+  } catch {
+    // Ignora
+  }
+  return fallback;
+}
+
+function saveStoredOption(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignora
+  }
+}
+
+let selectedResponseMode = loadStoredOption(
+  RESPONSE_MODE_STORAGE_KEY,
+  "normal",
+  ["normal", "prompt_markdown"]
+);
+let selectedInteractionMode = loadStoredOption(
+  INTERACTION_MODE_STORAGE_KEY,
+  "direct",
+  ["direct", "debate"]
+);
+
+const debateDetailsById = new Map();
+const activeStreamsByTaskId = new Map();
+const pendingStreamPaintIds = new Set();
+let pendingAttachments = [];
+let streamPaintRafId = null;
+let eventSource = null;
+let isSseConnected = false;
+let sseReconnectTimer = null;
+let detailFetchInFlightId = null;
+
 let currentView = "chat"; // "chat" | "dashboard" | "history"
 let selectedDebateId = null;
 let hasInitializedSelection = false;
@@ -110,12 +163,100 @@ let lastRenderedChatSignature = "";
 let lastZeroShowcaseSignature = "";
 let scrollFocusedPlatform = null;
 
-// Estado otimista imediato enquanto a requisição POST /debates está sendo enviada
+// Estado otimista imediato enquanto a requisição POST está sendo enviada
 let optimisticSubmission = null;
 let refreshTimerId = null;
 let isRefreshing = false;
 let pendingImmediateRefresh = false;
 let scrollRevealObserver = null;
+
+function getSessionTurns(debate) {
+  if (!debate) return [];
+  if (Array.isArray(debate.turns) && debate.turns.length > 0) {
+    return debate.turns;
+  }
+  return [
+    {
+      id: "legacy_turn_1",
+      index: 1,
+      prompt: debate.topic || "",
+      rules: debate.rules || "",
+      participants: Array.isArray(debate.participants) ? debate.participants : [],
+      responseMode: debate.responseMode || "prompt_markdown",
+      interactionMode: debate.interactionMode || "debate",
+      totalRounds: debate.totalRounds || 1,
+      focus: debate.focus || "geral",
+      currentRound: debate.currentRound || 1,
+      currentStage: debate.currentStage || "completed",
+      status: debate.status || "completed",
+      conclusion: debate.conclusion,
+      createdAt: debate.createdAt,
+      completedAt: debate.completedAt
+    }
+  ];
+}
+
+function getTasksForTurn(debate, turn) {
+  const tasks = Array.isArray(debate?.tasks) ? debate.tasks : [];
+  const isFirst = turn.index === 1;
+  return tasks.filter(
+    (t) => t.turnId === turn.id || (isFirst && !t.turnId)
+  );
+}
+
+function getResponsesForTurn(debate, turn) {
+  const responses = Array.isArray(debate?.responses) ? debate.responses : [];
+  const isFirst = turn.index === 1;
+  return responses.filter(
+    (r) => r.turnId === turn.id || (isFirst && !r.turnId)
+  );
+}
+
+function syncComposerModeUi() {
+  for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
+    const mode = btn.getAttribute("data-response-mode");
+    const active = mode === selectedResponseMode;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+
+  for (const btn of $$("#interaction-mode-toggle .mode-seg-btn")) {
+    const mode = btn.getAttribute("data-interaction-mode");
+    const active = mode === selectedInteractionMode;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+
+  const roundsWrap = $("#rounds-control-wrap");
+  const focusWrap = $("#focus-control-wrap");
+  const extraDivider = $("#composer-extra-divider");
+
+  const showRounds = selectedInteractionMode === "debate";
+  const showFocus = selectedResponseMode === "prompt_markdown";
+
+  if (roundsWrap) roundsWrap.hidden = !showRounds;
+  if (focusWrap) focusWrap.hidden = !showFocus;
+  if (extraDivider) extraDivider.hidden = !showRounds && !showFocus;
+
+  const isContinuing = Boolean(getActiveOrSelectedDebate());
+  const submitSpan = $("#composer-submit-btn span:first-child");
+  if (submitSpan) {
+    submitSpan.textContent = isContinuing
+      ? "Enviar"
+      : selectedInteractionMode === "debate"
+        ? "Debater"
+        : "Enviar";
+  }
+
+  const topicInput = $("#debate-topic");
+  if (topicInput) {
+    topicInput.placeholder = isContinuing
+      ? "Continue a conversa... (Enter envia)"
+      : selectedResponseMode === "normal"
+        ? "Pergunte algo... (Enter envia, Shift + Enter quebra linha)"
+        : "Descreva o problema... (Enter envia, Shift + Enter quebra linha)";
+  }
+}
 
 // ============================================================================
 // FORMATAÇÃO DE DATAS E CRONÔMETROS DE ALTA PRECISÃO
@@ -502,19 +643,56 @@ function buildChatRoundMinimap(debate) {
     return;
   }
 
+  const turns = debate ? getSessionTurns(debate) : [];
+
+  // Em chat direto de 1 turno, oculta o minimapa para manter o visual limpo.
+  if (
+    !debate &&
+    optimisticSubmission &&
+    optimisticSubmission.interactionMode === "direct" &&
+    !optimisticSubmission.parentDebateId
+  ) {
+    minimap.hidden = true;
+    stepsContainer.replaceChildren();
+    return;
+  }
+
+  if (
+    debate &&
+    turns.length === 1 &&
+    turns[0].interactionMode === "direct" &&
+    !optimisticSubmission
+  ) {
+    minimap.hidden = true;
+    stepsContainer.replaceChildren();
+    return;
+  }
+
   minimap.hidden = false;
   stepsContainer.replaceChildren();
 
-  const targetDebate = debate || {
-    totalRounds: optimisticSubmission?.totalRounds || 2,
-    conclusion: null
-  };
-
-  const steps = [{ id: "step-user", label: "Problema" }];
-  for (let r = 1; r <= targetDebate.totalRounds; r++) {
-    steps.push({ id: `step-round-${r}`, label: `Rodada ${r}` });
+  let steps = [];
+  if (turns.length > 1 || (debate && optimisticSubmission?.parentDebateId)) {
+    steps = turns.map((t) => ({
+      id: `step-turn-${t.index}`,
+      label: `Msg ${t.index}`
+    }));
+    if (optimisticSubmission?.parentDebateId) {
+      steps.push({
+        id: `step-turn-${turns.length + 1}`,
+        label: `Msg ${turns.length + 1}`
+      });
+    }
+  } else {
+    const singleTurn = turns[0] || {
+      totalRounds: optimisticSubmission?.totalRounds || 2
+    };
+    steps = [{ id: "step-user", label: "Início" }];
+    for (let r = 1; r <= (singleTurn.totalRounds || 1); r++) {
+      steps.push({ id: `step-round-${r}`, label: `Rodada ${r}` });
+    }
+    steps.push({ id: "step-synthesis", label: "Síntese" });
   }
-  steps.push({ id: "step-synthesis", label: "Síntese" });
 
   steps.forEach((st, idx) => {
     if (idx > 0) {
@@ -701,6 +879,12 @@ function renderZeroStateHorizontalShowcase() {
       const titleInput = $("#debate-title");
       const topicInput = $("#debate-topic");
       const focusSelect = $("#debate-focus");
+
+      selectedResponseMode = "prompt_markdown";
+      selectedInteractionMode = "debate";
+      saveStoredOption(RESPONSE_MODE_STORAGE_KEY, selectedResponseMode);
+      saveStoredOption(INTERACTION_MODE_STORAGE_KEY, selectedInteractionMode);
+      syncComposerModeUi();
 
       if (titleInput) titleInput.value = bp.title;
       if (focusSelect) focusSelect.value = bp.focus;
@@ -1196,7 +1380,9 @@ function selectDebate(debateId) {
     updateStageTopbar();
     updateRightAiPanel();
   }
+  syncComposerModeUi();
   closeMobileDrawers();
+  void loadDebateDetail(debateId);
 }
 
 function startNewDebateView() {
@@ -1210,6 +1396,7 @@ function startNewDebateView() {
   renderChatStage();
   updateStageTopbar();
   updateRightAiPanel();
+  syncComposerModeUi();
 
   const topicInput = $("#debate-topic");
   if (topicInput) {
@@ -1228,17 +1415,19 @@ function closeMobileDrawers() {
 // ============================================================================
 
 function getActiveOrSelectedDebate() {
-  if (selectedDebateId) {
-    const found = latestDebates.find((d) => d.id === selectedDebateId);
-    if (found) return found;
-  }
-  return null;
+  if (!selectedDebateId) return null;
+  const full = debateDetailsById.get(selectedDebateId);
+  if (full) return full;
+  const summary = latestDebates.find((d) => d.id === selectedDebateId);
+  return summary || null;
 }
 
 function getReferenceDebateForRightPanel() {
   const selected = getActiveOrSelectedDebate();
   if (selected) return selected;
-  return latestDebates.find((d) => d.status === "running") || null;
+  const runningSummary = latestDebates.find((d) => d.status === "running");
+  if (!runningSummary) return null;
+  return debateDetailsById.get(runningSummary.id) || runningSummary;
 }
 
 function updateStageTopbar() {
@@ -1271,11 +1460,26 @@ function updateStageTopbar() {
   const debate = getActiveOrSelectedDebate();
 
   if (!debate) {
-    titleEl.textContent = "Novo Debate";
+    titleEl.textContent = "Nova Conversa";
     return;
   }
 
   titleEl.textContent = debate.title;
+
+  const memBtn = document.createElement("button");
+  memBtn.type = "button";
+  memBtn.className = "btn-secondary";
+  const covered = debate.sharedMemory?.coveredTurnCount || 0;
+  const hasManual = Boolean(debate.sharedMemory?.summary);
+  memBtn.textContent =
+    covered > 0
+      ? `Memória · ${covered}t`
+      : hasManual
+        ? "Memória · ativa"
+        : "Memória";
+  memBtn.title = "Ver ou editar a Memória Compartilhada desta conversa";
+  memBtn.addEventListener("click", () => openMemoryModal(debate.id));
+  actionsWrap.appendChild(memBtn);
 
   const statusBadge = document.createElement("span");
   statusBadge.className = `debate-status-badge ${debate.status}`;
@@ -1356,12 +1560,25 @@ function renderSidebarDebatesList() {
     metaRow.className = "conversation-meta";
 
     const statusText = document.createElement("span");
+    const turnCount =
+      typeof debate.turnCount === "number"
+        ? debate.turnCount
+        : Array.isArray(debate.turns)
+          ? debate.turns.length
+          : 1;
+    const isDirect = debate.interactionMode === "direct";
     statusText.textContent =
       debate.status === "running"
-        ? `R${debate.currentRound}/${debate.totalRounds} • Pensando`
+        ? isDirect
+          ? "Respondendo..."
+          : `R${debate.currentRound}/${debate.totalRounds} • Pensando`
         : debate.status === "completed"
-          ? `${debate.totalRounds} rodadas`
-          : `R${debate.currentRound}/${debate.totalRounds} • Pausado`;
+          ? turnCount > 1
+            ? `${turnCount} msgs`
+            : isDirect
+              ? RESPONSE_MODE_LABELS[debate.responseMode] || "Direto"
+              : `${debate.totalRounds} rodadas`
+          : "Pausado";
 
     const dateText = document.createElement("span");
     dateText.textContent = formatShortTime(debate.updatedAt || debate.createdAt);
@@ -1418,11 +1635,13 @@ function saveCurrentDraftsFromDom() {
   }
 }
 
-function buildUserPromptMessage(debate) {
+function buildTurnUserMessage(debate, turn, isMultiTurn) {
   const userCard = document.createElement("article");
   userCard.className = "chat-user-message";
-  userCard.id = "step-user";
-  userCard.setAttribute("data-minimap-section", "step-user");
+  if (!isMultiTurn) {
+    userCard.id = "step-user";
+    userCard.setAttribute("data-minimap-section", "step-user");
+  }
   userCard.setAttribute("data-scroll-reveal", "");
 
   const header = document.createElement("div");
@@ -1430,44 +1649,63 @@ function buildUserPromptMessage(debate) {
 
   const author = document.createElement("span");
   author.className = "chat-user-author";
-  author.innerHTML = `${SVG_ICONS.user}<span>Problema Enviado</span>`;
+  author.innerHTML = `${SVG_ICONS.user}<span>Você</span>`;
 
   const time = document.createElement("span");
   time.className = "chat-user-time";
-  time.textContent = formatDate(debate.createdAt);
+  time.textContent = formatShortTime(turn.createdAt) || formatDate(turn.createdAt);
 
   header.append(author, time);
 
-  const title = document.createElement("h3");
-  title.className = "chat-user-title";
-  title.textContent = debate.title;
-
   const topic = document.createElement("div");
   topic.className = "chat-user-topic";
-  topic.textContent = debate.topic;
+  topic.textContent = turn.prompt;
 
   const tagsRow = document.createElement("div");
   tagsRow.className = "chat-user-tags";
 
-  const participantsNames = (debate.participants || [])
+  const modeLabel = RESPONSE_MODE_LABELS[turn.responseMode] || "Prompt MD";
+  const dynLabel = INTERACTION_MODE_LABELS[turn.interactionMode] || "Debate";
+
+  const tagMode = document.createElement("span");
+  tagMode.className = "chat-config-tag";
+  tagMode.textContent = `${modeLabel} · ${dynLabel}`;
+  tagsRow.appendChild(tagMode);
+
+  const participantsNames = (turn.participants || [])
     .map((p) => PLATFORMS[p] || p)
     .join(", ");
+  if (participantsNames) {
+    const tagParticipants = document.createElement("span");
+    tagParticipants.className = "chat-config-tag";
+    tagParticipants.textContent = participantsNames;
+    tagsRow.appendChild(tagParticipants);
+  }
 
-  const tagParticipants = document.createElement("span");
-  tagParticipants.className = "chat-config-tag";
-  tagParticipants.textContent = `IAs: ${participantsNames}`;
+  if (turn.interactionMode === "debate") {
+    const tagRounds = document.createElement("span");
+    tagRounds.className = "chat-config-tag";
+    tagRounds.textContent = `${turn.totalRounds}x + Síntese`;
+    tagsRow.appendChild(tagRounds);
+  }
 
-  const tagRounds = document.createElement("span");
-  tagRounds.className = "chat-config-tag";
-  tagRounds.textContent = `${debate.totalRounds} rodada(s) + Síntese`;
+  if (turn.responseMode === "prompt_markdown" && turn.focus && turn.focus !== "geral") {
+    const tagFocus = document.createElement("span");
+    tagFocus.className = "chat-config-tag";
+    tagFocus.textContent = FOCUS_LABELS[turn.focus] || turn.focus;
+    tagsRow.appendChild(tagFocus);
+  }
 
-  const tagFocus = document.createElement("span");
-  tagFocus.className = "chat-config-tag";
-  tagFocus.textContent = `Foco: ${FOCUS_LABELS[debate.focus] || "Geral"}`;
+  if (Array.isArray(turn.attachments) && turn.attachments.length > 0) {
+    for (const file of turn.attachments) {
+      const tagFile = document.createElement("span");
+      tagFile.className = "chat-config-tag";
+      tagFile.textContent = `[${file.name}]`;
+      tagsRow.appendChild(tagFile);
+    }
+  }
 
-  tagsRow.append(tagParticipants, tagRounds, tagFocus);
-
-  userCard.append(header, title, topic, tagsRow);
+  userCard.append(header, topic, tagsRow);
   return userCard;
 }
 
@@ -1737,16 +1975,129 @@ function buildPendingManualTasksForStage(debate, stageTasks) {
   return tasksGrid;
 }
 
-function buildResponseCard(debate, resp) {
+function renderStreamingMarkdownInto(containerEl, rawText) {
+  if (!containerEl) return;
+  const wasNearBottom =
+    containerEl.scrollHeight - containerEl.scrollTop - containerEl.clientHeight < 48;
+
+  let text = String(rawText || "");
+  // Fecha temporariamente bloco de código aberto enquanto está sendo digitado
+  const fenceMatches = text.match(/^```/gm);
+  if (fenceMatches && fenceMatches.length % 2 === 1) {
+    text += "\n```";
+  }
+
+  containerEl.replaceChildren();
+  if (text.trim()) {
+    const mdDom = buildMarkdownDom(text);
+    const caret = document.createElement("span");
+    caret.className = "streaming-caret";
+    caret.setAttribute("aria-hidden", "true");
+    const lastChild = mdDom.lastElementChild;
+    if (lastChild && lastChild.tagName === "P") {
+      lastChild.appendChild(caret);
+    } else {
+      mdDom.appendChild(caret);
+    }
+    containerEl.appendChild(mdDom);
+  } else {
+    const placeholder = document.createElement("div");
+    placeholder.className = "markdown-content";
+    const p = document.createElement("p");
+    const caret = document.createElement("span");
+    caret.className = "streaming-caret";
+    caret.setAttribute("aria-hidden", "true");
+    p.appendChild(caret);
+    placeholder.appendChild(p);
+    containerEl.appendChild(placeholder);
+  }
+
+  if (wasNearBottom) {
+    containerEl.scrollTop = containerEl.scrollHeight;
+  }
+}
+
+function scheduleStreamBodyPaint(taskId) {
+  pendingStreamPaintIds.add(taskId);
+  if (streamPaintRafId !== null) return;
+  streamPaintRafId = requestAnimationFrame(() => {
+    streamPaintRafId = null;
+    const ids = Array.from(pendingStreamPaintIds);
+    pendingStreamPaintIds.clear();
+
+    let needsFullRerender = false;
+    for (const id of ids) {
+      const stream = activeStreamsByTaskId.get(id);
+      if (!stream || stream.debateId !== selectedDebateId) continue;
+      const bodyEl = document.getElementById(`stream-body-${id}`);
+      if (!bodyEl) {
+        needsFullRerender = true;
+      } else {
+        renderStreamingMarkdownInto(bodyEl, stream.content);
+      }
+    }
+
+    if (needsFullRerender) {
+      lastRenderedChatSignature = "";
+      renderChatStage();
+    }
+  });
+}
+
+function getStreamingResponsesForStage(debate, turn, roundNum, stageMode, savedResponses) {
+  const savedTaskIds = new Set((savedResponses || []).map((r) => r.taskId));
+  const isFirstTurn = turn.index === 1;
+  const out = [];
+
+  for (const stream of activeStreamsByTaskId.values()) {
+    if (stream.debateId !== debate.id) continue;
+    if (savedTaskIds.has(stream.taskId)) continue;
+
+    const matchesTurn =
+      stream.turnId === turn.id || (isFirstTurn && !stream.turnId);
+    if (!matchesTurn) continue;
+
+    if (stageMode === "synthesis") {
+      if (stream.stage !== "synthesis") continue;
+    } else {
+      if (stream.stage === "synthesis") continue;
+      if (stream.round !== roundNum) continue;
+    }
+
+    out.push({
+      id: `stream_${stream.taskId}`,
+      taskId: stream.taskId,
+      turnId: stream.turnId,
+      round: stream.round,
+      stage: stream.stage,
+      platform: stream.platform,
+      content: stream.content,
+      submittedAt: stream.startedAt,
+      isStreaming: true
+    });
+  }
+
+  return out;
+}
+
+function buildResponseCard(debate, resp, turn) {
+  const isStreaming = Boolean(resp.isStreaming);
   const matchingTask = (debate.tasks || []).find((t) => t.id === resp.taskId);
-  const durationSec = getCompletedTaskDurationSec(matchingTask, resp);
+  const durationSec = isStreaming
+    ? null
+    : getCompletedTaskDurationSec(matchingTask, resp);
+  const isDirect = turn?.interactionMode === "direct";
+  const isNormal = turn?.responseMode === "normal";
 
   const card = document.createElement("article");
-  card.className = "ai-response-card";
+  card.className = `ai-response-card${isStreaming ? " is-streaming" : ""}`;
   card.id = `resp-card-${resp.id}`;
   card.setAttribute("data-response-platform", resp.platform);
   card.setAttribute("data-scroll-reveal", "");
-  if (collapsedResponseIds.has(resp.id)) {
+  if (isStreaming) {
+    card.classList.add("is-revealed");
+  }
+  if (!isStreaming && collapsedResponseIds.has(resp.id)) {
     card.classList.add("is-collapsed");
   }
 
@@ -1771,10 +2122,15 @@ function buildResponseCard(debate, resp) {
   nameEl.textContent = PLATFORMS[resp.platform] || resp.platform;
   titleRow.appendChild(nameEl);
 
-  if (durationSec !== null) {
+  if (isStreaming) {
+    const liveBadge = document.createElement("span");
+    liveBadge.className = "streaming-live-pill";
+    liveBadge.textContent = "Ao vivo";
+    titleRow.appendChild(liveBadge);
+  } else if (durationSec !== null) {
     const thoughtBadge = document.createElement("span");
     thoughtBadge.className = "thought-duration-pill";
-    thoughtBadge.textContent = `Pensou por ${formatSecondsCompact(durationSec)}`;
+    thoughtBadge.textContent = formatSecondsCompact(durationSec);
     titleRow.appendChild(thoughtBadge);
   }
 
@@ -1782,12 +2138,16 @@ function buildResponseCard(debate, resp) {
   subMeta.className = "ai-response-submeta";
 
   const roundLabel = document.createElement("span");
-  roundLabel.textContent = `Rodada ${resp.round} (${STAGE_LABELS[resp.stage] || resp.stage}) • ${formatDate(resp.submittedAt)}`;
+  roundLabel.textContent = isStreaming
+    ? "Escrevendo..."
+    : isDirect
+      ? formatShortTime(resp.submittedAt) || formatDate(resp.submittedAt)
+      : `R${resp.round} · ${formatShortTime(resp.submittedAt) || formatDate(resp.submittedAt)}`;
   subMeta.appendChild(roundLabel);
 
-  if (resp.tokens) {
+  if (!isStreaming && resp.tokens) {
     const tokensSpan = document.createElement("span");
-    tokensSpan.textContent = `• ${resp.tokens} tokens`;
+    tokensSpan.textContent = `• ${resp.tokens} tok`;
     subMeta.appendChild(tokensSpan);
   }
 
@@ -1797,36 +2157,97 @@ function buildResponseCard(debate, resp) {
   const actions = document.createElement("div");
   actions.className = "ai-response-actions";
 
-  const copyBtn = createCopyMarkdownButton(
-    resp.content,
-    "Copiar Markdown",
-    "btn-secondary"
-  );
+  if (!isStreaming) {
+    const isBusy = debate.status === "running";
 
-  const toggleBtn = document.createElement("button");
-  toggleBtn.type = "button";
-  toggleBtn.className = "icon-btn";
-  toggleBtn.setAttribute("aria-label", "Minimizar ou expandir resposta");
-  toggleBtn.innerHTML = SVG_ICONS.chevronDown;
+    const regenBtn = document.createElement("button");
+    regenBtn.type = "button";
+    regenBtn.className = "icon-btn";
+    regenBtn.title = `Regenerar só ${PLATFORMS[resp.platform] || resp.platform}`;
+    regenBtn.setAttribute("aria-label", regenBtn.title);
+    regenBtn.textContent = "↻";
+    regenBtn.disabled = isBusy;
+    regenBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void handleRegenerateResponse(debate.id, resp.id);
+    });
 
-  const toggleCollapse = () => {
-    if (collapsedResponseIds.has(resp.id)) {
-      collapsedResponseIds.delete(resp.id);
-    } else {
-      collapsedResponseIds.add(resp.id);
+    const otherAuto = AUTO_PLATFORM_IDS.filter((p) => p !== resp.platform);
+    const reviewWrap = document.createElement("div");
+    reviewWrap.className = "review-dropdown-wrap";
+
+    const reviewBtn = document.createElement("button");
+    reviewBtn.type = "button";
+    reviewBtn.className = "btn-secondary";
+    reviewBtn.textContent = "Revisar";
+    reviewBtn.title = "Pedir para outra IA revisar esta resposta";
+    reviewBtn.disabled = isBusy;
+
+    const reviewMenu = document.createElement("div");
+    reviewMenu.className = "review-dropdown-menu";
+    reviewMenu.hidden = true;
+
+    for (const candidate of otherAuto) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "review-menu-item";
+      item.textContent = `Com ${PLATFORMS[candidate]}`;
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        reviewMenu.hidden = true;
+        void handleReviewResponse(debate.id, resp.id, candidate);
+      });
+      reviewMenu.appendChild(item);
     }
-    card.classList.toggle("is-collapsed");
-  };
 
-  metaLeft.addEventListener("click", toggleCollapse);
-  toggleBtn.addEventListener("click", toggleCollapse);
+    reviewBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = reviewMenu.hidden;
+      for (const openMenu of $$(".review-dropdown-menu")) {
+        openMenu.hidden = true;
+      }
+      reviewMenu.hidden = !willOpen;
+    });
 
-  actions.append(copyBtn, toggleBtn);
+    reviewWrap.append(reviewBtn, reviewMenu);
+
+    const copyBtn = createCopyMarkdownButton(
+      resp.content,
+      isNormal ? "Copiar" : "Copiar .md",
+      "btn-secondary"
+    );
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "icon-btn";
+    toggleBtn.setAttribute("aria-label", "Minimizar ou expandir resposta");
+    toggleBtn.innerHTML = SVG_ICONS.chevronDown;
+
+    const toggleCollapse = () => {
+      if (collapsedResponseIds.has(resp.id)) {
+        collapsedResponseIds.delete(resp.id);
+      } else {
+        collapsedResponseIds.add(resp.id);
+      }
+      card.classList.toggle("is-collapsed");
+    };
+
+    metaLeft.addEventListener("click", toggleCollapse);
+    toggleBtn.addEventListener("click", toggleCollapse);
+
+    actions.append(regenBtn, reviewWrap, copyBtn, toggleBtn);
+  }
+
   header.append(metaLeft, actions);
 
   const body = document.createElement("div");
   body.className = "ai-response-body";
-  body.appendChild(buildMarkdownDom(resp.content));
+  if (isStreaming) {
+    body.id = `stream-body-${resp.taskId}`;
+    renderStreamingMarkdownInto(body, resp.content);
+  } else {
+    body.appendChild(buildMarkdownDom(resp.content));
+  }
 
   card.append(header, body);
   return card;
@@ -1835,9 +2256,18 @@ function buildResponseCard(debate, resp) {
 /**
  * Constrói a trilha de Horizontal Scroll para comparar as respostas das IAs na rodada
  */
-function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses) {
-  const roundKey = `${debate.id}_r${roundNum}`;
+function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses, turn) {
+  const isDirect = turn?.interactionMode === "direct";
+  const roundKey = `${debate.id}_${turn?.id || "t1"}_r${roundNum}`;
   const isStacked = stackedRoundKeys.has(roundKey);
+
+  // Em modo direto com apenas 1 resposta, exibe o card limpo diretamente sem cabeçalho de comparativo.
+  if (isDirect && roundResponses.length === 1) {
+    const singleWrap = document.createElement("div");
+    singleWrap.className = "direct-single-response-wrap";
+    singleWrap.appendChild(buildResponseCard(debate, roundResponses[0], turn));
+    return singleWrap;
+  }
 
   const wrapper = document.createElement("div");
   wrapper.className = `round-horizontal-wrapper${isStacked ? " is-stacked" : ""}`;
@@ -1851,7 +2281,9 @@ function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses) {
 
   const eyebrow = document.createElement("span");
   eyebrow.className = "h-scroll-eyebrow";
-  eyebrow.textContent = `RODADA ${roundNum} // COMPARATIVO (${roundResponses.length} IAs)`;
+  eyebrow.textContent = isDirect
+    ? `${roundResponses.length} IAs`
+    : `RODADA ${roundNum} (${roundResponses.length} IAs)`;
   leftGroup.appendChild(eyebrow);
 
   const jumpBtns = [];
@@ -1862,7 +2294,7 @@ function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses) {
   respList.className = `round-responses-list${roundResponses.length === 1 ? " single-item" : ""}`;
 
   roundResponses.forEach((resp, idx) => {
-    const cardEl = buildResponseCard(debate, resp);
+    const cardEl = buildResponseCard(debate, resp, turn);
     respList.appendChild(cardEl);
 
     if (roundResponses.length > 1) {
@@ -1871,7 +2303,7 @@ function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses) {
       jumpBtn.className = `h-scroll-ai-jump${idx === 0 ? " is-active" : ""}`;
       jumpBtn.setAttribute("data-jump-platform", resp.platform);
       jumpBtn.textContent = `${PLATFORM_MONOGRAMS[resp.platform] || resp.platform}`;
-      jumpBtn.title = `Deslizar para ${PLATFORMS[resp.platform] || resp.platform}`;
+      jumpBtn.title = `Ver ${PLATFORMS[resp.platform] || resp.platform}`;
 
       jumpBtn.addEventListener("click", () => {
         if (wrapper.classList.contains("is-stacked")) {
@@ -1914,7 +2346,7 @@ function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses) {
   modeBtn.type = "button";
   modeBtn.className = "h-scroll-mode-btn";
   modeBtn.textContent = isStacked ? "⇄ Horizontal" : "☰ Empilhar";
-  modeBtn.title = "Alternar entre Horizontal Scroll e Lista Vertical";
+  modeBtn.title = "Alternar layout";
 
   modeBtn.addEventListener("click", () => {
     const nowStacked = wrapper.classList.toggle("is-stacked");
@@ -1957,13 +2389,18 @@ function buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses) {
   return wrapper;
 }
 
-function buildConclusionCard(debate) {
-  if (!debate.conclusion) return null;
+function buildConclusionCard(debate, turn, turnResponses, isMultiTurn) {
+  const conclusionText = turn?.conclusion;
+  if (!conclusionText) return null;
+
+  const isNormal = turn?.responseMode === "normal";
 
   const conclusionBox = document.createElement("section");
   conclusionBox.className = "debate-conclusion-box";
-  conclusionBox.id = "step-synthesis";
-  conclusionBox.setAttribute("data-minimap-section", "step-synthesis");
+  if (!isMultiTurn) {
+    conclusionBox.id = "step-synthesis";
+    conclusionBox.setAttribute("data-minimap-section", "step-synthesis");
+  }
   conclusionBox.setAttribute("data-scroll-reveal", "");
 
   const header = document.createElement("div");
@@ -1974,89 +2411,347 @@ function buildConclusionCard(debate) {
 
   const eyebrow = document.createElement("span");
   eyebrow.className = "eyebrow";
-  eyebrow.textContent = "SÍNTESE E CONCLUSÃO CONJUNTA DO AI COUNCIL (MARKDOWN)";
-
-  const title = document.createElement("h4");
-  title.textContent = `Consenso Final — ${debate.title}`;
+  eyebrow.textContent = isNormal ? "RESPOSTA FINAL" : "SÍNTESE FINAL (.MD)";
 
   const metaRow = document.createElement("div");
   metaRow.className = "conclusion-meta-row";
 
-  const totalDur = getDebateTotalDurationSec(debate);
-  if (totalDur !== null) {
+  const startMs = Date.parse(turn.createdAt || "");
+  const endMs = Date.parse(turn.completedAt || "");
+  if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs >= startMs) {
     const durBadge = document.createElement("span");
     durBadge.className = "tag-badge tag-active";
-    durBadge.textContent = `Concluído em ${formatSecondsCompact(totalDur)}`;
+    durBadge.textContent = formatSecondsCompact((endMs - startMs) / 1000);
     metaRow.appendChild(durBadge);
   }
 
-  const synthResp = (debate.responses || []).find((r) => r.stage === "synthesis");
+  const synthResp = (turnResponses || []).find((r) => r.stage === "synthesis");
   if (synthResp) {
     const relatorBadge = document.createElement("span");
     relatorBadge.className = "tag-badge tag-neutral";
-    relatorBadge.textContent = `Relator: ${PLATFORMS[synthResp.platform] || synthResp.platform}`;
+    relatorBadge.textContent = PLATFORMS[synthResp.platform] || synthResp.platform;
     metaRow.appendChild(relatorBadge);
   }
 
-  titleGroup.append(eyebrow, title, metaRow);
+  titleGroup.append(eyebrow, metaRow);
+
+  const conclusionActions = document.createElement("div");
+  conclusionActions.className = "ai-response-actions";
+
+  if (synthResp) {
+    const regenSynthBtn = document.createElement("button");
+    regenSynthBtn.type = "button";
+    regenSynthBtn.className = "icon-btn";
+    regenSynthBtn.title = "Regenerar síntese final";
+    regenSynthBtn.setAttribute("aria-label", "Regenerar síntese final");
+    regenSynthBtn.textContent = "↻";
+    regenSynthBtn.disabled = debate.status === "running";
+    regenSynthBtn.addEventListener("click", () => {
+      void handleRegenerateResponse(debate.id, synthResp.id);
+    });
+    conclusionActions.appendChild(regenSynthBtn);
+  }
 
   const copyConclusionBtn = createCopyMarkdownButton(
-    debate.conclusion,
-    "Copiar Síntese (.md)",
+    conclusionText,
+    isNormal ? "Copiar" : "Copiar .md",
     "btn-secondary"
   );
+  conclusionActions.appendChild(copyConclusionBtn);
 
-  header.append(titleGroup, copyConclusionBtn);
+  header.append(titleGroup, conclusionActions);
 
-  const body = buildMarkdownDom(debate.conclusion);
+  const body = buildMarkdownDom(conclusionText);
   conclusionBox.append(header, body);
   return conclusionBox;
 }
 
-function renderOptimisticChatThread(threadEl) {
-  threadEl.replaceChildren();
+function buildTurnBlock(debate, turn, isMultiTurn, isLastTurn) {
+  const turnBlock = document.createElement("div");
+  turnBlock.className = "chat-turn-block";
+  if (isMultiTurn) {
+    turnBlock.id = `step-turn-${turn.index}`;
+    turnBlock.setAttribute("data-minimap-section", `step-turn-${turn.index}`);
+  }
 
-  const fakeDebate = {
-    title: optimisticSubmission.title,
-    topic: optimisticSubmission.topic,
+  turnBlock.appendChild(buildTurnUserMessage(debate, turn, isMultiTurn));
+
+  if (isLastTurn && debate.pauseInfo) {
+    const pauseBanner = document.createElement("div");
+    pauseBanner.className = "debate-pause-banner";
+    pauseBanner.setAttribute("data-scroll-reveal", "");
+
+    const pauseText = document.createElement("span");
+    pauseText.textContent = formatCleanErrorText(debate.pauseInfo.message);
+    pauseBanner.appendChild(pauseText);
+
+    const resumeBtn = document.createElement("button");
+    resumeBtn.type = "button";
+    resumeBtn.className = "btn-primary";
+    resumeBtn.innerHTML = `<span>Retomar</span><span class="cta-arrow" aria-hidden="true">→</span>`;
+    resumeBtn.addEventListener("click", () => handleResumeDebate(debate.id));
+    pauseBanner.appendChild(resumeBtn);
+
+    turnBlock.appendChild(pauseBanner);
+  }
+
+  const turnTasks = getTasksForTurn(debate, turn);
+  const turnResponses = getResponsesForTurn(debate, turn);
+  const isDirect = turn.interactionMode === "direct";
+
+  if (isDirect) {
+    const pendingDirect = turnTasks.filter((t) => t.status === "pending");
+    const streamingDirect = getStreamingResponsesForStage(
+      debate,
+      turn,
+      1,
+      "round",
+      turnResponses
+    );
+    const mergedDirect = [...turnResponses, ...streamingDirect];
+    const showThinking = pendingDirect.length > 0 && streamingDirect.length === 0;
+
+    if (showThinking) {
+      const stageKey = `${debate.id}_${turn.id}_direct`;
+      turnBlock.appendChild(
+        buildReasoningBlockForStage(
+          debate,
+          stageKey,
+          1,
+          "initial_response",
+          turnTasks,
+          turnResponses
+        )
+      );
+    }
+
+    if (pendingDirect.length > 0) {
+      const manualTasksEl = buildPendingManualTasksForStage(debate, turnTasks);
+      if (manualTasksEl) {
+        turnBlock.appendChild(manualTasksEl);
+      }
+    }
+
+    if (mergedDirect.length > 0) {
+      turnBlock.appendChild(
+        buildRoundHorizontalResponsesTrack(debate, 1, mergedDirect, turn)
+      );
+    }
+
+    return turnBlock;
+  }
+
+  // Modo Debate: rodadas 1..N + síntese
+  for (let roundNum = 1; roundNum <= (turn.totalRounds || 1); roundNum++) {
+    const roundTasks = turnTasks.filter(
+      (t) => t.round === roundNum && t.stage !== "synthesis"
+    );
+    const roundResponses = turnResponses.filter(
+      (r) => r.round === roundNum && r.stage !== "synthesis"
+    );
+    const streamingRound = getStreamingResponsesForStage(
+      debate,
+      turn,
+      roundNum,
+      "round",
+      roundResponses
+    );
+    const mergedRound = [...roundResponses, ...streamingRound];
+
+    if (roundTasks.length === 0 && mergedRound.length === 0) continue;
+
+    const stageType = roundNum === 1 ? "initial_response" : "critique";
+    const stageKey = `${debate.id}_${turn.id}_r${roundNum}_${stageType}`;
+
+    const roundSection = document.createElement("section");
+    roundSection.className = "chat-round-section";
+    if (!isMultiTurn) {
+      roundSection.id = `step-round-${roundNum}`;
+      roundSection.setAttribute("data-minimap-section", `step-round-${roundNum}`);
+    }
+
+    if (roundTasks.length > 0) {
+      roundSection.appendChild(
+        buildReasoningBlockForStage(
+          debate,
+          stageKey,
+          roundNum,
+          stageType,
+          roundTasks,
+          roundResponses
+        )
+      );
+
+      const manualTasksEl = buildPendingManualTasksForStage(debate, roundTasks);
+      if (manualTasksEl) {
+        roundSection.appendChild(manualTasksEl);
+      }
+    }
+
+    if (mergedRound.length > 0) {
+      roundSection.appendChild(
+        buildRoundHorizontalResponsesTrack(debate, roundNum, mergedRound, turn)
+      );
+    }
+
+    turnBlock.appendChild(roundSection);
+  }
+
+  const synthTasks = turnTasks.filter((t) => t.stage === "synthesis");
+  const synthResponses = turnResponses.filter((r) => r.stage === "synthesis");
+  const streamingSynth = getStreamingResponsesForStage(
+    debate,
+    turn,
+    turn.totalRounds || 1,
+    "synthesis",
+    synthResponses
+  );
+
+  if (synthTasks.length > 0) {
+    const synthStageKey = `${debate.id}_${turn.id}_synthesis`;
+    const synthReasoning = buildReasoningBlockForStage(
+      debate,
+      synthStageKey,
+      turn.totalRounds || 1,
+      "synthesis",
+      synthTasks,
+      synthResponses
+    );
+    if (!isMultiTurn && !turn.conclusion && streamingSynth.length === 0) {
+      synthReasoning.id = "step-synthesis";
+      synthReasoning.setAttribute("data-minimap-section", "step-synthesis");
+    }
+    turnBlock.appendChild(synthReasoning);
+
+    const synthManualEl = buildPendingManualTasksForStage(debate, synthTasks);
+    if (synthManualEl) {
+      turnBlock.appendChild(synthManualEl);
+    }
+  }
+
+  const conclusionCard = buildConclusionCard(
+    debate,
+    turn,
+    turnResponses,
+    isMultiTurn
+  );
+  if (conclusionCard) {
+    turnBlock.appendChild(conclusionCard);
+  } else if (streamingSynth.length > 0) {
+    const liveSynth = streamingSynth[0];
+    const liveBox = document.createElement("section");
+    liveBox.className = "debate-conclusion-box is-streaming is-revealed";
+    if (!isMultiTurn) {
+      liveBox.id = "step-synthesis";
+      liveBox.setAttribute("data-minimap-section", "step-synthesis");
+    }
+
+    const header = document.createElement("div");
+    header.className = "conclusion-header";
+
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "conclusion-title-group";
+
+    const eyebrow = document.createElement("span");
+    eyebrow.className = "eyebrow";
+    eyebrow.textContent =
+      turn.responseMode === "normal" ? "RESPOSTA FINAL" : "SÍNTESE FINAL (.MD)";
+
+    const liveBadge = document.createElement("span");
+    liveBadge.className = "streaming-live-pill";
+    liveBadge.textContent = `Ao vivo · ${PLATFORMS[liveSynth.platform] || liveSynth.platform}`;
+
+    titleGroup.append(eyebrow, liveBadge);
+    header.append(titleGroup);
+
+    const body = document.createElement("div");
+    body.id = `stream-body-${liveSynth.taskId}`;
+    renderStreamingMarkdownInto(body, liveSynth.content);
+
+    liveBox.append(header, body);
+    turnBlock.appendChild(liveBox);
+  }
+
+  return turnBlock;
+}
+
+function buildOptimisticTurnElements(baseDebate) {
+  const existingTurns = baseDebate ? getSessionTurns(baseDebate) : [];
+  const nextIndex = existingTurns.length + 1;
+  const isMultiTurn = nextIndex > 1;
+  const optTurn = {
+    id: `optimistic_turn_${nextIndex}`,
+    index: nextIndex,
+    prompt: optimisticSubmission.topic,
+    rules: optimisticSubmission.rules,
     participants: optimisticSubmission.participants,
+    responseMode: optimisticSubmission.responseMode,
+    interactionMode: optimisticSubmission.interactionMode,
     totalRounds: optimisticSubmission.totalRounds,
     focus: optimisticSubmission.focus,
-    rules: optimisticSubmission.rules,
-    createdAt: new Date(optimisticSubmission.startedAtMs).toISOString(),
-    updatedAt: new Date(optimisticSubmission.startedAtMs).toISOString(),
+    currentRound: 1,
+    currentStage: "initial_response",
     status: "running",
+    attachments: optimisticSubmission.attachments || [],
+    createdAt: new Date(optimisticSubmission.startedAtMs).toISOString()
+  };
+
+  const fakeDebate = {
+    id: baseDebate?.id || "optimistic",
+    title: optimisticSubmission.title,
+    status: "running",
+    totalRounds: optimisticSubmission.totalRounds,
+    updatedAt: optTurn.createdAt,
     tasks: optimisticSubmission.participants.map((p, idx) => ({
       id: `optimistic_${idx}_${p}`,
+      turnId: optTurn.id,
       round: 1,
       stage: "initial_response",
       platform: p,
       seat: AUTO_PLATFORM_IDS.includes(p) ? "auto" : "manual",
       status: "pending",
-      createdAt: new Date(optimisticSubmission.startedAtMs).toISOString()
+      createdAt: optTurn.createdAt
     })),
     responses: []
   };
 
-  buildChatRoundMinimap(fakeDebate);
-  threadEl.appendChild(buildUserPromptMessage(fakeDebate));
+  return buildTurnBlock(fakeDebate, optTurn, isMultiTurn, true);
+}
 
-  const roundSection = document.createElement("section");
-  roundSection.className = "chat-round-section";
-  roundSection.id = "step-round-1";
-  roundSection.setAttribute("data-minimap-section", "step-round-1");
-  roundSection.appendChild(
-    buildReasoningBlockForStage(
-      fakeDebate,
-      "optimistic_r1",
-      1,
-      "initial_response",
-      fakeDebate.tasks,
-      []
-    )
-  );
-  threadEl.appendChild(roundSection);
+function renderOptimisticChatThread(threadEl) {
+  const parentDebate = optimisticSubmission.parentDebateId
+    ? debateDetailsById.get(optimisticSubmission.parentDebateId) ||
+      latestDebates.find((d) => d.id === optimisticSubmission.parentDebateId) ||
+      null
+    : null;
+
+  threadEl.replaceChildren();
+  buildChatRoundMinimap(parentDebate);
+
+  if (parentDebate) {
+    const turns = getSessionTurns(parentDebate);
+    turns.forEach((turn, idx) => {
+      if (idx > 0) {
+        const sep = document.createElement("div");
+        sep.className = "chat-turn-divider";
+        threadEl.appendChild(sep);
+      }
+      threadEl.appendChild(buildTurnBlock(parentDebate, turn, true, false));
+    });
+    const sep = document.createElement("div");
+    sep.className = "chat-turn-divider";
+    threadEl.appendChild(sep);
+  }
+
+  threadEl.appendChild(buildOptimisticTurnElements(parentDebate));
   observeScrollRevealElements(threadEl);
+
+  const chatScroll = $("#chat-scroll-area");
+  if (chatScroll) {
+    requestAnimationFrame(() => {
+      chatScroll.scrollTop = chatScroll.scrollHeight;
+    });
+  }
 }
 
 function renderChatStage() {
@@ -2086,7 +2781,21 @@ function renderChatStage() {
   zeroStateEl.hidden = true;
   threadEl.hidden = false;
 
-  const signature = JSON.stringify(debate);
+  // Se ainda temos apenas o resumo leve do /status, busca o detalhe completo em /debates/:id.
+  const isFullDetail = Array.isArray(debate.tasks) && Array.isArray(debate.responses);
+  if (!isFullDetail) {
+    if (detailFetchInFlightId !== debate.id) {
+      void loadDebateDetail(debate.id);
+    }
+  }
+
+  const activeStreamKeys = Array.from(activeStreamsByTaskId.values())
+    .filter((s) => s.debateId === debate.id)
+    .map((s) => s.taskId)
+    .sort()
+    .join(",");
+
+  const signature = `${JSON.stringify(debate)}::streams=${activeStreamKeys}`;
   const activeElement = document.activeElement;
   const isTypingInManualTask =
     activeElement &&
@@ -2107,108 +2816,18 @@ function renderChatStage() {
 
   buildChatRoundMinimap(debate);
 
-  // 1. Mensagem do Usuário
-  threadEl.appendChild(buildUserPromptMessage(debate));
+  const turns = getSessionTurns(debate);
+  const isMultiTurn = turns.length > 1;
 
-  // 2. Banner de Pausa (se houver)
-  if (debate.pauseInfo) {
-    const pauseBanner = document.createElement("div");
-    pauseBanner.className = "debate-pause-banner";
-    pauseBanner.setAttribute("data-scroll-reveal", "");
-
-    const pauseText = document.createElement("span");
-    pauseText.textContent = `${formatCleanErrorText(debate.pauseInfo.message)} (${formatDate(debate.pauseInfo.pausedAt)})`;
-    pauseBanner.appendChild(pauseText);
-
-    const resumeBtn = document.createElement("button");
-    resumeBtn.type = "button";
-    resumeBtn.className = "btn-primary";
-    resumeBtn.innerHTML = `<span>Retomar do Ponto Exato</span><span class="cta-arrow" aria-hidden="true">→</span>`;
-    resumeBtn.addEventListener("click", () => handleResumeDebate(debate.id));
-    pauseBanner.appendChild(resumeBtn);
-
-    threadEl.appendChild(pauseBanner);
-  }
-
-  // 3. Rodadas 1 .. N (com Horizontal Scroll nas respostas de cada rodada)
-  const tasks = Array.isArray(debate.tasks) ? debate.tasks : [];
-  const responses = Array.isArray(debate.responses) ? debate.responses : [];
-
-  for (let roundNum = 1; roundNum <= debate.totalRounds; roundNum++) {
-    const roundTasks = tasks.filter(
-      (t) => t.round === roundNum && t.stage !== "synthesis"
-    );
-    const roundResponses = responses.filter(
-      (r) => r.round === roundNum && r.stage !== "synthesis"
-    );
-
-    if (roundTasks.length === 0 && roundResponses.length === 0) continue;
-
-    const stageType = roundNum === 1 ? "initial_response" : "critique";
-    const stageKey = `${debate.id}_r${roundNum}_${stageType}`;
-
-    const roundSection = document.createElement("section");
-    roundSection.className = "chat-round-section";
-    roundSection.id = `step-round-${roundNum}`;
-    roundSection.setAttribute("data-minimap-section", `step-round-${roundNum}`);
-
-    if (roundTasks.length > 0) {
-      roundSection.appendChild(
-        buildReasoningBlockForStage(
-          debate,
-          stageKey,
-          roundNum,
-          stageType,
-          roundTasks,
-          roundResponses
-        )
-      );
-
-      const manualTasksEl = buildPendingManualTasksForStage(debate, roundTasks);
-      if (manualTasksEl) {
-        roundSection.appendChild(manualTasksEl);
-      }
+  turns.forEach((turn, idx) => {
+    if (idx > 0) {
+      const sep = document.createElement("div");
+      sep.className = "chat-turn-divider";
+      threadEl.appendChild(sep);
     }
-
-    if (roundResponses.length > 0) {
-      roundSection.appendChild(
-        buildRoundHorizontalResponsesTrack(debate, roundNum, roundResponses)
-      );
-    }
-
-    threadEl.appendChild(roundSection);
-  }
-
-  // 4. Etapa de Síntese + Conclusão Final
-  const synthTasks = tasks.filter((t) => t.stage === "synthesis");
-  const synthResponses = responses.filter((r) => r.stage === "synthesis");
-
-  if (synthTasks.length > 0) {
-    const synthStageKey = `${debate.id}_synthesis`;
-    const synthReasoning = buildReasoningBlockForStage(
-      debate,
-      synthStageKey,
-      debate.totalRounds,
-      "synthesis",
-      synthTasks,
-      synthResponses
-    );
-    if (!debate.conclusion) {
-      synthReasoning.id = "step-synthesis";
-      synthReasoning.setAttribute("data-minimap-section", "step-synthesis");
-    }
-    threadEl.appendChild(synthReasoning);
-
-    const synthManualEl = buildPendingManualTasksForStage(debate, synthTasks);
-    if (synthManualEl) {
-      threadEl.appendChild(synthManualEl);
-    }
-  }
-
-  const conclusionCard = buildConclusionCard(debate);
-  if (conclusionCard) {
-    threadEl.appendChild(conclusionCard);
-  }
+    const isLastTurn = idx === turns.length - 1;
+    threadEl.appendChild(buildTurnBlock(debate, turn, isMultiTurn, isLastTurn));
+  });
 
   observeScrollRevealElements(threadEl);
   requestAnimationFrame(updateChatScrollLinkedEffects);
@@ -2217,6 +2836,16 @@ function renderChatStage() {
 // ============================================================================
 // COLUNA 3: DOCK STICKY DAS 3 IAs AUTOMÁTICAS + FEED DE TELEMETRIA DE USO
 // ============================================================================
+
+function formatCompactNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return "--";
+  if (num >= 1000) {
+    const k = num / 1000;
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+  }
+  return String(num);
+}
 
 function renderRightPanelTelemetryFeed(refDebate) {
   const feedEl = $("#ai-usage-telemetry-feed");
@@ -2243,6 +2872,9 @@ function renderRightPanelTelemetryFeed(refDebate) {
   quotaTitle.textContent = "TELEMETRIA DE COTA // HOJE";
   feedEl.appendChild(quotaTitle);
 
+  const memCovered = refDebate?.sharedMemory?.coveredTurnCount || 0;
+  const memLabel = memCovered > 0 ? `Turnos 1–${memCovered}` : "Compartilhada";
+
   const summaryBox = document.createElement("div");
   summaryBox.className = "telemetry-box";
   summaryBox.innerHTML = `
@@ -2255,13 +2887,17 @@ function renderRightPanelTelemetryFeed(refDebate) {
       <strong>${totalTokensToday.toLocaleString("pt-BR")} tok</strong>
     </div>
     <div class="telemetry-row">
+      <span>Memória</span>
+      <strong>${memLabel}</strong>
+    </div>
+    <div class="telemetry-row">
       <span>Trava UsageGate</span>
       <strong>90% (Custo Zero)</strong>
     </div>
   `;
   feedEl.appendChild(summaryBox);
 
-  // 2. Detalhamento Técnico por Provedor Automático (RPM / Tokens)
+  // 2. Detalhamento Técnico por Provedor Automático (RPM / TPM / Contexto / Saída)
   for (const plat of AUTO_PLATFORM_IDS) {
     const p = latestProviders.find((item) => item.id === plat);
     const usage = p?.usage;
@@ -2273,15 +2909,27 @@ function renderRightPanelTelemetryFeed(refDebate) {
       100,
       Math.round((usage.requestsToday / Math.max(1, usage.requestsDailyCap)) * 100)
     );
+    const tpmText = usage.tokensPerMinuteCap
+      ? ` · ${formatCompactNumber(usage.tokensPerMinuteCap)} TPM`
+      : "";
+    const budget = p?.contextBudget;
+    const budgetRow = budget
+      ? `
+      <div class="telemetry-row">
+        <span>Contexto / Saída</span>
+        <strong>${formatCompactNumber(budget.historyChars)} ch · ${formatCompactNumber(budget.maxOutputTokens)} tok</strong>
+      </div>`
+      : "";
+
     pBox.innerHTML = `
       <div class="telemetry-row">
         <span>${PLATFORMS[plat]} (${pct}%)</span>
-        <strong>RPM máx: ${usage.requestsPerMinuteCap}</strong>
+        <strong>${usage.requestsPerMinuteCap} RPM${tpmText}</strong>
       </div>
       <div class="telemetry-row">
         <span>Tokens dia</span>
         <strong>${(usage.tokensToday || 0).toLocaleString("pt-BR")}${usage.tokensDailyCap ? ` / ${usage.tokensDailyCap.toLocaleString("pt-BR")}` : ""}</strong>
-      </div>
+      </div>${budgetRow}
     `;
     feedEl.appendChild(pBox);
   }
@@ -2293,6 +2941,7 @@ function renderRightPanelTelemetryFeed(refDebate) {
     logTitle.textContent = "CHAMADAS DA SESSÃO // CLICK TO FOCUS";
     feedEl.appendChild(logTitle);
 
+    const turns = getSessionTurns(refDebate);
     const autoResponses = refDebate.responses.filter((r) =>
       AUTO_PLATFORM_IDS.includes(r.platform)
     );
@@ -2300,16 +2949,28 @@ function renderRightPanelTelemetryFeed(refDebate) {
     for (const resp of autoResponses) {
       const task = (refDebate.tasks || []).find((t) => t.id === resp.taskId);
       const durSec = getCompletedTaskDurationSec(task, resp);
+      const matchedTurn =
+        turns.find((t) => t.id === resp.turnId) || turns[0];
+      const isDirect = matchedTurn?.interactionMode === "direct";
+      const turnPrefix = turns.length > 1 && matchedTurn ? `M${matchedTurn.index}` : "";
+      const topTag = isDirect
+        ? turnPrefix || "Direto"
+        : turnPrefix
+          ? `${turnPrefix} · R${resp.round}`
+          : `R${resp.round}`;
+      const subStageLabel = isDirect
+        ? RESPONSE_MODE_LABELS[matchedTurn?.responseMode] || "Direto"
+        : STAGE_LABELS[resp.stage] || "Debate";
 
       const logItem = document.createElement("div");
       logItem.className = "telemetry-log-item";
       logItem.innerHTML = `
         <div class="telemetry-log-top">
-          <span>${PLATFORMS[resp.platform]} • R${resp.round}</span>
+          <span>${PLATFORMS[resp.platform]} • ${topTag}</span>
           <span>${durSec ? formatSecondsCompact(durSec) : "OK"}</span>
         </div>
         <div class="telemetry-log-sub">
-          <span>${escapeHtml(STAGE_LABELS[resp.stage] || "Debate")}</span>
+          <span>${escapeHtml(subStageLabel)}</span>
           <span>${resp.tokens ? `${resp.tokens} tok` : ""}</span>
         </div>
       `;
@@ -2429,7 +3090,14 @@ function updateRightAiPanel() {
     let latestCompletedResp = null;
 
     if (refDebate) {
-      const pTasks = (refDebate.tasks || []).filter((t) => t.platform === platform);
+      const activeTurnId = Array.isArray(refDebate.turns) && refDebate.turns.length > 0
+        ? refDebate.turns[refDebate.turns.length - 1].id
+        : null;
+      const pTasks = (refDebate.tasks || []).filter(
+        (t) =>
+          t.platform === platform &&
+          (!activeTurnId || !t.turnId || t.turnId === activeTurnId)
+      );
       activeTask = pTasks.find(
         (t) =>
           t.status === "pending" &&
@@ -2853,36 +3521,63 @@ async function handleCreateDebate(event) {
   const topicValue = (topicInput?.value || "").trim();
   if (!topicValue) {
     if (feedback) {
-      feedback.textContent = "Digite o problema para iniciar.";
+      feedback.textContent = "Digite sua mensagem.";
     }
     topicInput?.focus();
     return;
   }
 
-  const rawTitle = (titleInput?.value || "").trim();
-  const finalTitle = rawTitle || generateTitleFromTopic(topicValue);
-
   const checkboxes = $$('input[name="participants"]:checked');
   const participants = checkboxes.map((cb) => cb.value);
 
-  if (participants.length < 2) {
+  if (selectedInteractionMode === "debate" && participants.length < 2) {
     if (feedback) {
-      feedback.textContent = "Selecione ao menos 2 IAs.";
+      feedback.textContent = "Debate exige ao menos 2 IAs.";
     }
     return;
   }
 
-  const totalRounds = Number(roundsSelect?.value) || 2;
-  const focus = focusSelect?.value || "geral";
+  if (participants.length < 1) {
+    if (feedback) {
+      feedback.textContent = "Selecione ao menos 1 IA.";
+    }
+    return;
+  }
+
+  const currentDebate = getActiveOrSelectedDebate();
+  if (currentDebate && currentDebate.status === "running") {
+    if (feedback) {
+      feedback.textContent = "Aguarde a resposta atual ou pause.";
+    }
+    return;
+  }
+
+  const rawTitle = (titleInput?.value || "").trim();
+  const finalTitle = currentDebate
+    ? currentDebate.title
+    : rawTitle || generateTitleFromTopic(topicValue);
+
+  const totalRounds =
+    selectedInteractionMode === "direct" ? 1 : Number(roundsSelect?.value) || 2;
+  const focus =
+    selectedResponseMode === "prompt_markdown"
+      ? focusSelect?.value || "geral"
+      : "geral";
   const rules = (rulesInput?.value || "").trim();
 
+  const attachmentsSnapshot = pendingAttachments.map((f) => ({ ...f }));
+
   optimisticSubmission = {
+    parentDebateId: currentDebate ? currentDebate.id : null,
     title: finalTitle,
     topic: topicValue,
     participants,
     totalRounds,
     focus,
     rules,
+    responseMode: selectedResponseMode,
+    interactionMode: selectedInteractionMode,
+    attachments: attachmentsSnapshot.map((f) => ({ name: f.name, size: f.size })),
     startedAtMs: Date.now()
   };
 
@@ -2895,21 +3590,40 @@ async function handleCreateDebate(event) {
 
   try {
     if (submitBtn) submitBtn.disabled = true;
-    if (feedback) feedback.textContent = "Iniciando...";
+    if (feedback) feedback.textContent = "Enviando...";
 
-    const result = await fetchJson("/debates", {
-      method: "POST",
-      body: {
-        title: finalTitle,
-        topic: topicValue,
-        rules: rules || undefined,
-        participants,
-        totalRounds,
-        focus
-      }
-    });
+    const result = currentDebate
+      ? await fetchJson(`/debates/${currentDebate.id}/message`, {
+          method: "POST",
+          body: {
+            message: topicValue,
+            rules: rules || undefined,
+            participants,
+            totalRounds,
+            focus,
+            responseMode: selectedResponseMode,
+            interactionMode: selectedInteractionMode,
+            attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
+          }
+        })
+      : await fetchJson("/debates", {
+          method: "POST",
+          body: {
+            title: finalTitle,
+            topic: topicValue,
+            rules: rules || undefined,
+            participants,
+            totalRounds,
+            focus,
+            responseMode: selectedResponseMode,
+            interactionMode: selectedInteractionMode,
+            attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
+          }
+        });
 
     optimisticSubmission = null;
+    pendingAttachments = [];
+    renderAttachmentsBar();
 
     if (titleInput) titleInput.value = "";
     if (topicInput) {
@@ -2919,8 +3633,11 @@ async function handleCreateDebate(event) {
 
     if (result?.debate?.id) {
       selectedDebateId = result.debate.id;
+      const activeTurnId = result.debate.turns?.at(-1)?.id;
       for (const t of result.debate.tasks || []) {
-        localTaskStartMs.set(t.id, Date.now());
+        if (t.status === "pending" && (!activeTurnId || t.turnId === activeTurnId)) {
+          localTaskStartMs.set(t.id, Date.now());
+        }
       }
       upsertDebateSessionLocally(result.debate);
     }
@@ -2935,6 +3652,7 @@ async function handleCreateDebate(event) {
     updateStageTopbar();
     renderChatStage();
     updateRightAiPanel();
+    syncComposerModeUi();
     void refreshDashboard();
   } catch (error) {
     optimisticSubmission = null;
@@ -2942,20 +3660,458 @@ async function handleCreateDebate(event) {
     updateRightAiPanel();
     if (feedback) {
       feedback.textContent =
-        error instanceof Error ? error.message : "Erro ao criar debate.";
+        error instanceof Error ? error.message : "Erro ao enviar.";
     }
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
 }
 
+function renderAttachmentsBar() {
+  const bar = $("#composer-attachments-bar");
+  if (!bar) return;
+
+  bar.replaceChildren();
+  if (pendingAttachments.length === 0) {
+    bar.hidden = true;
+    return;
+  }
+
+  bar.hidden = false;
+  pendingAttachments.forEach((file, idx) => {
+    const pill = document.createElement("span");
+    pill.className = "attachment-pill";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = file.name;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "attachment-pill-remove";
+    removeBtn.setAttribute("aria-label", `Remover ${file.name}`);
+    removeBtn.textContent = "×";
+    removeBtn.addEventListener("click", () => {
+      pendingAttachments.splice(idx, 1);
+      renderAttachmentsBar();
+    });
+
+    pill.append(nameSpan, removeBtn);
+    bar.appendChild(pill);
+  });
+}
+
+async function addComposerFiles(fileList) {
+  const feedback = $("#debate-form-feedback");
+  const files = Array.from(fileList || []);
+  if (files.length === 0) return;
+
+  const MAX_FILES = 5;
+  const MAX_BYTES = 60 * 1024;
+  let notice = "";
+
+  for (const file of files) {
+    if (pendingAttachments.length >= MAX_FILES) {
+      notice = `Máximo de ${MAX_FILES} arquivos por mensagem.`;
+      break;
+    }
+    if (file.size > MAX_BYTES) {
+      notice = `${file.name} passa de 60 KB.`;
+      continue;
+    }
+    try {
+      const content = await file.text();
+      if (content.includes("\0")) {
+        notice = `${file.name} não é um arquivo de texto.`;
+        continue;
+      }
+      const existingIdx = pendingAttachments.findIndex((a) => a.name === file.name);
+      const entry = { name: file.name, content, size: file.size };
+      if (existingIdx >= 0) {
+        pendingAttachments[existingIdx] = entry;
+      } else {
+        pendingAttachments.push(entry);
+      }
+    } catch {
+      notice = `Não foi possível ler ${file.name}.`;
+    }
+  }
+
+  renderAttachmentsBar();
+  if (feedback && notice) {
+    feedback.textContent = notice;
+  }
+}
+
+async function handleRegenerateResponse(debateId, responseId) {
+  try {
+    const res = await fetchJson(`/debates/${debateId}/regenerate`, {
+      method: "POST",
+      body: { responseId }
+    });
+    if (res?.debate) {
+      upsertDebateSessionLocally(res.debate);
+      for (const t of res.debate.tasks || []) {
+        if (t.status === "pending") {
+          localTaskStartMs.set(t.id, Date.now());
+        }
+      }
+    }
+    lastRenderedChatSignature = "";
+    updateStageTopbar();
+    renderChatStage();
+    updateRightAiPanel();
+    void refreshDashboard();
+  } catch (error) {
+    const feedback = $("#debate-form-feedback");
+    if (feedback) {
+      feedback.textContent =
+        error instanceof Error ? error.message : "Erro ao regenerar.";
+    }
+  }
+}
+
+async function handleReviewResponse(debateId, responseId, reviewer) {
+  try {
+    const res = await fetchJson(`/debates/${debateId}/review`, {
+      method: "POST",
+      body: { responseId, reviewer }
+    });
+    if (res?.debate) {
+      upsertDebateSessionLocally(res.debate);
+      for (const t of res.debate.tasks || []) {
+        if (t.status === "pending") {
+          localTaskStartMs.set(t.id, Date.now());
+        }
+      }
+    }
+    lastRenderedChatSignature = "";
+    updateStageTopbar();
+    renderChatStage();
+    updateRightAiPanel();
+    void refreshDashboard();
+
+    const chatScroll = $("#chat-scroll-area");
+    if (chatScroll) {
+      requestAnimationFrame(() => {
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+      });
+    }
+  } catch (error) {
+    const feedback = $("#debate-form-feedback");
+    if (feedback) {
+      feedback.textContent =
+        error instanceof Error ? error.message : "Erro ao solicitar revisão.";
+    }
+  }
+}
+
+let memoryModalDebateId = null;
+
+function openMemoryModal(debateId) {
+  const modal = $("#memory-modal");
+  const textarea = $("#memory-editor-input");
+  const fb = $("#memory-modal-feedback");
+  if (!modal || !textarea) return;
+
+  const debate = debateDetailsById.get(debateId) || getActiveOrSelectedDebate();
+  memoryModalDebateId = debateId;
+  textarea.value = debate?.sharedMemory?.summary || "";
+  if (fb) fb.textContent = "";
+  modal.hidden = false;
+  textarea.focus();
+}
+
+function closeMemoryModal() {
+  const modal = $("#memory-modal");
+  if (modal) modal.hidden = true;
+  memoryModalDebateId = null;
+}
+
+async function saveMemoryModal(summaryText) {
+  if (!memoryModalDebateId) return;
+  const fb = $("#memory-modal-feedback");
+  const saveBtn = $("#memory-save-btn");
+  const clearBtn = $("#memory-clear-btn");
+
+  try {
+    if (saveBtn) saveBtn.disabled = true;
+    if (clearBtn) clearBtn.disabled = true;
+    if (fb) fb.textContent = "Salvando...";
+
+    const res = await fetchJson(`/debates/${memoryModalDebateId}/memory`, {
+      method: "POST",
+      body: { summary: summaryText }
+    });
+
+    if (res?.debate) {
+      upsertDebateSessionLocally(res.debate);
+    }
+
+    lastRenderedChatSignature = "";
+    updateStageTopbar();
+    updateRightAiPanel();
+    closeMemoryModal();
+  } catch (error) {
+    if (fb) {
+      fb.textContent =
+        error instanceof Error ? error.message : "Falha ao salvar memória.";
+    }
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+    if (clearBtn) clearBtn.disabled = false;
+  }
+}
+
+function summarizeSessionClient(session) {
+  return {
+    id: session.id,
+    title: session.title,
+    topic: session.topic,
+    participants: Array.isArray(session.participants) ? session.participants : [],
+    totalRounds: session.totalRounds,
+    currentRound: session.currentRound,
+    currentStage: session.currentStage,
+    status: session.status,
+    focus: session.focus,
+    responseMode: session.responseMode,
+    interactionMode: session.interactionMode,
+    turnCount:
+      typeof session.turnCount === "number"
+        ? session.turnCount
+        : Array.isArray(session.turns) && session.turns.length > 0
+          ? session.turns.length
+          : 1,
+    sharedMemoryTurns: session.sharedMemory?.coveredTurnCount,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    completedAt: session.completedAt,
+    engineVersion: session.engineVersion
+  };
+}
+
 function upsertDebateSessionLocally(debateSession) {
   if (!debateSession || !debateSession.id) return;
+  if (Array.isArray(debateSession.tasks) && Array.isArray(debateSession.responses)) {
+    debateDetailsById.set(debateSession.id, debateSession);
+  }
+  const summary = summarizeSessionClient(debateSession);
   const existingIdx = latestDebates.findIndex((d) => d.id === debateSession.id);
   if (existingIdx >= 0) {
-    latestDebates[existingIdx] = debateSession;
+    latestDebates[existingIdx] = summary;
   } else {
-    latestDebates = [debateSession, ...latestDebates];
+    latestDebates = [summary, ...latestDebates];
+  }
+}
+
+async function loadDebateDetail(debateId) {
+  if (!debateId) return null;
+  detailFetchInFlightId = debateId;
+  try {
+    const res = await fetchJson(`/debates/${debateId}`);
+    if (res?.debate?.id) {
+      upsertDebateSessionLocally(res.debate);
+
+      // Limpa streams que já viraram respostas salvas
+      const savedTaskIds = new Set(
+        (res.debate.responses || []).map((r) => r.taskId)
+      );
+      for (const [tId, st] of activeStreamsByTaskId.entries()) {
+        if (st.debateId === debateId && savedTaskIds.has(tId)) {
+          activeStreamsByTaskId.delete(tId);
+        }
+      }
+
+      if (Array.isArray(res.activeStreams)) {
+        for (const stream of res.activeStreams) {
+          if (stream?.taskId && !savedTaskIds.has(stream.taskId)) {
+            activeStreamsByTaskId.set(stream.taskId, stream);
+          }
+        }
+      }
+
+      renderSidebarDebatesList();
+      updateStageTopbar();
+      renderChatStage();
+      updateRightAiPanel();
+      syncComposerModeUi();
+      return res.debate;
+    }
+  } catch (error) {
+    console.warn("[AI Council] Falha ao carregar detalhe da conversa:", error);
+  } finally {
+    if (detailFetchInFlightId === debateId) {
+      detailFetchInFlightId = null;
+    }
+  }
+  return null;
+}
+
+async function refreshProvidersOnly() {
+  try {
+    const providersData = await fetchJson("/providers");
+    if (Array.isArray(providersData?.providers)) {
+      latestProviders = providersData.providers;
+      updateProviderCards(latestProviders);
+      updateRightAiPanel();
+    }
+  } catch {
+    // Ignora falha transitória
+  }
+}
+
+function disconnectEventStream() {
+  if (sseReconnectTimer) {
+    clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = null;
+  }
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+  isSseConnected = false;
+}
+
+function connectEventStream() {
+  if (typeof EventSource === "undefined") return;
+  if (eventSource) return;
+
+  const token = getStoredSessionToken();
+  const streamUrl = token
+    ? `/events/stream?session=${encodeURIComponent(token)}`
+    : "/events/stream";
+
+  try {
+    const es = new EventSource(streamUrl);
+    eventSource = es;
+
+    es.addEventListener("open", () => {
+      isSseConnected = true;
+      scheduleNextRefresh();
+    });
+
+    es.addEventListener("ready", (ev) => {
+      isSseConnected = true;
+      try {
+        const payload = JSON.parse(ev.data || "{}");
+        if (Array.isArray(payload.activeStreams)) {
+          activeStreamsByTaskId.clear();
+          for (const st of payload.activeStreams) {
+            if (st?.taskId) {
+              activeStreamsByTaskId.set(st.taskId, st);
+            }
+          }
+          if (selectedDebateId) {
+            lastRenderedChatSignature = "";
+            renderChatStage();
+          }
+        }
+      } catch {
+        // Ignora
+      }
+      scheduleNextRefresh();
+    });
+
+    es.addEventListener("stream_start", (ev) => {
+      try {
+        const data = JSON.parse(ev.data || "{}");
+        if (!data?.taskId) return;
+        activeStreamsByTaskId.set(data.taskId, {
+          ...data,
+          content: ""
+        });
+        if (data.debateId === selectedDebateId) {
+          lastRenderedChatSignature = "";
+          renderChatStage();
+        }
+      } catch {
+        // Ignora
+      }
+    });
+
+    es.addEventListener("stream_delta", (ev) => {
+      try {
+        const data = JSON.parse(ev.data || "{}");
+        if (!data?.taskId || !data.delta) return;
+        let entry = activeStreamsByTaskId.get(data.taskId);
+        if (!entry) {
+          entry = {
+            debateId: data.debateId,
+            taskId: data.taskId,
+            round: 1,
+            stage: "initial_response",
+            platform: "gemini",
+            content: "",
+            startedAt: new Date().toISOString()
+          };
+          activeStreamsByTaskId.set(data.taskId, entry);
+        }
+        entry.content += data.delta;
+        if (entry.debateId === selectedDebateId) {
+          scheduleStreamBodyPaint(data.taskId);
+        }
+      } catch {
+        // Ignora
+      }
+    });
+
+    es.addEventListener("stream_reset", (ev) => {
+      try {
+        const data = JSON.parse(ev.data || "{}");
+        const entry = activeStreamsByTaskId.get(data?.taskId);
+        if (entry) {
+          entry.content = "";
+          if (entry.debateId === selectedDebateId) {
+            scheduleStreamBodyPaint(data.taskId);
+          }
+        }
+      } catch {
+        // Ignora
+      }
+    });
+
+    es.addEventListener("stream_end", (ev) => {
+      try {
+        const data = JSON.parse(ev.data || "{}");
+        if (data?.taskId) {
+          activeStreamsByTaskId.delete(data.taskId);
+        }
+      } catch {
+        // Ignora
+      }
+    });
+
+    es.addEventListener("debate_updated", (ev) => {
+      try {
+        const data = JSON.parse(ev.data || "{}");
+        void refreshDashboard();
+        if (data?.debateId && data.debateId === selectedDebateId) {
+          void loadDebateDetail(data.debateId);
+        }
+      } catch {
+        void refreshDashboard();
+      }
+    });
+
+    es.addEventListener("providers_updated", () => {
+      void refreshProvidersOnly();
+    });
+
+    es.onerror = () => {
+      isSseConnected = false;
+      es.close();
+      if (eventSource === es) {
+        eventSource = null;
+      }
+      scheduleNextRefresh();
+      if (!sseReconnectTimer) {
+        sseReconnectTimer = setTimeout(() => {
+          sseReconnectTimer = null;
+          connectEventStream();
+        }, 3000);
+      }
+    };
+  } catch {
+    isSseConnected = false;
   }
 }
 
@@ -3075,7 +4231,12 @@ function scheduleNextRefresh() {
     Boolean(optimisticSubmission) ||
     latestDebates.some((d) => d.status === "running");
 
-  const delay = hasRunningDebate ? ACTIVE_REFRESH_INTERVAL : IDLE_REFRESH_INTERVAL;
+  const delay = isSseConnected
+    ? SSE_FALLBACK_REFRESH_INTERVAL
+    : hasRunningDebate
+      ? ACTIVE_REFRESH_INTERVAL
+      : IDLE_REFRESH_INTERVAL;
+
   refreshTimerId = setTimeout(() => {
     void refreshDashboard();
   }, delay);
@@ -3092,6 +4253,13 @@ function updateDashboard(data, providers) {
     latestProviders = providers;
   }
 
+  // Se um servidor legado ainda retornar sessões completas no /status, guarda no cache local.
+  for (const item of latestDebates) {
+    if (Array.isArray(item.tasks) && Array.isArray(item.responses)) {
+      debateDetailsById.set(item.id, item);
+    }
+  }
+
   if (!hasInitializedSelection) {
     hasInitializedSelection = true;
     const runningDebate = latestDebates.find((d) => d.status === "running");
@@ -3102,11 +4270,44 @@ function updateDashboard(data, providers) {
     selectedDebateId &&
     !latestDebates.some((d) => d.id === selectedDebateId)
   ) {
+    debateDetailsById.delete(selectedDebateId);
     selectedDebateId = null;
   }
 
+  // Garante que o detalhe completo da conversa selecionada esteja sincronizado com o updatedAt do /status.
+  if (selectedDebateId) {
+    const summary = latestDebates.find((d) => d.id === selectedDebateId);
+    const cached = debateDetailsById.get(selectedDebateId);
+    const needsDetail =
+      summary &&
+      (!cached ||
+        cached.updatedAt !== summary.updatedAt ||
+        cached.status !== summary.status);
+    if (needsDetail && detailFetchInFlightId !== selectedDebateId) {
+      void loadDebateDetail(selectedDebateId);
+    }
+  }
+
+  // Se o servidor suportar SSE, garante conexão ativa em tempo real.
+  if (data?.capabilities?.streaming && !eventSource) {
+    connectEventStream();
+  }
+
   setText("#total-events", String(totalEvents));
-  setText("#monitor-status", "Monitoramento local ativo");
+  setText(
+    "#monitor-status",
+    isSseConnected ? "Tempo real (SSE) ativo" : "Monitoramento local ativo"
+  );
+
+  const feedbackEl = $("#debate-form-feedback");
+  const serverSupportsModes = Boolean(data?.capabilities?.responseModes);
+  if (feedbackEl) {
+    if (!serverSupportsModes) {
+      feedbackEl.textContent = "Reinicie o servidor (Ctrl+C e npm run monitor) para ativar os novos modos.";
+    } else if (feedbackEl.textContent.includes("Reinicie o servidor")) {
+      feedbackEl.textContent = "";
+    }
+  }
 
   updatePlatformCards(sortedEvents);
   updateProviderCards(latestProviders);
@@ -3117,6 +4318,7 @@ function updateDashboard(data, providers) {
   updateStageTopbar();
   renderChatStage();
   updateRightAiPanel();
+  syncComposerModeUi();
 }
 
 async function refreshDashboard() {
@@ -3327,7 +4529,68 @@ function initializeUiBindings() {
   const createForm = $("#create-debate-form");
   if (createForm) {
     createForm.addEventListener("submit", handleCreateDebate);
+
+    createForm.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      createForm.classList.add("is-dragover");
+    });
+
+    createForm.addEventListener("dragleave", (e) => {
+      if (!createForm.contains(e.relatedTarget)) {
+        createForm.classList.remove("is-dragover");
+      }
+    });
+
+    createForm.addEventListener("drop", (e) => {
+      e.preventDefault();
+      createForm.classList.remove("is-dragover");
+      if (e.dataTransfer?.files?.length) {
+        void addComposerFiles(e.dataTransfer.files);
+      }
+    });
   }
+
+  const fileInput = $("#composer-file-input");
+  $("#composer-attach-btn")?.addEventListener("click", () => {
+    fileInput?.click();
+  });
+  fileInput?.addEventListener("change", () => {
+    if (fileInput.files?.length) {
+      void addComposerFiles(fileInput.files);
+      fileInput.value = "";
+    }
+  });
+
+  // Modal de Memória Compartilhada
+  $("#memory-modal-close")?.addEventListener("click", closeMemoryModal);
+  $("#memory-cancel-btn")?.addEventListener("click", closeMemoryModal);
+  $("#memory-modal")?.addEventListener("click", (e) => {
+    if (e.target === $("#memory-modal")) closeMemoryModal();
+  });
+  $("#memory-save-btn")?.addEventListener("click", () => {
+    const val = $("#memory-editor-input")?.value || "";
+    void saveMemoryModal(val);
+  });
+  $("#memory-clear-btn")?.addEventListener("click", () => {
+    const textarea = $("#memory-editor-input");
+    if (textarea) textarea.value = "";
+    void saveMemoryModal("");
+  });
+
+  document.addEventListener("click", () => {
+    for (const openMenu of $$(".review-dropdown-menu")) {
+      openMenu.hidden = true;
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeMemoryModal();
+      for (const openMenu of $$(".review-dropdown-menu")) {
+        openMenu.hidden = true;
+      }
+    }
+  });
 
   const topicTextarea = $("#debate-topic");
   if (topicTextarea) {
@@ -3355,6 +4618,30 @@ function initializeUiBindings() {
     syncPill();
   }
 
+  for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
+    btn.addEventListener("click", () => {
+      const mode = btn.getAttribute("data-response-mode");
+      if (mode === "normal" || mode === "prompt_markdown") {
+        selectedResponseMode = mode;
+        saveStoredOption(RESPONSE_MODE_STORAGE_KEY, mode);
+        syncComposerModeUi();
+      }
+    });
+  }
+
+  for (const btn of $$("#interaction-mode-toggle .mode-seg-btn")) {
+    btn.addEventListener("click", () => {
+      const mode = btn.getAttribute("data-interaction-mode");
+      if (mode === "direct" || mode === "debate") {
+        selectedInteractionMode = mode;
+        saveStoredOption(INTERACTION_MODE_STORAGE_KEY, mode);
+        syncComposerModeUi();
+      }
+    });
+  }
+
+  syncComposerModeUi();
+
   const advBtn = $("#toggle-advanced-btn");
   const advPanel = $("#composer-advanced");
   if (advBtn && advPanel) {
@@ -3364,7 +4651,7 @@ function initializeUiBindings() {
       advBtn.setAttribute("aria-expanded", String(isHidden));
       const span = advBtn.querySelector("span");
       if (span) {
-        span.textContent = isHidden ? "− Ocultar opções" : "+ Opções avançadas";
+        span.textContent = isHidden ? "− Opções" : "+ Opções";
       }
     });
   }
@@ -3437,6 +4724,8 @@ function initializeUiBindings() {
       if (authInput) authInput.value = "";
       if (lockBtn) lockBtn.hidden = false;
       hideAuthLockOverlay();
+      disconnectEventStream();
+      connectEventStream();
       await refreshDashboard();
     } catch (err) {
       if (authError) {
@@ -3449,6 +4738,7 @@ function initializeUiBindings() {
   });
 
   lockBtn?.addEventListener("click", async () => {
+    disconnectEventStream();
     setStoredSessionToken("");
     await fetchJson("/auth/logout", { method: "POST" }).catch(() => {});
     showAuthLockOverlay("Sessão bloqueada neste dispositivo.");

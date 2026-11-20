@@ -50,15 +50,55 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
         request,
         headroom,
         call: async (model) => {
-          const params = {
+          const baseParams = {
             model,
             messages: [
-              { role: "system", content: request.system },
-              { role: "user", content: request.user }
+              { role: "system" as const, content: request.system },
+              { role: "user" as const, content: request.user }
             ],
             [options.maxTokensParam]: request.maxTokens + headroom,
             ...(options.extraBody ? options.extraBody(model) : {})
-          } as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
+          };
+
+          if (request.onDelta) {
+            const streamParams = {
+              ...baseParams,
+              stream: true as const,
+              ...(options.id === "groq"
+                ? { stream_options: { include_usage: true } }
+                : {})
+            } as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming;
+
+            const stream = await client.chat.completions.create(streamParams);
+
+            let fullText = "";
+            let inputTokens: number | undefined;
+            let outputTokens: number | undefined;
+            let totalTokens: number | undefined;
+
+            for await (const chunk of stream) {
+              const piece = chunk.choices?.[0]?.delta?.content ?? "";
+              if (piece) {
+                fullText += piece;
+                request.onDelta(piece);
+              }
+              if (chunk.usage) {
+                inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
+                outputTokens = chunk.usage.completion_tokens ?? outputTokens;
+                totalTokens = chunk.usage.total_tokens ?? totalTokens;
+              }
+            }
+
+            return {
+              text: fullText,
+              inputTokens,
+              outputTokens,
+              totalTokens
+            };
+          }
+
+          const params =
+            baseParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
 
           const response = await client.chat.completions.create(params);
 

@@ -55,6 +55,40 @@
         </div>
     </div>
 
+    <!-- MODAL: EDITOR DE MEMÓRIA COMPARTILHADA -->
+    <div class="memory-modal-overlay" id="memory-modal" hidden>
+        <div class="memory-modal-card" role="dialog" aria-modal="true" aria-labelledby="memory-modal-title">
+            <div class="memory-modal-header">
+                <div class="memory-modal-title-group">
+                    <span class="eyebrow">CONTEXTO UNIFICADO</span>
+                    <h3 id="memory-modal-title">Memória Compartilhada</h3>
+                </div>
+                <button type="button" class="icon-btn" id="memory-modal-close" aria-label="Fechar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <textarea
+                id="memory-editor-input"
+                class="memory-editor-textarea"
+                rows="10"
+                placeholder="Fatos, regras ou contexto fixo compartilhado entre Gemini, Groq e OpenRouter..."
+            ></textarea>
+
+            <div class="memory-modal-footer">
+                <span class="form-feedback" id="memory-modal-feedback" role="status"></span>
+                <div class="memory-modal-actions">
+                    <button type="button" class="btn-secondary" id="memory-clear-btn">Limpar</button>
+                    <button type="button" class="btn-ghost-pill" id="memory-cancel-btn">Cancelar</button>
+                    <button type="button" class="btn-primary" id="memory-save-btn">Salvar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="app-container" id="app-shell">
 
         <!-- OVERLAY MOBILE PARA DRAWERS -->
@@ -91,7 +125,7 @@
                 </div>
 
                 <button type="button" class="btn-primary btn-new-debate" id="btn-new-debate">
-                    <span>+ Novo Debate</span>
+                    <span>+ Nova Conversa</span>
                     <span class="cta-arrow" aria-hidden="true">→</span>
                 </button>
             </div>
@@ -215,7 +249,7 @@
 
                     <div class="topbar-title-group">
                         <span class="breadcrumb" id="topbar-breadcrumb" hidden>CHAT</span>
-                        <h2 id="topbar-title">Novo Debate</h2>
+                        <h2 id="topbar-title">Nova Conversa</h2>
                         <p id="topbar-meta" hidden></p>
                     </div>
                 </div>
@@ -273,7 +307,7 @@
                                 <span class="word-bone parallax-word" data-parallax-depth="0.6">AI COUNCIL</span>
                             </h3>
                             <p class="zero-state-subtitle">
-                                Envie o problema abaixo para iniciar o debate técnico em rodadas com síntese final em Markdown.
+                                Escolha o modo abaixo: resposta normal ou Prompt Markdown, direto ou em debate.
                             </p>
 
                             <!-- TRILHA HORIZONTAL SCROLL NO ZERO STATE (TEMPLATES & DEBATES RECENTES) -->
@@ -305,13 +339,23 @@
                 <div class="composer-dock" id="composer-dock">
                     <form id="create-debate-form" class="composer-card" novalidate>
 
+                        <!-- ANEXOS DE ARQUIVO (PÍLULAS REMOVÍVEIS) -->
+                        <div class="composer-attachments-bar" id="composer-attachments-bar" hidden></div>
+                        <input
+                            type="file"
+                            id="composer-file-input"
+                            multiple
+                            hidden
+                            accept=".txt,.md,.js,.ts,.jsx,.tsx,.json,.html,.css,.java,.py,.sql,.yml,.yaml,.xml,.csv,.sh,.ps1,.c,.cpp,.h,.go,.rs,.php,.rb,.example"
+                        >
+
                         <!-- CAMPO PRINCIPAL DE TEXTO (AUTO-EXPANSÍVEL) -->
                         <div class="composer-input-wrap">
-                            <label for="debate-topic" class="sr-only">Tema / Problema para análise conjunta</label>
+                            <label for="debate-topic" class="sr-only">Mensagem</label>
                             <textarea
                                 id="debate-topic"
                                 rows="2"
-                                placeholder="Descreva o problema para análise conjunta do AI Council... (Enter envia, Shift + Enter quebra linha)"
+                                placeholder="Pergunte algo... (Enter envia, Shift + Enter quebra linha)"
                                 required
                             ></textarea>
                         </div>
@@ -320,61 +364,75 @@
                         <div class="composer-advanced" id="composer-advanced" hidden>
                             <div class="composer-advanced-grid">
                                 <div class="form-group">
-                                    <label for="debate-title">Título do debate (opcional — gerado automaticamente se vazio)</label>
+                                    <label for="debate-title">Título (opcional)</label>
                                     <input
                                         type="text"
                                         id="debate-title"
-                                        placeholder="Ex.: Arquitetura de microsserviços vs. monolito modular"
+                                        placeholder="Gerado automaticamente se vazio"
                                         maxlength="120"
                                     >
                                 </div>
 
                                 <div class="form-group">
-                                    <label for="debate-rules">Regras e diretrizes (opcional)</label>
+                                    <label for="debate-rules">Instruções extras (opcional)</label>
                                     <input
                                         type="text"
                                         id="debate-rules"
-                                        placeholder="Analise com rigor técnico, aponte falhas das outras IAs com objetividade e proponha consenso."
+                                        placeholder="Ex.: Seja breve, use exemplos práticos..."
                                     >
                                 </div>
                             </div>
                         </div>
 
-                        <!-- BARRA ESSENCIAL DE CONTROLES: PARTICIPANTES + RODADAS + PAPEL/FOCO + AVANÇADO + CTA -->
+                        <!-- BARRA ESSENCIAL DE CONTROLES -->
                         <div class="composer-footer">
                             <div class="composer-controls">
+                                <!-- Modo de Resposta: Normal | Prompt MD -->
+                                <div class="mode-segmented-pill" id="response-mode-toggle" role="group" aria-label="Formato da resposta">
+                                    <button type="button" class="mode-seg-btn is-active" data-response-mode="normal" aria-pressed="true">Normal</button>
+                                    <button type="button" class="mode-seg-btn" data-response-mode="prompt_markdown" aria-pressed="false">Prompt MD</button>
+                                </div>
+
+                                <!-- Dinâmica: Direto | Debate -->
+                                <div class="mode-segmented-pill" id="interaction-mode-toggle" role="group" aria-label="Dinâmica das IAs">
+                                    <button type="button" class="mode-seg-btn is-active" data-interaction-mode="direct" aria-pressed="true">Direto</button>
+                                    <button type="button" class="mode-seg-btn" data-interaction-mode="debate" aria-pressed="false">Debate</button>
+                                </div>
+
+                                <span class="controls-divider" aria-hidden="true"></span>
+
                                 <!-- Participantes -->
-                                <div class="participant-pills" role="group" aria-label="Inteligências participantes">
-                                    <label class="participant-pill is-selected" title="Google Gemini (API Automática)">
+                                <div class="participant-pills" role="group" aria-label="IAs">
+                                    <label class="participant-pill is-selected" title="Gemini">
                                         <input type="checkbox" name="participants" value="gemini" checked>
                                         <span class="pill-name">Gemini</span>
                                     </label>
 
-                                    <label class="participant-pill is-selected" title="Groq (API Automática)">
+                                    <label class="participant-pill is-selected" title="Groq">
                                         <input type="checkbox" name="participants" value="groq" checked>
                                         <span class="pill-name">Groq</span>
                                     </label>
 
-                                    <label class="participant-pill is-selected" title="OpenRouter (API Automática :free)">
+                                    <label class="participant-pill is-selected" title="OpenRouter">
                                         <input type="checkbox" name="participants" value="openrouter" checked>
                                         <span class="pill-name">OpenRouter</span>
                                     </label>
 
-                                    <label class="participant-pill" title="ChatGPT (Assento Manual)">
+                                    <label class="participant-pill" title="ChatGPT (Manual)">
                                         <input type="checkbox" name="participants" value="chatgpt">
                                         <span class="pill-name">ChatGPT</span>
                                     </label>
 
-                                    <label class="participant-pill" title="Claude (Assento Manual)">
+                                    <label class="participant-pill" title="Claude (Manual)">
                                         <input type="checkbox" name="participants" value="claude">
                                         <span class="pill-name">Claude</span>
                                     </label>
                                 </div>
 
-                                <span class="controls-divider" aria-hidden="true"></span>
+                                <span class="controls-divider" id="composer-extra-divider" aria-hidden="true" hidden></span>
 
-                                <!-- Rodadas -->
-                                <div class="compact-control">
+                                <!-- Rodadas (visível apenas em Debate) -->
+                                <div class="compact-control" id="rounds-control-wrap" hidden>
                                     <label for="debate-rounds">Rodadas</label>
                                     <select id="debate-rounds">
                                         <option value="1">1 + Síntese</option>
@@ -383,26 +441,31 @@
                                     </select>
                                 </div>
 
-                                <!-- Papel / Foco -->
-                                <div class="compact-control">
+                                <!-- Foco (visível apenas em Prompt MD) -->
+                                <div class="compact-control" id="focus-control-wrap" hidden>
                                     <label for="debate-focus">Foco</label>
                                     <select id="debate-focus">
                                         <option value="geral" selected>Geral</option>
-                                        <option value="backend">Backend / código</option>
+                                        <option value="backend">Backend</option>
                                         <option value="frontend">Frontend</option>
                                     </select>
                                 </div>
 
+                                <!-- Anexar arquivo -->
+                                <button type="button" class="btn-ghost-pill" id="composer-attach-btn" title="Anexar arquivo de texto ou código">
+                                    <span>+ Arquivo</span>
+                                </button>
+
                                 <!-- Opções Avançadas -->
                                 <button type="button" class="btn-ghost-pill" id="toggle-advanced-btn" aria-expanded="false" aria-controls="composer-advanced">
-                                    <span>+ Opções avançadas</span>
+                                    <span>+ Opções</span>
                                 </button>
                             </div>
 
                             <div class="composer-submit-group">
                                 <span id="debate-form-feedback" class="form-feedback" role="status" aria-live="polite"></span>
                                 <button type="submit" class="btn-primary composer-send-btn" id="composer-submit-btn">
-                                    <span>Iniciar Debate</span>
+                                    <span>Enviar</span>
                                     <span class="cta-arrow" aria-hidden="true">→</span>
                                 </button>
                             </div>
