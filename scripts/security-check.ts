@@ -51,6 +51,21 @@ const HARDCODED_SECRET_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   }
 ];
 
+const PERSONAL_INFO_PATTERNS: Array<{ label: string; regex: RegExp }> = [
+  {
+    label: "Hostname Tailscale pessoal (*.tail*.ts.net)",
+    regex: /\b[a-z0-9-]+\.tail[0-9a-f]{4,}\.ts\.net\b/i
+  },
+  {
+    label: "IP Tailscale específico (100.65-127.x.x)",
+    regex: /\b100\.(?:6[5-9]|[7-9]\d|1[0-1]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/
+  },
+  {
+    label: "Caminho local com nome de usuário Windows",
+    regex: /[A-Za-z]:\\Users\\(?!seu-usuario\b|usuario\b|user\b|username\b|example\b)[A-Za-z0-9._-]+/i
+  }
+];
+
 function checkGitSecretsGate(): { ok: boolean; detail: string; warning?: string } {
   let trackedFiles: string[] = [];
   try {
@@ -108,9 +123,36 @@ function checkGitSecretsGate(): { ok: boolean; detail: string; warning?: string 
     };
   }
 
+  // Varredura de informações pessoais / IPs e hostnames privados (inclui tests/ e docs)
+  const allTextFiles = trackedFiles.filter(
+    (f) =>
+      !f.startsWith("public/vendor/") &&
+      /\.(ts|js|mjs|cjs|html|css|json|md)$/.test(f) &&
+      !f.endsWith("security-check.ts") &&
+      f !== "package-lock.json"
+  );
+  const personalHits: string[] = [];
+  for (const rel of allTextFiles) {
+    const abs = resolve(ROOT_DIR, rel);
+    if (!existsSync(abs)) continue;
+    const content = readFileSync(abs, "utf8");
+    for (const rule of PERSONAL_INFO_PATTERNS) {
+      if (rule.regex.test(content)) {
+        personalHits.push(`${rel} (${rule.label})`);
+      }
+    }
+  }
+
+  if (personalHits.length > 0) {
+    return {
+      ok: false,
+      detail: `Informação pessoal/rede privada encontrada em: ${personalHits.join("; ")}`
+    };
+  }
+
   return {
     ok: true,
-    detail: `${trackedFiles.length} arquivo(s) rastreado(s) verificados — nenhum segredo ou pasta data/ no Git.`
+    detail: `${trackedFiles.length} arquivo(s) rastreado(s) verificados — nenhum segredo, IP/hostname privado ou pasta data/ no Git.`
   };
 }
 
