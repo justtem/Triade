@@ -21,6 +21,7 @@ export const BLOCKED_DIR_NAMES = new Set([
   ".git",
   ".svn",
   ".hg",
+  ".ai-council-backup",
   "node_modules",
   "dist",
   "build",

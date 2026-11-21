@@ -1,7 +1,6 @@
 import {
   AUTO_PLATFORM_IDS,
   INTERACTION_MODE_LABELS,
-  INTERACTION_MODE_STORAGE_KEY,
   RESPONSE_MODE_LABELS,
   RESPONSE_MODE_STORAGE_KEY,
   WEB_SEARCH_STORAGE_KEY,
@@ -11,6 +10,7 @@ import {
   state
 } from "./state.js";
 import {
+  applyComposerMode,
   applyPromptTemplate,
   openTemplatesModal,
   setAutoRouteMode,
@@ -109,6 +109,58 @@ function buildPaletteItems(rawQuery) {
       }
     },
     {
+      id: "act:mode-quick",
+      section: "AÇÕES RÁPIDAS",
+      title: "Modo: Chat Rápido (1 IA)",
+      subtitle: "Resposta direta com 1 IA (padrão Gemini, troca em 1 clique)",
+      badge: state.activeComposerMode === "quick" ? "Ativo" : "",
+      keywords: "modo chat rapido 1 ia direto gemini groq",
+      run: () => {
+        applyComposerMode("quick");
+        switchView("chat");
+        $("#debate-topic")?.focus();
+      }
+    },
+    {
+      id: "act:mode-council",
+      section: "AÇÕES RÁPIDAS",
+      title: "Modo: Conselho (Trio em paralelo)",
+      subtitle: "Gemini + Groq + OpenRouter respondem juntos (veredito sob demanda)",
+      badge: state.activeComposerMode === "council" ? "Ativo" : "",
+      keywords: "modo conselho trio paralelo opinioes",
+      run: () => {
+        applyComposerMode("council");
+        switchView("chat");
+        $("#debate-topic")?.focus();
+      }
+    },
+    {
+      id: "act:mode-debate",
+      section: "AÇÕES RÁPIDAS",
+      title: "Modo: Debate (Crítica cruzada + Síntese)",
+      subtitle: "As IAs debatem entre si e fecham uma conclusão unificada",
+      badge: state.activeComposerMode === "debate" ? "Ativo" : "",
+      keywords: "modo debate rodadas critica sintese",
+      run: () => {
+        applyComposerMode("debate");
+        switchView("chat");
+        $("#debate-topic")?.focus();
+      }
+    },
+    {
+      id: "act:mode-builder",
+      section: "AÇÕES RÁPIDAS",
+      title: "Modo: Construtor (Pasta do Projeto)",
+      subtitle: "Planeja arquitetura e arquivos vinculados à pasta local do projeto",
+      badge: state.activeComposerMode === "builder" ? "Ativo" : "",
+      keywords: "modo construtor pasta projeto codigo arquitetura",
+      run: () => {
+        applyComposerMode("builder");
+        switchView("chat");
+        $("#debate-topic")?.focus();
+      }
+    },
+    {
       id: "act:ai-auto",
       section: "AÇÕES RÁPIDAS",
       title: "Usar Roteador Inteligente (Auto)",
@@ -122,22 +174,10 @@ function buildPaletteItems(rawQuery) {
       }
     },
     {
-      id: "act:ai-trio",
-      section: "AÇÕES RÁPIDAS",
-      title: "Usar Trio (Gemini + Groq + OpenRouter)",
-      subtitle: "Consultar as 3 IAs em paralelo",
-      keywords: "ia trio conselho todas gemini groq openrouter",
-      run: () => {
-        setSelectedParticipants(AUTO_PLATFORM_IDS, { singleMode: false });
-        switchView("chat");
-        $("#debate-topic")?.focus();
-      }
-    },
-    {
       id: "act:ai-gemini",
       section: "AÇÕES RÁPIDAS",
       title: "Falar só com Gemini",
-      subtitle: "Modo direto 1 IA (Google)",
+      subtitle: "Chat Rápido com Google Gemini",
       keywords: "ia gemini google",
       run: () => {
         setSelectedParticipants(["gemini"], { singleMode: true });
@@ -149,7 +189,7 @@ function buildPaletteItems(rawQuery) {
       id: "act:ai-groq",
       section: "AÇÕES RÁPIDAS",
       title: "Falar só com Groq",
-      subtitle: "Modo direto 1 IA (baixa latência)",
+      subtitle: "Chat Rápido com Groq (baixa latência)",
       keywords: "ia groq rapido",
       run: () => {
         setSelectedParticipants(["groq"], { singleMode: true });
@@ -161,36 +201,12 @@ function buildPaletteItems(rawQuery) {
       id: "act:ai-openrouter",
       section: "AÇÕES RÁPIDAS",
       title: "Falar só com OpenRouter (:free)",
-      subtitle: "Modo direto 1 IA com auto-fallback gratuito",
+      subtitle: "Chat Rápido com auto-fallback gratuito",
       keywords: "ia openrouter free gratis",
       run: () => {
         setSelectedParticipants(["openrouter"], { singleMode: true });
         switchView("chat");
         $("#debate-topic")?.focus();
-      }
-    },
-    {
-      id: "act:toggle-interaction",
-      section: "AÇÕES RÁPIDAS",
-      title:
-        state.selectedInteractionMode === "debate"
-          ? "Mudar para modo Direto"
-          : "Mudar para modo Debate",
-      subtitle:
-        state.selectedInteractionMode === "debate"
-          ? "Respostas independentes em 1 rodada"
-          : "Crítica cruzada + síntese entre as IAs",
-      keywords: "modo direto debate rodada sintese",
-      run: () => {
-        const next = state.selectedInteractionMode === "debate" ? "direct" : "debate";
-        state.selectedInteractionMode = next;
-        saveStoredOption(INTERACTION_MODE_STORAGE_KEY, next);
-        if (next === "debate" && !state.isAutoRouteMode) {
-          setSelectedParticipants(AUTO_PLATFORM_IDS, { singleMode: false });
-        } else {
-          syncComposerModeUi();
-        }
-        switchView("chat");
       }
     },
     {
@@ -349,7 +365,7 @@ function buildPaletteItems(rawQuery) {
     }));
 
   // 3. Projetos
-  const projects = Array.isArray(state.projects) ? state.projects : [];
+  const projects = Array.isArray(state.userProjects) ? state.userProjects : [];
   const matchedProjects = projects
     .filter((p) => matches(p.name, p.description, p.instructions))
     .slice(0, 6)

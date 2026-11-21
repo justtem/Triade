@@ -32,6 +32,7 @@ import {
   sendJson
 } from "./http-utils.js";
 import { handleAudioRoutes } from "./routes-audio.js";
+import { handleBuilderRoutes } from "./routes-builder.js";
 import { handleDebateRoutes } from "./routes-debates.js";
 import { handleUserMemoryRoutes } from "./routes-memory.js";
 import { handlePrivacyRoutes } from "./routes-privacy.js";
@@ -410,6 +411,7 @@ export function createMonitorServer(options: MonitorServerOptions = {}): {
     if (await handleAudioRoutes(request, response, url, origin, auth)) return;
     if (await handleProjectRoutes(request, response, url, origin, auth)) return;
     if (await handleTemplateRoutes(request, response, url, origin, auth)) return;
+    if (await handleBuilderRoutes(request, response, url, origin, auth)) return;
     if (await handleDebateRoutes(request, response, url, origin, auth)) return;
     if (await handleEventsRoute(request, response, url, origin, auth)) return;
 

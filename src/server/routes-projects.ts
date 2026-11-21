@@ -10,6 +10,10 @@ import {
   removeProjectFile,
   updateProject
 } from "../persistence/project-store.js";
+import {
+  createSubfolderInParent,
+  pickLocalFolderDialog
+} from "../projects/folder-picker.js";
 import { inspectLinkedFolder } from "../projects/project-rag.js";
 import type { AuthManager } from "./auth.js";
 import {
@@ -152,6 +156,116 @@ export async function handleProjectRoutes(
             error instanceof Error
               ? error.message
               : "Falha ao inspecionar pasta."
+        },
+        origin
+      );
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && url.pathname === "/projects/pick-folder") {
+    if (!auth.isAuthorizedLocalClient(request)) {
+      sendJson(response, 401, { error: "Não autorizado." }, origin);
+      return true;
+    }
+
+    if (!auth.isDirectLocalPCRequest(request)) {
+      sendJson(
+        response,
+        403,
+        {
+          error:
+            "Escolher pastas locais do PC é permitido apenas diretamente no computador local."
+        },
+        origin
+      );
+      return true;
+    }
+
+    let payload: unknown = {};
+    try {
+      const raw = await readRequestBody(request);
+      if (raw.trim()) {
+        payload = JSON.parse(raw);
+      }
+    } catch {
+      sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+      return true;
+    }
+
+    const initialPath =
+      isRecord(payload) && typeof payload.initialPath === "string"
+        ? payload.initialPath
+        : undefined;
+
+    try {
+      const result = await pickLocalFolderDialog(initialPath);
+      sendJson(response, 200, result, origin);
+    } catch (error) {
+      sendJson(
+        response,
+        400,
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Não foi possível abrir o seletor de pastas."
+        },
+        origin
+      );
+    }
+    return true;
+  }
+
+  if (request.method === "POST" && url.pathname === "/projects/create-subfolder") {
+    if (!auth.isAuthorizedLocalClient(request)) {
+      sendJson(response, 401, { error: "Não autorizado." }, origin);
+      return true;
+    }
+
+    if (!auth.isDirectLocalPCRequest(request)) {
+      sendJson(
+        response,
+        403,
+        {
+          error:
+            "Criar subpastas no PC é permitido apenas diretamente no computador local."
+        },
+        origin
+      );
+      return true;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await readRequestBody(request));
+    } catch {
+      sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+      return true;
+    }
+
+    if (!isRecord(payload)) {
+      sendJson(response, 400, { error: "Dados da subpasta inválidos." }, origin);
+      return true;
+    }
+
+    const parentPath =
+      typeof payload.parentPath === "string" ? payload.parentPath : "";
+    const folderName =
+      typeof payload.folderName === "string" ? payload.folderName : "";
+
+    try {
+      const result = await createSubfolderInParent(parentPath, folderName);
+      sendJson(response, result.created ? 201 : 200, result, origin);
+    } catch (error) {
+      sendJson(
+        response,
+        400,
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Não foi possível criar a subpasta."
         },
         origin
       );

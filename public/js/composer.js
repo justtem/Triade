@@ -3,15 +3,15 @@ import {
   AUTO_PLATFORM_IDS,
   ALL_PLATFORM_IDS,
   SVG_ICONS,
+  COMPOSER_MODE_STORAGE_KEY,
+  COMPOSER_MODE_LABELS,
   RESPONSE_MODE_STORAGE_KEY,
   INTERACTION_MODE_STORAGE_KEY,
+  AUTO_VERDICT_STORAGE_KEY,
   SINGLE_AI_STORAGE_KEY,
   AUTO_ROUTE_STORAGE_KEY,
-  RESPONSE_MODE_LABELS,
-  INTERACTION_MODE_LABELS,
   $,
   $$,
-  getAiBrandSvg,
   saveStoredOption,
   state,
   localTaskStartMs,
@@ -95,8 +95,7 @@ export function syncAiSelectionUi() {
     checkedValues.length === AUTO_PLATFORM_IDS.length &&
     AUTO_PLATFORM_IDS.every((id) => checkedValues.includes(id));
 
-  const pillsGroup = $(".participant-pills");
-  if (pillsGroup) {
+  for (const pillsGroup of $$(".participant-pills")) {
     pillsGroup.classList.toggle("is-single-mode", !isAuto && state.isSingleAiMode);
     pillsGroup.classList.toggle("is-auto-mode", isAuto);
   }
@@ -115,25 +114,109 @@ export function syncAiSelectionUi() {
     btn.setAttribute("aria-pressed", String(active));
   }
 
-  // Mantém o seletor rápido da barra superior ("Respondendo: ...") sincronizado
-  const info = getActiveResponderInfo();
-  const topbarLabel = $("#topbar-ai-switcher-label");
-  if (topbarLabel) {
-    topbarLabel.innerHTML = `<span class="topbar-ai-prefix">Respondendo: </span>${escapeHtml(info.shortLabel)}`;
+  const activeSingleKey =
+    checkedValues.length === 1
+      ? checkedValues[0]
+      : AUTO_PLATFORM_IDS.includes(state.preferredSingleAi)
+        ? state.preferredSingleAi
+        : "gemini";
+
+  for (const chip of $$("#composer-quick-ai-picker .quick-ai-chip")) {
+    const platKey = chip.getAttribute("data-quick-ai");
+    const active = !isAuto && platKey === activeSingleKey;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", String(active));
   }
-  const topbarIcon = $("#topbar-ai-switcher-icon");
-  if (topbarIcon) {
-    topbarIcon.setAttribute("data-active-ai", info.key);
-    topbarIcon.innerHTML = getAiBrandSvg(info.key);
+
+  const hasManualChecked = checkedValues.some((id) => !AUTO_PLATFORM_IDS.includes(id));
+  const manualDetails = $("#composer-manual-ais-details");
+  if (manualDetails && hasManualChecked) {
+    manualDetails.open = true;
   }
-  for (const item of $$(".topbar-ai-option")) {
-    const optVal = item.getAttribute("data-ai-switch");
-    const isMatch =
-      (optVal === "auto" && info.isAuto) ||
-      (optVal === "trio" && info.isTrio) ||
-      (info.isSingle && optVal === info.key);
-    item.classList.toggle("is-active", isMatch);
+}
+
+export function deriveComposerModeFromState() {
+  if (state.activeComposerMode === "builder") return "builder";
+  if (state.selectedInteractionMode === "debate") return "debate";
+  if (!state.isAutoRouteMode && (state.isSingleAiMode || getSelectedParticipants().length === 1)) {
+    return "quick";
   }
+  return "council";
+}
+
+export function applyComposerMode(modeKey, options = {}) {
+  const validModes = ["quick", "council", "debate", "builder"];
+  const nextMode = validModes.includes(modeKey) ? modeKey : "council";
+  state.activeComposerMode = nextMode;
+  saveStoredOption(COMPOSER_MODE_STORAGE_KEY, nextMode);
+
+  state.isAutoRouteMode = false;
+  saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
+
+  const roundsSelect = $("#debate-rounds");
+  const focusSelect = $("#debate-focus");
+
+  if (nextMode === "quick") {
+    const chosenAi =
+      options.singleAi && ALL_PLATFORM_IDS.includes(options.singleAi)
+        ? options.singleAi
+        : AUTO_PLATFORM_IDS.includes(state.preferredSingleAi)
+          ? state.preferredSingleAi
+          : "gemini";
+    state.preferredSingleAi = chosenAi;
+    saveStoredOption(SINGLE_AI_STORAGE_KEY, chosenAi);
+    state.isSingleAiMode = true;
+    state.selectedInteractionMode = "direct";
+    state.selectedResponseMode = "normal";
+    state.selectedAutoVerdict = "off";
+    saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
+    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
+    saveStoredOption(AUTO_VERDICT_STORAGE_KEY, "off");
+    for (const cb of $$('input[name="participants"]')) {
+      cb.checked = cb.value === chosenAi;
+    }
+  } else if (nextMode === "council") {
+    state.isSingleAiMode = false;
+    state.selectedInteractionMode = "direct";
+    state.selectedResponseMode = "normal";
+    state.selectedAutoVerdict = "off";
+    saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
+    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
+    saveStoredOption(AUTO_VERDICT_STORAGE_KEY, "off");
+    for (const cb of $$('input[name="participants"]')) {
+      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+    }
+  } else if (nextMode === "debate") {
+    state.isSingleAiMode = false;
+    state.selectedInteractionMode = "debate";
+    if (options.responseMode === "prompt_markdown" || options.responseMode === "normal") {
+      state.selectedResponseMode = options.responseMode;
+      saveStoredOption(RESPONSE_MODE_STORAGE_KEY, options.responseMode);
+    }
+    saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "debate");
+    if (roundsSelect && Number(roundsSelect.value) < 1) {
+      roundsSelect.value = "2";
+    }
+    for (const cb of $$('input[name="participants"]')) {
+      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+    }
+  } else if (nextMode === "builder") {
+    state.isSingleAiMode = false;
+    state.selectedInteractionMode = "debate";
+    state.selectedResponseMode = "prompt_markdown";
+    state.selectedAutoVerdict = "off";
+    saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "debate");
+    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "prompt_markdown");
+    saveStoredOption(AUTO_VERDICT_STORAGE_KEY, "off");
+    if (roundsSelect) roundsSelect.value = "1";
+    if (focusSelect) focusSelect.value = "backend";
+    for (const cb of $$('input[name="participants"]')) {
+      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+    }
+  }
+
+  syncAiSelectionUi();
+  syncComposerModeUi();
 }
 
 export function setAutoRouteMode(enabled = true) {
@@ -142,6 +225,10 @@ export function setAutoRouteMode(enabled = true) {
   saveStoredOption(AUTO_ROUTE_STORAGE_KEY, next ? "on" : "off");
   if (next) {
     state.isSingleAiMode = false;
+    if (state.activeComposerMode === "quick") {
+      state.activeComposerMode = "council";
+      saveStoredOption(COMPOSER_MODE_STORAGE_KEY, "council");
+    }
     for (const cb of $$('input[name="participants"]')) {
       cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
     }
@@ -173,6 +260,11 @@ export function setSelectedParticipants(platformIds, options = {}) {
       state.selectedInteractionMode = "direct";
       saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
     }
+    state.activeComposerMode = "quick";
+    saveStoredOption(COMPOSER_MODE_STORAGE_KEY, "quick");
+  } else if (state.activeComposerMode === "quick") {
+    state.activeComposerMode = state.selectedInteractionMode === "debate" ? "debate" : "council";
+    saveStoredOption(COMPOSER_MODE_STORAGE_KEY, state.activeComposerMode);
   }
 
   for (const cb of $$('input[name="participants"]')) {
@@ -208,25 +300,88 @@ export function syncComposerWithDebate(debate) {
 
   state.lastSyncedComposerDebateId = debate.id;
   if (lastTurn?.autoRoute) {
+    state.activeComposerMode = interMode === "debate" ? "debate" : "council";
     setAutoRouteMode(true);
     return;
   }
+
+  if (participants.length === 1) {
+    state.activeComposerMode = "quick";
+  } else if (interMode === "debate") {
+    state.activeComposerMode = "debate";
+  } else {
+    state.activeComposerMode = "council";
+  }
+
   setSelectedParticipants(participants, {
     singleMode: participants.length === 1
   });
 }
 
 export function syncComposerModeUi() {
-  for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
-    const mode = btn.getAttribute("data-response-mode");
-    const active = mode === state.selectedResponseMode;
+  const modeKey = state.activeComposerMode || deriveComposerModeFromState();
+
+  for (const btn of $$("#composer-mode-pills .composer-mode-btn")) {
+    const key = btn.getAttribute("data-composer-mode");
+    const active = key === modeKey;
     btn.classList.toggle("is-active", active);
     btn.setAttribute("aria-pressed", String(active));
   }
 
-  for (const btn of $$("#interaction-mode-toggle .mode-seg-btn")) {
-    const mode = btn.getAttribute("data-interaction-mode");
-    const active = mode === state.selectedInteractionMode;
+  const quickPicker = $("#composer-quick-ai-picker");
+  if (quickPicker) {
+    quickPicker.hidden = modeKey !== "quick" || Boolean(state.isAutoRouteMode);
+  }
+
+  const builderBanner = $("#composer-builder-banner");
+  const builderText = $("#composer-builder-text");
+  const builderLinkBtn = $("#composer-builder-link-btn");
+  const builderAutoWrap = $("#composer-builder-auto-wrap");
+  const builderAutoInput = $("#composer-builder-auto-toggle");
+  if (builderBanner) {
+    const isBuilder = modeKey === "builder";
+    builderBanner.hidden = !isBuilder;
+    if (isBuilder) {
+      const linkedProj = uiHooks.getEffectiveProjectForComposer();
+      const hasFolder = Boolean(linkedProj?.linkedFolderPath);
+      const isLocalHost =
+        window.location?.hostname === "127.0.0.1" ||
+        window.location?.hostname === "localhost" ||
+        window.location?.hostname === "::1";
+      builderBanner.classList.toggle("is-missing-folder", !hasFolder);
+      if (builderText) {
+        if (hasFolder) {
+          const shortFolder = String(linkedProj.linkedFolderPath || "")
+            .split(/[\\/]/)
+            .filter(Boolean)
+            .slice(-2)
+            .join("\\");
+          builderText.textContent = state.builderAutoApplyPref
+            ? `Construtor em ${linkedProj.name} (${shortFolder || linkedProj.linkedFolderPath}) · Debate, grava com backup e testa automaticamente.`
+            : `Construtor em ${linkedProj.name} (${shortFolder || linkedProj.linkedFolderPath}) · Mostra preview/diff antes de aplicar na pasta.`;
+        } else if (linkedProj) {
+          builderText.textContent = `O projeto "${linkedProj.name}" ainda não tem pasta vinculada no PC.`;
+        } else {
+          builderText.textContent =
+            "Modo Construtor exige um Projeto com pasta vinculada no PC.";
+        }
+      }
+      if (builderAutoWrap) {
+        builderAutoWrap.hidden = !hasFolder || !isLocalHost;
+      }
+      if (builderAutoInput) {
+        builderAutoInput.checked = Boolean(state.builderAutoApplyPref);
+      }
+      if (builderLinkBtn) {
+        builderLinkBtn.hidden = hasFolder;
+        builderLinkBtn.textContent = linkedProj ? "Vincular pasta..." : "Criar / vincular projeto...";
+      }
+    }
+  }
+
+  for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
+    const mode = btn.getAttribute("data-response-mode");
+    const active = mode === state.selectedResponseMode;
     btn.classList.toggle("is-active", active);
     btn.setAttribute("aria-pressed", String(active));
   }
@@ -267,15 +422,19 @@ export function syncComposerModeUi() {
 
   const summaryEl = $("#composer-config-summary");
   if (summaryEl) {
-    const modeShort =
-      state.selectedInteractionMode === "debate"
-        ? `Debate ${$("#debate-rounds")?.value || 2}x`
-        : state.selectedResponseMode === "prompt_markdown"
-          ? "Prompt MD"
-          : "Normal";
-    const verdictSuffix = state.selectedAutoVerdict === "on" ? " · Veredito" : "";
-    summaryEl.textContent = `${responder.shortLabel} · ${modeShort}${verdictSuffix}`;
+    const extras = [];
+    if (state.isAutoRouteMode) extras.push("Auto");
+    if (modeKey !== "builder" && state.selectedResponseMode === "prompt_markdown") {
+      extras.push("Prompt MD");
+    }
+    if (state.selectedAutoVerdict === "on") extras.push("Veredito");
+    const checkedNow = getSelectedParticipants();
+    if (checkedNow.some((id) => !AUTO_PLATFORM_IDS.includes(id))) {
+      extras.push("Manual");
+    }
+    summaryEl.textContent = extras.length > 0 ? `Avançado · ${extras.join(" · ")}` : "Avançado";
   }
+
   const submitBtn = $("#composer-submit-btn");
   const submitSpan = $("#composer-submit-btn span:first-child");
   const submitArrow = $("#composer-submit-btn .cta-arrow");
@@ -294,9 +453,11 @@ export function syncComposerModeUi() {
       ? "Parar"
       : isContinuing
         ? "Enviar"
-        : state.selectedInteractionMode === "debate"
-          ? "Debater"
-          : "Enviar";
+        : modeKey === "builder"
+          ? "Construir"
+          : modeKey === "debate"
+            ? "Debater"
+            : "Enviar";
   }
   if (submitArrow) {
     submitArrow.textContent = isRunningActive ? "■" : "→";
@@ -305,14 +466,18 @@ export function syncComposerModeUi() {
   const topicInput = $("#debate-topic");
   if (topicInput) {
     if (isContinuing) {
-      topicInput.placeholder = `Continuar com ${responder.shortLabel}... (Enter envia · / templates)`;
-    } else if (responder.isSingle) {
-      topicInput.placeholder = `Pergunte ao ${responder.shortLabel}... (Enter envia · / templates)`;
+      topicInput.placeholder = `Continuar (${COMPOSER_MODE_LABELS[modeKey] || responder.shortLabel})... (Enter envia · / templates)`;
+    } else if (modeKey === "builder") {
+      topicInput.placeholder =
+        "Descreva o que construir ou alterar na pasta do projeto... (Enter envia · / templates)";
+    } else if (modeKey === "debate") {
+      topicInput.placeholder =
+        "Descreva o problema para as IAs debaterem e fecharem uma síntese... (Enter envia)";
+    } else if (modeKey === "quick") {
+      topicInput.placeholder = `Pergunte direto ao ${responder.shortLabel}... (Enter envia · / templates)`;
     } else {
       topicInput.placeholder =
-        state.selectedResponseMode === "normal"
-          ? "Pergunte algo ou digite / para templates... (Enter envia, Shift + Enter quebra linha)"
-          : "Descreva o problema ou digite / para templates... (Enter envia, Shift + Enter quebra linha)";
+        "Pergunte ao Conselho (3 IAs em paralelo) ou digite / para templates... (Enter envia)";
     }
   }
 
@@ -395,6 +560,18 @@ export async function handleCreateDebate(event) {
     return;
   }
 
+  if (state.activeComposerMode === "builder") {
+    const linkedProj = uiHooks.getEffectiveProjectForComposer();
+    if (!linkedProj || !linkedProj.linkedFolderPath) {
+      if (feedback) {
+        feedback.textContent =
+          "Modo Construtor exige um Projeto com pasta vinculada no PC.";
+      }
+      uiHooks.openProjectModal(linkedProj?.id || null);
+      return;
+    }
+  }
+
   const rawTitle = (titleInput?.value || "").trim();
   const finalTitle = currentDebate
     ? currentDebate.title
@@ -406,7 +583,12 @@ export async function handleCreateDebate(event) {
     state.selectedResponseMode === "prompt_markdown"
       ? focusSelect?.value || "geral"
       : "geral";
-  const rules = (rulesInput?.value || "").trim();
+  const rawRules = (rulesInput?.value || "").trim();
+  const builderHint =
+    state.activeComposerMode === "builder"
+      ? "Modo Construtor: entregue estrutura de pastas clara e cada arquivo completo precedido pelo caminho relativo exato (ex.: ### `src/index.ts`)."
+      : "";
+  const rules = [rawRules, builderHint].filter(Boolean).join(" | ");
 
   const attachmentsSnapshot = state.pendingAttachments.map((f) => ({ ...f }));
 
@@ -448,6 +630,8 @@ export async function handleCreateDebate(event) {
 
     const routingMode = state.isAutoRouteMode ? "auto" : "manual";
     const autoVerdict = state.selectedAutoVerdict === "on";
+    const isBuilderTurn = state.activeComposerMode === "builder";
+    const autoApplyTurn = isBuilderTurn && Boolean(state.builderAutoApplyPref);
 
     let currentAttachments = attachmentsSnapshot;
 
@@ -462,6 +646,8 @@ export async function handleCreateDebate(event) {
               participants,
               routingMode,
               autoVerdict,
+              builderMode: isBuilderTurn || undefined,
+              builderAutoApply: autoApplyTurn || undefined,
               totalRounds,
               focus,
               responseMode: state.selectedResponseMode,
@@ -481,6 +667,8 @@ export async function handleCreateDebate(event) {
               participants,
               routingMode,
               autoVerdict,
+              builderMode: isBuilderTurn || undefined,
+              builderAutoApply: autoApplyTurn || undefined,
               totalRounds,
               focus,
               responseMode: state.selectedResponseMode,
@@ -922,37 +1110,56 @@ export async function saveMemoryModal(summaryText) {
   }
 }
 
+function inferTemplatePresetMode(tpl) {
+  if (!tpl) return "debate";
+  if (tpl.interactionMode === "debate" && tpl.responseMode === "prompt_markdown" && tpl.focus === "backend") {
+    return "builder";
+  }
+  if (tpl.interactionMode === "debate") return "debate";
+  if (tpl.responseMode === "normal") return "council";
+  return "council";
+}
+
+function formatTemplateModeBadge(tpl) {
+  const preset = inferTemplatePresetMode(tpl);
+  return COMPOSER_MODE_LABELS[preset] || "Conselho";
+}
+
+export function syncTemplatePresetFields(presetVal) {
+  const respEl = $("#tpl-response-mode");
+  const interEl = $("#tpl-interaction-mode");
+  const focusEl = $("#tpl-focus");
+  if (presetVal === "quick" || presetVal === "council") {
+    if (respEl) respEl.value = "normal";
+    if (interEl) interEl.value = "direct";
+  } else if (presetVal === "builder") {
+    if (respEl) respEl.value = "prompt_markdown";
+    if (interEl) interEl.value = "debate";
+    if (focusEl && focusEl.value === "geral") focusEl.value = "backend";
+  } else {
+    if (respEl) respEl.value = "normal";
+    if (interEl) interEl.value = "debate";
+  }
+}
+
 export function applyPromptTemplate(tpl) {
   if (!tpl) return;
   const titleInput = $("#debate-title");
   const topicInput = $("#debate-topic");
   const rulesInput = $("#debate-rules");
   const focusSelect = $("#debate-focus");
-  const advPanel = $("#composer-advanced");
-  const advBtn = $("#toggle-advanced-btn");
 
   const nextResponseMode =
     tpl.responseMode === "prompt_markdown" || tpl.responseMode === "normal"
       ? tpl.responseMode
-      : "prompt_markdown";
+      : "normal";
   const nextInteractionMode =
     tpl.interactionMode === "debate" || tpl.interactionMode === "direct"
       ? tpl.interactionMode
       : "debate";
 
-  state.selectedResponseMode = nextResponseMode;
-  state.selectedInteractionMode = nextInteractionMode;
-  saveStoredOption(RESPONSE_MODE_STORAGE_KEY, state.selectedResponseMode);
-  saveStoredOption(INTERACTION_MODE_STORAGE_KEY, state.selectedInteractionMode);
-
-  if (
-    nextInteractionMode === "debate" &&
-    (state.isSingleAiMode || getSelectedParticipants().length < 2)
-  ) {
-    setSelectedParticipants(AUTO_PLATFORM_IDS, { singleMode: false });
-  } else {
-    syncComposerModeUi();
-  }
+  const targetMode = nextInteractionMode === "debate" ? "debate" : "council";
+  applyComposerMode(targetMode, { responseMode: nextResponseMode });
 
   if (titleInput && !getActiveOrSelectedDebate() && tpl.title) {
     titleInput.value = tpl.title;
@@ -962,12 +1169,6 @@ export function applyPromptTemplate(tpl) {
   }
   if (rulesInput) {
     rulesInput.value = tpl.rules || "";
-    if (tpl.rules && advPanel && advPanel.hidden) {
-      advPanel.hidden = false;
-      advBtn?.setAttribute("aria-expanded", "true");
-      const span = advBtn?.querySelector("span");
-      if (span) span.textContent = "− Opções";
-    }
   }
 
   const promptText = tpl.prompt || tpl.topic || "";
@@ -986,22 +1187,44 @@ export function applyPromptTemplate(tpl) {
   closeTemplatesModal();
 }
 
+export function showTemplatesListView() {
+  state.templatesViewMode = "list";
+  state.editingTemplateId = null;
+
+  const bodyEl = $("#templates-modal-body");
+  const listPane = $("#templates-list-pane");
+  const editorPane = $("#template-editor-form");
+  const newBtn = $("#templates-new-btn");
+  const fb = $("#templates-modal-feedback");
+
+  if (bodyEl) bodyEl.classList.add("is-list-view");
+  if (listPane) listPane.hidden = false;
+  if (editorPane) editorPane.hidden = true;
+  if (newBtn) newBtn.hidden = false;
+  if (fb) fb.textContent = "";
+
+  renderTemplatesModalList();
+}
+
 export function resetTemplateEditorForm() {
   state.editingTemplateId = null;
   const modeLabel = $("#tpl-editor-mode-label");
   const resetBtn = $("#tpl-reset-btn");
   const saveBtnSpan = $("#tpl-save-btn span");
   const fb = $("#templates-modal-feedback");
+  const moreDetails = $("#tpl-more-details");
 
   if (modeLabel) modeLabel.textContent = "NOVO TEMPLATE";
   if (resetBtn) resetBtn.hidden = true;
   if (saveBtnSpan) saveBtnSpan.textContent = "Salvar Template";
   if (fb) fb.textContent = "";
+  if (moreDetails) moreDetails.open = false;
 
   const titleEl = $("#tpl-title");
   const tagEl = $("#tpl-tag");
   const promptEl = $("#tpl-prompt");
   const rulesEl = $("#tpl-rules");
+  const presetEl = $("#tpl-preset-mode");
   const respEl = $("#tpl-response-mode");
   const interEl = $("#tpl-interaction-mode");
   const focusEl = $("#tpl-focus");
@@ -1010,16 +1233,45 @@ export function resetTemplateEditorForm() {
   if (tagEl) tagEl.value = "";
   if (promptEl) promptEl.value = "";
   if (rulesEl) rulesEl.value = "";
+  if (presetEl) presetEl.value = "debate";
   if (respEl) respEl.value = "normal";
-  if (interEl) interEl.value = "direct";
+  if (interEl) interEl.value = "debate";
   if (focusEl) focusEl.value = "geral";
+}
 
-  renderTemplatesModalList();
+export function openTemplateEditorView(tpl = null) {
+  state.templatesViewMode = "editor";
+
+  const bodyEl = $("#templates-modal-body");
+  const listPane = $("#templates-list-pane");
+  const editorPane = $("#template-editor-form");
+  const newBtn = $("#templates-new-btn");
+
+  if (bodyEl) bodyEl.classList.remove("is-list-view");
+  if (listPane) listPane.hidden = true;
+  if (editorPane) editorPane.hidden = false;
+  if (newBtn) newBtn.hidden = true;
+
+  if (tpl) {
+    startEditTemplate(tpl);
+  } else {
+    resetTemplateEditorForm();
+    $("#tpl-title")?.focus();
+  }
 }
 
 export function startEditTemplate(tpl) {
   if (!tpl) return;
   state.editingTemplateId = tpl.id;
+  state.templatesViewMode = "editor";
+
+  const listPane = $("#templates-list-pane");
+  const editorPane = $("#template-editor-form");
+  const newBtn = $("#templates-new-btn");
+  const moreDetails = $("#tpl-more-details");
+  if (listPane) listPane.hidden = true;
+  if (editorPane) editorPane.hidden = false;
+  if (newBtn) newBtn.hidden = true;
 
   const modeLabel = $("#tpl-editor-mode-label");
   const resetBtn = $("#tpl-reset-btn");
@@ -1027,7 +1279,7 @@ export function startEditTemplate(tpl) {
   const fb = $("#templates-modal-feedback");
 
   if (modeLabel) modeLabel.textContent = "EDITANDO TEMPLATE";
-  if (resetBtn) resetBtn.hidden = false;
+  if (resetBtn) resetBtn.hidden = true;
   if (saveBtnSpan) saveBtnSpan.textContent = "Atualizar Template";
   if (fb) fb.textContent = "";
 
@@ -1035,6 +1287,7 @@ export function startEditTemplate(tpl) {
   const tagEl = $("#tpl-tag");
   const promptEl = $("#tpl-prompt");
   const rulesEl = $("#tpl-rules");
+  const presetEl = $("#tpl-preset-mode");
   const respEl = $("#tpl-response-mode");
   const interEl = $("#tpl-interaction-mode");
   const focusEl = $("#tpl-focus");
@@ -1043,11 +1296,14 @@ export function startEditTemplate(tpl) {
   if (tagEl) tagEl.value = tpl.tag || "";
   if (promptEl) promptEl.value = tpl.prompt || "";
   if (rulesEl) rulesEl.value = tpl.rules || "";
+  if (presetEl) presetEl.value = inferTemplatePresetMode(tpl);
   if (respEl) respEl.value = tpl.responseMode || "normal";
   if (interEl) interEl.value = tpl.interactionMode || "direct";
   if (focusEl) focusEl.value = tpl.focus || "geral";
+  if (moreDetails) {
+    moreDetails.open = Boolean(tpl.rules || tpl.tag);
+  }
 
-  renderTemplatesModalList();
   titleEl?.focus();
 }
 
@@ -1057,37 +1313,47 @@ export function renderTemplatesModalList() {
 
   listEl.replaceChildren();
   const templates = Array.isArray(state.promptTemplates) ? state.promptTemplates : [];
+  const rawFilter = String(state.templatesSearchQuery || "").trim().toLowerCase();
+  const filtered = rawFilter
+    ? templates.filter((t) => {
+        const hay = `${t.title || ""} ${t.tag || ""} ${t.prompt || ""}`.toLowerCase();
+        return hay.includes(rawFilter);
+      })
+    : templates;
 
   if (templates.length === 0) {
     const empty = document.createElement("div");
     empty.className = "sidebar-empty";
-    empty.textContent = "Nenhum template salvo ainda. Crie um ao lado!";
+    empty.textContent = "Nenhum template salvo ainda. Clique em \"+ Novo Template\" acima.";
     listEl.appendChild(empty);
     return;
   }
 
-  for (const tpl of templates) {
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "sidebar-empty";
+    empty.textContent = `Nenhum template encontrado para "${state.templatesSearchQuery}".`;
+    listEl.appendChild(empty);
+    return;
+  }
+
+  for (const tpl of filtered) {
     const card = document.createElement("article");
-    card.className = `template-list-card${state.editingTemplateId === tpl.id ? " is-editing" : ""}`;
+    card.className = "template-list-card";
     card.setAttribute("role", "listitem");
 
     const top = document.createElement("div");
     top.className = "template-list-card-top";
 
-    const tag = document.createElement("span");
-    tag.className = "zero-h-tag";
-    tag.textContent = tpl.tag || "TEMPLATE";
+    const h4 = document.createElement("h4");
+    h4.textContent = tpl.title;
 
     const modeMeta = document.createElement("span");
     modeMeta.className = "template-list-meta";
-    const respLabel = RESPONSE_MODE_LABELS[tpl.responseMode] || "Normal";
-    const interLabel = INTERACTION_MODE_LABELS[tpl.interactionMode] || "Direto";
-    modeMeta.textContent = `${respLabel} · ${interLabel}`;
+    const tagPrefix = tpl.tag ? `${tpl.tag} · ` : "";
+    modeMeta.textContent = `${tagPrefix}${formatTemplateModeBadge(tpl)}`;
 
-    top.append(tag, modeMeta);
-
-    const h4 = document.createElement("h4");
-    h4.textContent = tpl.title;
+    top.append(h4, modeMeta);
 
     const preview = document.createElement("p");
     preview.textContent = tpl.prompt;
@@ -1105,7 +1371,7 @@ export function renderTemplatesModalList() {
     editBtn.type = "button";
     editBtn.className = "btn-secondary template-edit-btn";
     editBtn.innerHTML = `${SVG_ICONS.pencil}<span>Editar</span>`;
-    editBtn.addEventListener("click", () => startEditTemplate(tpl));
+    editBtn.addEventListener("click", () => openTemplateEditorView(tpl));
 
     const delBtn = document.createElement("button");
     delBtn.type = "button";
@@ -1118,7 +1384,7 @@ export function renderTemplatesModalList() {
     });
 
     actions.append(useBtn, editBtn, delBtn);
-    card.append(top, h4, preview, actions);
+    card.append(top, preview, actions);
     listEl.appendChild(card);
   }
 }
@@ -1126,9 +1392,14 @@ export function renderTemplatesModalList() {
 export function openTemplatesModal() {
   const modal = $("#templates-modal");
   if (!modal) return;
+  state.templatesSearchQuery = "";
+  const searchInput = $("#templates-search-input");
+  if (searchInput) searchInput.value = "";
+  const listFb = $("#templates-list-feedback");
+  if (listFb) listFb.textContent = "";
   modal.hidden = false;
-  resetTemplateEditorForm();
-  renderTemplatesModalList();
+  showTemplatesListView();
+  searchInput?.focus();
   void loadPromptTemplates();
 }
 
@@ -1136,11 +1407,13 @@ export function closeTemplatesModal() {
   const modal = $("#templates-modal");
   if (modal) modal.hidden = true;
   state.editingTemplateId = null;
+  state.templatesViewMode = "list";
 }
 
 export async function handleSaveTemplateForm(event) {
   event.preventDefault();
   const fb = $("#templates-modal-feedback");
+  const listFb = $("#templates-list-feedback");
   const saveBtn = $("#tpl-save-btn");
 
   const title = ($("#tpl-title")?.value || "").trim();
@@ -1204,8 +1477,8 @@ export async function handleSaveTemplateForm(event) {
 
     state.lastZeroShowcaseSignature = "";
     uiHooks.renderZeroStateHorizontalShowcase();
-    resetTemplateEditorForm();
-    if (fb) fb.textContent = "Template salvo!";
+    showTemplatesListView();
+    if (listFb) listFb.textContent = "Template salvo!";
   } catch (error) {
     if (fb) {
       fb.textContent =
@@ -1217,7 +1490,7 @@ export async function handleSaveTemplateForm(event) {
 }
 
 export async function handleDeleteTemplate(templateId) {
-  const fb = $("#templates-modal-feedback");
+  const fb = $("#templates-list-feedback") || $("#templates-modal-feedback");
   try {
     let res;
     try {
@@ -1233,11 +1506,7 @@ export async function handleDeleteTemplate(templateId) {
     } else {
       state.promptTemplates = state.promptTemplates.filter((t) => t.id !== templateId);
     }
-    if (state.editingTemplateId === templateId) {
-      resetTemplateEditorForm();
-    } else {
-      renderTemplatesModalList();
-    }
+    renderTemplatesModalList();
     state.lastZeroShowcaseSignature = "";
     uiHooks.renderZeroStateHorizontalShowcase();
     if (fb) fb.textContent = "Template removido.";

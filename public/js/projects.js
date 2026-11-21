@@ -69,6 +69,7 @@ export function selectProjectFilter(projectId) {
   renderProjectsSidebar();
   uiHooks.renderSidebarDebatesList();
   syncComposerProjectPill();
+  uiHooks.syncComposerModeUi();
 }
 
 export function renderProjectsSidebar() {
@@ -342,6 +343,39 @@ function renderProjectFilesList(project) {
   }
 }
 
+function isLocalPcBrowser() {
+  const host = window.location?.hostname || "";
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function renderFolderInspectionFeedback(info) {
+  const folderFb = $("#proj-folder-feedback");
+  if (!folderFb) return;
+  if (!info || !info.valid) {
+    folderFb.className = "project-folder-feedback is-error";
+    folderFb.textContent = info?.error || "Não foi possível ler a pasta.";
+    return;
+  }
+
+  folderFb.className = "project-folder-feedback is-ok";
+  const pdfNote = info.pdfFiles > 0 ? ` (${info.pdfFiles} PDF)` : "";
+  const secNote =
+    info.blockedSecrets > 0
+      ? ` · ${info.blockedSecrets} sensível(is) bloqueado(s)`
+      : " · trava ativa (.env/chaves/.git bloqueados)";
+  folderFb.textContent = `OK: ${info.indexableFiles} arquivo(s) legível(is)${pdfNote}${secNote}.`;
+}
+
+function updateProjectMoreSummary(project) {
+  const summaryEl = $("#project-more-summary");
+  if (!summaryEl) return;
+  const count = Array.isArray(project?.files) ? project.files.length : 0;
+  summaryEl.textContent =
+    count > 0
+      ? `Mais opções (descrição, cor e ${count} ${count === 1 ? "arquivo avulso" : "arquivos avulsos"})`
+      : "Mais opções (descrição, cor e arquivos avulsos)";
+}
+
 export function openProjectModal(projectId = null) {
   const modal = $("#project-modal");
   if (!modal) return;
@@ -359,6 +393,20 @@ export function openProjectModal(projectId = null) {
   const saveBtnSpan = $("#proj-save-btn span");
   const fb = $("#project-modal-feedback");
   const folderFb = $("#proj-folder-feedback");
+  const pickBtn = $("#proj-pick-folder-btn");
+  const subfolderStrip = $("#proj-subfolder-strip");
+  const subfolderBox = $("#proj-subfolder-box");
+  const subfolderToggle = $("#proj-subfolder-toggle");
+  const subfolderInput = $("#proj-subfolder-name");
+  const moreDetails = $("#project-more-details");
+
+  const localPc = isLocalPcBrowser();
+  if (pickBtn) pickBtn.hidden = !localPc;
+  if (subfolderStrip) subfolderStrip.hidden = !localPc;
+  if (subfolderBox) subfolderBox.hidden = true;
+  if (subfolderToggle) subfolderToggle.hidden = false;
+  if (subfolderInput) subfolderInput.value = "";
+  if (moreDetails) moreDetails.open = false;
 
   if (titleEl) {
     titleEl.textContent = project ? `Projeto: ${project.name}` : "Novo Projeto";
@@ -381,6 +429,7 @@ export function openProjectModal(projectId = null) {
     swatch.classList.toggle("is-selected", c === (project?.color || "iris"));
   }
 
+  updateProjectMoreSummary(project);
   renderProjectFilesList(project);
   modal.hidden = false;
   nameInput?.focus();
@@ -471,11 +520,13 @@ export async function handleSaveProjectForm(event) {
     uiHooks.renderSidebarDebatesList();
     uiHooks.updateStageTopbar();
     syncComposerProjectPill();
+    uiHooks.syncComposerModeUi();
+    updateProjectMoreSummary(savedProject);
 
     if (fb) {
       fb.textContent = isEdit
         ? "Projeto atualizado!"
-        : "Projeto criado! Agora você já pode enviar arquivos abaixo ou fechar.";
+        : "Projeto criado e ativado!";
     }
   } catch (error) {
     if (fb) {
@@ -487,6 +538,119 @@ export async function handleSaveProjectForm(event) {
   }
 }
 
+export async function handlePickProjectFolder() {
+  const folderInput = $("#proj-folder-path");
+  const nameInput = $("#proj-name");
+  const folderFb = $("#proj-folder-feedback");
+  const pickBtn = $("#proj-pick-folder-btn");
+
+  try {
+    if (pickBtn) pickBtn.disabled = true;
+    if (folderFb) {
+      folderFb.className = "project-folder-feedback";
+      folderFb.textContent = "Abrindo seletor de pastas do Windows...";
+    }
+
+    const res = await fetchJson("/projects/pick-folder", {
+      method: "POST",
+      timeoutMs: 125000,
+      body: { initialPath: (folderInput?.value || "").trim() || undefined }
+    });
+
+    if (res?.cancelled || !res?.path) {
+      if (folderFb) folderFb.textContent = "";
+      return;
+    }
+
+    if (folderInput) folderInput.value = res.path;
+    if (nameInput && !nameInput.value.trim()) {
+      const folderLeaf = String(res.path).split(/[\\/]/).filter(Boolean).pop();
+      if (folderLeaf) nameInput.value = folderLeaf;
+    }
+
+    if (res.inspection) {
+      renderFolderInspectionFeedback(res.inspection);
+    } else {
+      await handleInspectProjectFolder();
+    }
+  } catch (error) {
+    if (folderFb) {
+      folderFb.className = "project-folder-feedback is-error";
+      folderFb.textContent =
+        error instanceof Error ? error.message : "Não foi possível abrir o seletor de pastas.";
+    }
+  } finally {
+    if (pickBtn) pickBtn.disabled = false;
+  }
+}
+
+export async function handleCreateProjectSubfolder() {
+  const folderInput = $("#proj-folder-path");
+  const nameInput = $("#proj-name");
+  const subInput = $("#proj-subfolder-name");
+  const subBox = $("#proj-subfolder-box");
+  const subToggle = $("#proj-subfolder-toggle");
+  const createBtn = $("#proj-subfolder-create-btn");
+  const folderFb = $("#proj-folder-feedback");
+
+  const parentPath = (folderInput?.value || "").trim();
+  const folderName = (subInput?.value || "").trim();
+
+  if (!parentPath) {
+    if (folderFb) {
+      folderFb.className = "project-folder-feedback is-error";
+      folderFb.textContent = "Escolha primeiro a pasta base (onde a nova pasta será criada).";
+    }
+    return;
+  }
+  if (!folderName) {
+    if (folderFb) {
+      folderFb.className = "project-folder-feedback is-error";
+      folderFb.textContent = "Digite o nome da nova pasta.";
+    }
+    subInput?.focus();
+    return;
+  }
+
+  try {
+    if (createBtn) createBtn.disabled = true;
+    if (folderFb) {
+      folderFb.className = "project-folder-feedback";
+      folderFb.textContent = "Criando pasta e verificando...";
+    }
+
+    const res = await fetchJson("/projects/create-subfolder", {
+      method: "POST",
+      body: { parentPath, folderName }
+    });
+
+    if (res?.path && folderInput) {
+      folderInput.value = res.path;
+    }
+    if (nameInput && !nameInput.value.trim()) {
+      nameInput.value = folderName;
+    }
+    if (subInput) subInput.value = "";
+    if (subBox) subBox.hidden = true;
+    if (subToggle) subToggle.hidden = false;
+
+    if (res?.inspection) {
+      renderFolderInspectionFeedback(res.inspection);
+      if (folderFb && res.created) {
+        folderFb.textContent = `Pasta criada! ${folderFb.textContent}`;
+      }
+    }
+  } catch (error) {
+    if (folderFb) {
+      folderFb.className = "project-folder-feedback is-error";
+      folderFb.textContent =
+        error instanceof Error ? error.message : "Erro ao criar subpasta.";
+    }
+  } finally {
+    if (createBtn) createBtn.disabled = false;
+  }
+}
+
 export async function handleInspectProjectFolder() {
   const folderPath = ($("#proj-folder-path")?.value || "").trim();
   const folderFb = $("#proj-folder-feedback");
@@ -495,33 +659,20 @@ export async function handleInspectProjectFolder() {
   if (!folderFb) return;
   if (!folderPath) {
     folderFb.className = "project-folder-feedback is-error";
-    folderFb.textContent = "Cole o caminho da pasta do PC (ex.: C:\\Users\\...\\meu-projeto).";
+    folderFb.textContent = "Escolha uma pasta ou cole o caminho (ex.: C:\\Users\\...\\meu-projeto).";
     return;
   }
 
   try {
     if (testBtn) testBtn.disabled = true;
     folderFb.className = "project-folder-feedback";
-    folderFb.textContent = "Verificando pasta (somente leitura)...";
+    folderFb.textContent = "Verificando pasta...";
 
     const res = await fetchJson("/projects/inspect-folder", {
       method: "POST",
       body: { path: folderPath }
     });
-    const info = res?.inspection;
-    if (!info || !info.valid) {
-      folderFb.className = "project-folder-feedback is-error";
-      folderFb.textContent = info?.error || "Não foi possível ler a pasta.";
-      return;
-    }
-
-    folderFb.className = "project-folder-feedback is-ok";
-    const pdfNote = info.pdfFiles > 0 ? ` (${info.pdfFiles} PDF)` : "";
-    const secNote =
-      info.blockedSecrets > 0
-        ? ` · ${info.blockedSecrets} arquivo(s) sensível(is) bloqueado(s) (.env/chaves)`
-        : " · trava de segurança ativa (.env/chaves/.git bloqueados)";
-    folderFb.textContent = `OK: ${info.indexableFiles} arquivo(s) legível(is)${pdfNote}${secNote}.`;
+    renderFolderInspectionFeedback(res?.inspection);
   } catch (error) {
     folderFb.className = "project-folder-feedback is-error";
     folderFb.textContent =
@@ -590,6 +741,7 @@ export async function handleUploadProjectFiles(fileList) {
       }
       if (res?.project) {
         renderProjectFilesList(res.project);
+        updateProjectMoreSummary(res.project);
       }
       uploadedCount++;
     } catch (err) {
@@ -628,6 +780,7 @@ export async function handleRemoveProjectFile(projectId, fileId) {
     }
     if (res?.project) {
       renderProjectFilesList(res.project);
+      updateProjectMoreSummary(res.project);
     }
     renderProjectsSidebar();
     syncComposerProjectPill();

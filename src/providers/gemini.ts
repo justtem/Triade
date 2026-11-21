@@ -18,9 +18,24 @@ export interface GeminiOptions {
   baseUrl?: string;
 }
 
-/** Modelos 2.5 Flash aceitam desligar o "thinking" (economiza tokens e evita resposta cortada). */
-function canDisableThinking(model: string): boolean {
-  return /^gemini-2\.5-flash/.test(model);
+/**
+ * Define o teto de thinking por família Gemini:
+ * - 2.5 Flash: desliga thinking (0) para máxima velocidade e zero desperdício de saída.
+ * - 3.x Flash: limita o orçamento de thinking (1024 ou 2048 em sínteses longas) para
+ *   impedir que o modelo leve 2 minutos pensando e corte o código gerado no meio.
+ */
+function resolveThinkingBudget(model: string, maxTokens: number): number | null {
+  if (/^gemini-2\.5-flash/.test(model)) return 0;
+  if (/^gemini-3(?:\.\d+)?-flash/.test(model)) {
+    return maxTokens >= 6000 ? 2048 : 1024;
+  }
+  return null;
+}
+
+function isGeminiMaxTokensFinish(candidate: unknown): boolean {
+  if (!candidate || typeof candidate !== "object") return false;
+  const reason = String((candidate as { finishReason?: unknown }).finishReason ?? "").toUpperCase();
+  return reason === "MAX_TOKENS";
 }
 
 function extractGeminiGroundingSources(
@@ -78,7 +93,7 @@ export function makeGemini(options: GeminiOptions): Provider {
         call: async (model, hooks) => {
           const effectiveSignal = hooks?.signal ?? request.signal;
           const effectiveOnDelta = hooks?.onDelta ?? request.onDelta;
-          const noThinking = canDisableThinking(model);
+          const thinkingBudget = resolveThinkingBudget(model, request.maxTokens);
 
           const mediaParts = (request.media ?? [])
             .filter((m) => m.dataBase64 && m.mimeType)
@@ -94,17 +109,23 @@ export function makeGemini(options: GeminiOptions): Provider {
               ? [{ text: request.user }, ...mediaParts]
               : request.user;
 
-          const executeGemini = async (useGrounding: boolean) => {
+          const executeGemini = async (useGrounding: boolean, useThinkingCap = true) => {
+            const applyThinking = useThinkingCap && thinkingBudget !== null;
+            const outputBudget = Math.min(
+              16_384,
+              request.maxTokens + (applyThinking ? thinkingBudget : 1_500)
+            );
             const config = {
               systemInstruction: request.system,
-              maxOutputTokens: request.maxTokens + (noThinking ? 0 : 1_500),
+              maxOutputTokens: outputBudget,
               temperature: 0.4,
               ...(effectiveSignal ? { abortSignal: effectiveSignal } : {}),
-              ...(noThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+              ...(applyThinking ? { thinkingConfig: { thinkingBudget } } : {}),
               ...(useGrounding ? { tools: [{ googleSearch: {} }] } : {})
             };
 
             const groundingMap = new Map<string, string>();
+            let truncated = false;
 
             if (effectiveOnDelta) {
               const stream = await ai.models.generateContentStream({
@@ -134,6 +155,9 @@ export function makeGemini(options: GeminiOptions): Provider {
                   totalTokens = chunk.usageMetadata.totalTokenCount ?? totalTokens;
                 }
                 const firstCand = (chunk as { candidates?: unknown[] }).candidates?.[0];
+                if (isGeminiMaxTokensFinish(firstCand)) {
+                  truncated = true;
+                }
                 extractGeminiGroundingSources(firstCand, groundingMap);
               }
 
@@ -146,6 +170,7 @@ export function makeGemini(options: GeminiOptions): Provider {
                 inputTokens,
                 outputTokens,
                 totalTokens,
+                ...(truncated ? { truncated: true } : {}),
                 ...(groundingSources.length > 0 ? { groundingSources } : {})
               };
             }
@@ -157,6 +182,9 @@ export function makeGemini(options: GeminiOptions): Provider {
             });
 
             const firstCand = (response as { candidates?: unknown[] }).candidates?.[0];
+            if (isGeminiMaxTokensFinish(firstCand)) {
+              truncated = true;
+            }
             extractGeminiGroundingSources(firstCand, groundingMap);
             const groundingSources = Array.from(groundingMap.entries()).map(
               ([url, title]) => ({ title, url })
@@ -167,13 +195,28 @@ export function makeGemini(options: GeminiOptions): Provider {
               inputTokens: response.usageMetadata?.promptTokenCount,
               outputTokens: response.usageMetadata?.candidatesTokenCount,
               totalTokens: response.usageMetadata?.totalTokenCount,
+              ...(truncated ? { truncated: true } : {}),
               ...(groundingSources.length > 0 ? { groundingSources } : {})
             };
           };
 
+          const executeWithThinkingFallback = async (useGrounding: boolean) => {
+            try {
+              return await executeGemini(useGrounding, true);
+            } catch (err) {
+              if (effectiveSignal?.aborted || thinkingBudget === null) throw err;
+              const msg = err instanceof Error ? err.message : String(err);
+              if (/thinking|budget|400|invalid argument/i.test(msg)) {
+                request.onReset?.();
+                return executeGemini(useGrounding, false);
+              }
+              throw err;
+            }
+          };
+
           if (request.enableWebGrounding && Date.now() >= groundingDisabledUntil) {
             try {
-              return await executeGemini(true);
+              return await executeWithThinkingFallback(true);
             } catch (err) {
               if (effectiveSignal?.aborted) throw err;
               const msg = err instanceof Error ? err.message : String(err);
@@ -185,11 +228,11 @@ export function makeGemini(options: GeminiOptions): Provider {
               // Desativa grounding por 6h para não desperdiçar cota no free tier
               groundingDisabledUntil = Date.now() + 6 * 60 * 60 * 1000;
               request.onReset?.();
-              return executeGemini(false);
+              return executeWithThinkingFallback(false);
             }
           }
 
-          return executeGemini(false);
+          return executeWithThinkingFallback(false);
         }
       });
     }

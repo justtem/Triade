@@ -169,6 +169,8 @@ export interface DebateResponse {
   tokens?: number;
   /** Quando true, representa o texto parcial preservado ao clicar em Parar. */
   interrupted?: boolean;
+  /** Quando true, o modelo atingiu o teto de tokens de saída (MAX_TOKENS / length). */
+  truncated?: boolean;
 }
 
 export type WebSearchMode = "auto" | "off";
@@ -212,6 +214,66 @@ export interface AutoRouteDecision {
   skippedForQuota?: AutoPlatform[];
 }
 
+export type BuilderFileAction = "create" | "overwrite" | "unchanged" | "blocked";
+
+export type BuilderRunStatus =
+  | "idle"
+  | "extracting"
+  | "generating"
+  | "ready"
+  | "applying"
+  | "verifying"
+  | "fixing"
+  | "completed"
+  | "failed"
+  | "stopped";
+
+export interface BuilderFileEntry {
+  path: string;
+  content: string;
+  action: BuilderFileAction;
+  blockReason?: string;
+  diffPreview?: string;
+  addedLines?: number;
+  removedLines?: number;
+  incomplete?: boolean;
+}
+
+export interface BuilderCommandRun {
+  label: string;
+  command: string;
+  exitCode: number;
+  ok: boolean;
+  durationMs: number;
+  output: string;
+}
+
+export interface BuilderBackupInfo {
+  batchId: string;
+  backupRelDir: string;
+  createdAt: string;
+  filesWritten: string[];
+  filesCreated: string[];
+  filesOverwritten: string[];
+  undone?: boolean;
+}
+
+export interface BuilderTurnState {
+  enabled: boolean;
+  autoApply: boolean;
+  status: BuilderRunStatus;
+  projectId?: string;
+  summary?: string;
+  files: BuilderFileEntry[];
+  missingPaths?: string[];
+  lastBackup?: BuilderBackupInfo;
+  checks?: BuilderCommandRun[];
+  fixAttempt?: number;
+  maxFixAttempts?: number;
+  lastError?: string;
+  updatedAt: string;
+}
+
 export interface ChatTurn {
   id: string;
   index: number;
@@ -232,6 +294,9 @@ export interface ChatTurn {
   autoRoute?: AutoRouteDecision;
   autoVerdict?: boolean;
   verdict?: TurnVerdict;
+  builderMode?: boolean;
+  builderAutoApply?: boolean;
+  builderState?: BuilderTurnState;
   conclusion?: string;
   createdAt: string;
   completedAt?: string;
@@ -330,6 +395,8 @@ export interface CreateDebateInput {
   resolvedProjectContext?: ResolvedProjectContext;
   autoRoute?: AutoRouteDecision;
   autoVerdict?: boolean;
+  builderMode?: boolean;
+  builderAutoApply?: boolean;
 }
 
 export interface ContinueDebateInput {
@@ -346,6 +413,8 @@ export interface ContinueDebateInput {
   resolvedProjectContext?: ResolvedProjectContext;
   autoRoute?: AutoRouteDecision;
   autoVerdict?: boolean;
+  builderMode?: boolean;
+  builderAutoApply?: boolean;
 }
 
 export interface EditTurnInput {
@@ -366,4 +435,5 @@ export interface SubmitResponseMeta {
   allowWhilePaused?: boolean;
   model?: string;
   tokens?: number;
+  truncated?: boolean;
 }

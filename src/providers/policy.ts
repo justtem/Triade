@@ -43,6 +43,7 @@ export interface ModelCallResult {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  truncated?: boolean;
   groundingSources?: Array<{ title: string; url: string }>;
 }
 
@@ -192,6 +193,7 @@ async function runHedgedAttempt(args: {
         inputTokens: res.inputTokens,
         outputTokens: res.outputTokens,
         totalTokens: res.totalTokens,
+        ...(res.truncated ? { truncated: true } : {}),
         ...(res.groundingSources && res.groundingSources.length > 0
           ? { groundingSources: res.groundingSources }
           : {})
@@ -270,6 +272,7 @@ async function runHedgedAttempt(args: {
         inputTokens: res.inputTokens,
         outputTokens: res.outputTokens,
         totalTokens: res.totalTokens,
+        ...(res.truncated ? { truncated: true } : {}),
         ...(res.groundingSources && res.groundingSources.length > 0
           ? { groundingSources: res.groundingSources }
           : {})
@@ -417,6 +420,7 @@ export async function runWithFallback(args: {
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
           totalTokens: result.totalTokens,
+          ...(result.truncated ? { truncated: true } : {}),
           ...(result.groundingSources && result.groundingSources.length > 0
             ? { groundingSources: result.groundingSources }
             : {})

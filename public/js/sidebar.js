@@ -1,14 +1,10 @@
 import {
-  PLATFORMS,
-  AUTO_PLATFORM_IDS,
-  ALL_PLATFORM_IDS,
   STATUS_LABELS,
   ZERO_STATE_BLUEPRINTS,
   SVG_ICONS,
   RESPONSE_MODE_LABELS,
   $,
   $$,
-  getAiBrandSvg,
   state,
   localTaskStartMs,
   debateDetailsById,
@@ -28,7 +24,7 @@ import {
   refreshDashboard
 } from "./api.js";
 import { escapeHtml, handleExportConversationMarkdown } from "./markdown.js";
-import { attachHorizontalScrollPhysics, setUnreadScrollPillVisible } from "./motion.js";
+import { setUnreadScrollPillVisible } from "./motion.js";
 import { updateRightAiPanel, updateDashboardDebatesSummary } from "./telemetry.js";
 import {
   getProjectByIdClient,
@@ -38,9 +34,6 @@ import {
   syncComposerProjectPill
 } from "./projects.js";
 import {
-  getActiveResponderInfo,
-  setAutoRouteMode,
-  setSelectedParticipants,
   syncComposerWithDebate,
   syncComposerModeUi,
   openMemoryModal,
@@ -208,124 +201,6 @@ export function updateStageTopbar() {
   }
 
   titleEl.textContent = debate.title;
-
-  // Seletor rápido na barra superior: "Respondendo: Gemini ▾" (troca a IA da próxima resposta em 1 clique)
-  const responderInfo = getActiveResponderInfo();
-  const switcherWrap = document.createElement("div");
-  switcherWrap.className = "topbar-ai-switcher";
-
-  const switcherBtn = document.createElement("button");
-  switcherBtn.type = "button";
-  switcherBtn.className = "btn-secondary topbar-ai-switcher-btn";
-  switcherBtn.id = "topbar-ai-switcher-btn";
-  switcherBtn.title = "Trocar qual IA vai responder na conversa";
-  switcherBtn.disabled = debate.status === "running";
-  switcherBtn.innerHTML = `
-    <span class="topbar-ai-icon" id="topbar-ai-switcher-icon" data-active-ai="${escapeHtml(responderInfo.key)}" aria-hidden="true">${getAiBrandSvg(responderInfo.key)}</span>
-    <span id="topbar-ai-switcher-label"><span class="topbar-ai-prefix">Respondendo: </span>${escapeHtml(responderInfo.shortLabel)}</span>
-    <span class="topbar-ai-caret" aria-hidden="true">▾</span>
-  `;
-
-  const switcherMenu = document.createElement("div");
-  switcherMenu.className = "topbar-ai-menu";
-  switcherMenu.hidden = true;
-
-  const autoOpt = document.createElement("button");
-  autoOpt.type = "button";
-  autoOpt.className = "topbar-ai-option";
-  autoOpt.setAttribute("data-ai-switch", "auto");
-  if (responderInfo.isAuto) {
-    autoOpt.classList.add("is-active");
-  }
-  autoOpt.innerHTML = `
-    <span class="topbar-ai-opt-left">
-      <span class="topbar-ai-icon" data-active-ai="auto" aria-hidden="true">${getAiBrandSvg("auto")}</span>
-      <span>Auto (Roteador)</span>
-      <span class="topbar-ai-opt-tag">0ms</span>
-    </span>
-    <span class="topbar-ai-opt-check" aria-hidden="true">✔</span>
-  `;
-  autoOpt.addEventListener("click", (e) => {
-    e.stopPropagation();
-    switcherMenu.hidden = true;
-    setAutoRouteMode(true);
-    $("#debate-topic")?.focus();
-  });
-  switcherMenu.appendChild(autoOpt);
-
-  const autoDivider = document.createElement("div");
-  autoDivider.className = "topbar-ai-menu-divider";
-  switcherMenu.appendChild(autoDivider);
-
-  const singleHeader = document.createElement("div");
-  singleHeader.className = "topbar-ai-menu-heading";
-  singleHeader.textContent = "1 IA · DIRETO";
-  switcherMenu.appendChild(singleHeader);
-
-  for (const plat of ALL_PLATFORM_IDS) {
-    const opt = document.createElement("button");
-    opt.type = "button";
-    opt.className = "topbar-ai-option";
-    opt.setAttribute("data-ai-switch", plat);
-    if (responderInfo.isSingle && responderInfo.key === plat) {
-      opt.classList.add("is-active");
-    }
-    const isManual = !AUTO_PLATFORM_IDS.includes(plat);
-    opt.innerHTML = `
-      <span class="topbar-ai-opt-left">
-        <span class="topbar-ai-icon" data-active-ai="${plat}" aria-hidden="true">${getAiBrandSvg(plat)}</span>
-        <span>${escapeHtml(PLATFORMS[plat] || plat)}</span>
-        ${isManual ? `<span class="topbar-ai-opt-tag">manual</span>` : ""}
-      </span>
-      <span class="topbar-ai-opt-check" aria-hidden="true">✔</span>
-    `;
-    opt.addEventListener("click", (e) => {
-      e.stopPropagation();
-      switcherMenu.hidden = true;
-      setSelectedParticipants([plat], { singleMode: true });
-      $("#debate-topic")?.focus();
-    });
-    switcherMenu.appendChild(opt);
-  }
-
-  const menuDivider = document.createElement("div");
-  menuDivider.className = "topbar-ai-menu-divider";
-  switcherMenu.appendChild(menuDivider);
-
-  const trioOpt = document.createElement("button");
-  trioOpt.type = "button";
-  trioOpt.className = "topbar-ai-option";
-  trioOpt.setAttribute("data-ai-switch", "trio");
-  if (responderInfo.isTrio) {
-    trioOpt.classList.add("is-active");
-  }
-  trioOpt.innerHTML = `
-    <span class="topbar-ai-opt-left">
-      <span class="topbar-ai-icon" data-active-ai="trio" aria-hidden="true">${getAiBrandSvg("trio")}</span>
-      <span>Trio Automático</span>
-      <span class="topbar-ai-opt-tag">3 IAs</span>
-    </span>
-    <span class="topbar-ai-opt-check" aria-hidden="true">✔</span>
-  `;
-  trioOpt.addEventListener("click", (e) => {
-    e.stopPropagation();
-    switcherMenu.hidden = true;
-    setSelectedParticipants(AUTO_PLATFORM_IDS, { singleMode: false });
-    $("#debate-topic")?.focus();
-  });
-  switcherMenu.appendChild(trioOpt);
-
-  switcherBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const willOpen = switcherMenu.hidden;
-    for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
-      openMenu.hidden = true;
-    }
-    switcherMenu.hidden = !willOpen;
-  });
-
-  switcherWrap.append(switcherBtn, switcherMenu);
-  actionsWrap.appendChild(switcherWrap);
 
   // Seletor de Projeto da conversa ativa (mover conversa para dentro/fora de um Projeto em 1 clique)
   const currentProject = debate.projectId ? getProjectByIdClient(debate.projectId) : null;

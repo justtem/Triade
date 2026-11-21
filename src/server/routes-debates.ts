@@ -473,7 +473,13 @@ export async function handleDebateRoutes(
           ...(projectId && resolvedProjectContext ? { projectId } : {}),
           ...(resolvedProjectContext ? { resolvedProjectContext } : {}),
           ...(autoRoute ? { autoRoute } : {}),
-          ...(payload.autoVerdict === true ? { autoVerdict: true } : {})
+          ...(payload.autoVerdict === true ? { autoVerdict: true } : {}),
+          ...(payload.builderMode === true ? { builderMode: true } : {}),
+          ...(payload.builderMode === true &&
+          payload.builderAutoApply === true &&
+          auth.isDirectLocalPCRequest(request)
+            ? { builderAutoApply: true }
+            : {})
         });
 
         console.log(
@@ -709,7 +715,13 @@ export async function handleDebateRoutes(
           webSources,
           ...(resolvedProjectContext ? { resolvedProjectContext } : {}),
           ...(autoRoute ? { autoRoute } : {}),
-          ...(payload.autoVerdict === true ? { autoVerdict: true } : {})
+          ...(payload.autoVerdict === true ? { autoVerdict: true } : {}),
+          ...(payload.builderMode === true ? { builderMode: true } : {}),
+          ...(payload.builderMode === true &&
+          payload.builderAutoApply === true &&
+          auth.isDirectLocalPCRequest(request)
+            ? { builderAutoApply: true }
+            : {})
         });
 
         kickRunner();

@@ -11,12 +11,15 @@ describe("context-budget — Orçamento de Contexto por Provedor", () => {
     assert.ok(RECENT_FULL_TURNS >= 2);
   });
 
-  it("retorna o maior orçamento para Gemini", () => {
+  it("retorna o maior orçamento para Gemini e margem ampla para código sem cortes", () => {
     const gemini = budgetForPlatform("gemini");
     const openrouter = budgetForPlatform("openrouter");
 
     assert.ok(gemini.historyChars >= openrouter.historyChars);
     assert.ok(gemini.attachmentChars >= openrouter.attachmentChars);
+    assert.ok(gemini.maxTokens.initial_response >= 6000);
+    assert.ok(gemini.maxTokens.synthesis >= 8000);
+    assert.ok(openrouter.maxTokens.initial_response >= 4800);
     assert.ok(gemini.maxTokens.synthesis >= gemini.maxTokens.initial_response);
   });
 

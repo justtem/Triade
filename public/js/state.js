@@ -142,6 +142,15 @@ export const RESPONSE_MODE_STORAGE_KEY = "ai-council-response-mode";
 export const INTERACTION_MODE_STORAGE_KEY = "ai-council-interaction-mode";
 export const WEB_SEARCH_STORAGE_KEY = "ai-council-web-search-mode";
 export const AUTO_VERDICT_STORAGE_KEY = "ai-council-auto-verdict";
+export const COMPOSER_MODE_STORAGE_KEY = "ai-council-composer-mode";
+export const BUILDER_AUTO_APPLY_STORAGE_KEY = "ai-council-builder-auto-apply";
+
+export const COMPOSER_MODE_LABELS = {
+  quick: "Chat Rápido",
+  council: "Conselho",
+  debate: "Debate",
+  builder: "Construtor"
+};
 
 export const RESPONSE_MODE_LABELS = {
   normal: "Normal",
@@ -179,6 +188,8 @@ export const activeStreamsByTaskId = new Map();
 export const pendingStreamPaintIds = new Set();
 
 export const state = {
+  activeComposerMode: loadStoredOption(COMPOSER_MODE_STORAGE_KEY, "council", ["quick", "council", "debate", "builder"]),
+  builderAutoApplyPref: loadStoredOption(BUILDER_AUTO_APPLY_STORAGE_KEY, "on", ["on", "off"]) === "on",
   selectedResponseMode: loadStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal", ["normal", "prompt_markdown"]),
   selectedInteractionMode: loadStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct", ["direct", "debate"]),
   selectedWebSearchMode: loadStoredOption(WEB_SEARCH_STORAGE_KEY, "auto", ["auto", "off"]),
@@ -212,6 +223,8 @@ export const state = {
   sidebarSearchLoading: false,
   promptTemplates: [],
   editingTemplateId: null,
+  templatesSearchQuery: "",
+  templatesViewMode: "list",
   userProjects: [],
   selectedProjectFilterId: null,
   activeNewChatProjectId: null,
@@ -259,6 +272,7 @@ export const uiHooks = {
   renderTemplatesModalList: () => {},
   renderProjectsSidebar: () => {},
   openProjectModal: () => {},
+  getEffectiveProjectForComposer: () => null,
   syncComposerProjectPill: () => {},
   syncSetupUi: () => {},
   renderUserMemoryPanel: () => {},

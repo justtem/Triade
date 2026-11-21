@@ -98,38 +98,89 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                   : {})
               } as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming;
 
-              const stream = await client.chat.completions.create(
-                streamParams,
-                effectiveSignal ? { signal: effectiveSignal } : undefined
-              );
+              // Proteção anti-travamento (TTFB): evita que um modelo gratuito congestionado segure o Trio por 90s
+              const ttfbLimitMs = options.id === "openrouter" ? 28_000 : 18_000;
+              const ttfbCtrl = new AbortController();
+              let timedOutBeforeFirstToken = false;
+              let firstTokenSeen = false;
 
-              let fullText = "";
-              let inputTokens: number | undefined;
-              let outputTokens: number | undefined;
-              let totalTokens: number | undefined;
-
-              for await (const chunk of stream) {
-                if (effectiveSignal?.aborted) {
-                  break;
-                }
-                const piece = chunk.choices?.[0]?.delta?.content ?? "";
-                if (piece) {
-                  fullText += piece;
-                  effectiveOnDelta(piece);
-                }
-                if (chunk.usage) {
-                  inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
-                  outputTokens = chunk.usage.completion_tokens ?? outputTokens;
-                  totalTokens = chunk.usage.total_tokens ?? totalTokens;
+              const onOuterAbort = () => ttfbCtrl.abort(effectiveSignal?.reason);
+              if (effectiveSignal) {
+                if (effectiveSignal.aborted) {
+                  ttfbCtrl.abort(effectiveSignal.reason);
+                } else {
+                  effectiveSignal.addEventListener("abort", onOuterAbort, { once: true });
                 }
               }
 
-              return {
-                text: fullText,
-                inputTokens,
-                outputTokens,
-                totalTokens
-              };
+              const ttfbTimer = setTimeout(() => {
+                if (!firstTokenSeen) {
+                  timedOutBeforeFirstToken = true;
+                  ttfbCtrl.abort();
+                }
+              }, ttfbLimitMs);
+
+              try {
+                const stream = await client.chat.completions.create(streamParams, {
+                  signal: ttfbCtrl.signal
+                });
+
+                let fullText = "";
+                let inputTokens: number | undefined;
+                let outputTokens: number | undefined;
+                let totalTokens: number | undefined;
+                let truncated = false;
+
+                for await (const chunk of stream) {
+                  if (effectiveSignal?.aborted || ttfbCtrl.signal.aborted) {
+                    break;
+                  }
+                  const choice = chunk.choices?.[0];
+                  const piece = choice?.delta?.content ?? "";
+                  if (piece) {
+                    if (!firstTokenSeen) {
+                      firstTokenSeen = true;
+                      clearTimeout(ttfbTimer);
+                    }
+                    fullText += piece;
+                    effectiveOnDelta(piece);
+                  }
+                  if (choice?.finish_reason === "length") {
+                    truncated = true;
+                  }
+                  if (chunk.usage) {
+                    inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
+                    outputTokens = chunk.usage.completion_tokens ?? outputTokens;
+                    totalTokens = chunk.usage.total_tokens ?? totalTokens;
+                  }
+                }
+
+                if (timedOutBeforeFirstToken && !fullText) {
+                  throw new Error(
+                    `Timeout TTFB (${Math.round(ttfbLimitMs / 1000)}s sem primeiro token em ${model})`
+                  );
+                }
+
+                return {
+                  text: fullText,
+                  inputTokens,
+                  outputTokens,
+                  totalTokens,
+                  ...(truncated ? { truncated: true } : {})
+                };
+              } catch (streamErr) {
+                if (timedOutBeforeFirstToken && !effectiveSignal?.aborted) {
+                  throw new Error(
+                    `Timeout TTFB (${Math.round(ttfbLimitMs / 1000)}s sem primeiro token em ${model})`
+                  );
+                }
+                throw streamErr;
+              } finally {
+                clearTimeout(ttfbTimer);
+                if (effectiveSignal) {
+                  effectiveSignal.removeEventListener("abort", onOuterAbort);
+                }
+              }
             }
 
             const params =
@@ -140,11 +191,13 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
               effectiveSignal ? { signal: effectiveSignal } : undefined
             );
 
+            const truncated = response.choices[0]?.finish_reason === "length";
             return {
               text: response.choices[0]?.message?.content ?? "",
               inputTokens: response.usage?.prompt_tokens,
               outputTokens: response.usage?.completion_tokens,
-              totalTokens: response.usage?.total_tokens
+              totalTokens: response.usage?.total_tokens,
+              ...(truncated ? { truncated: true } : {})
             };
           };
 

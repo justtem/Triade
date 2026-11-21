@@ -61,6 +61,7 @@ import {
   updateStageTopbar,
   handleResumeDebate
 } from "./sidebar.js";
+import { setSelectedParticipants } from "./composer.js";
 import { createSpeakButton, playVoiceQueue } from "./voice.js";
 
 export function formatCleanErrorText(rawMessage) {
@@ -895,6 +896,12 @@ export function buildResponseCard(debate, resp, turn) {
       stopBadge.textContent = "Interrompido";
       stopBadge.title = "Geração interrompida manualmente — clique em ↻ se quiser refazer";
       titleRow.appendChild(stopBadge);
+    } else if (resp.truncated) {
+      const truncBadge = document.createElement("span");
+      truncBadge.className = "interrupted-badge truncated-badge";
+      truncBadge.textContent = "Cortado";
+      truncBadge.title = "A resposta atingiu o limite de tokens de saída — use 'Continuar de onde parou' abaixo.";
+      titleRow.appendChild(truncBadge);
     }
     if (durationSec !== null) {
       const thoughtBadge = document.createElement("span");
@@ -1033,6 +1040,35 @@ export function buildResponseCard(debate, resp, turn) {
   }
 
   card.append(header, body);
+
+  if (!isStreaming && resp.truncated && !resp.interrupted) {
+    const truncBar = document.createElement("div");
+    truncBar.className = "response-truncated-bar";
+
+    const note = document.createElement("span");
+    note.textContent = "Resposta atingiu o limite de saída.";
+
+    const contBtn = document.createElement("button");
+    contBtn.type = "button";
+    contBtn.className = "btn-secondary response-continue-btn";
+    contBtn.textContent = "Continuar de onde parou →";
+    contBtn.addEventListener("click", () => {
+      if (AUTO_PLATFORM_IDS.includes(resp.platform)) {
+        setSelectedParticipants([resp.platform], { singleMode: true });
+      }
+      const topicInput = $("#debate-topic");
+      const createForm = $("#create-debate-form");
+      if (topicInput && createForm) {
+        topicInput.value =
+          "Continue exatamente de onde parou na resposta anterior, a partir da última linha, sem repetir o texto já entregue.";
+        createForm.requestSubmit();
+      }
+    });
+
+    truncBar.append(note, contBtn);
+    card.appendChild(truncBar);
+  }
+
   return card;
 }
 
@@ -2007,7 +2043,463 @@ export function buildTurnBlock(debate, turn, isMultiTurn, isLastTurn) {
     turnBlock.appendChild(liveBox);
   }
 
+  const builderPanel = buildBuilderPanelForTurn(debate, turn, turnResponses);
+  if (builderPanel) {
+    turnBlock.appendChild(builderPanel);
+  }
+
   return turnBlock;
+}
+
+const BUILDER_STATUS_META = {
+  idle: { label: "Aguardando", cls: "is-idle" },
+  extracting: { label: "Extraindo arquivos...", cls: "is-busy" },
+  generating: { label: "Gerando arquivos...", cls: "is-busy" },
+  ready: { label: "Pronto para aplicar", cls: "is-ready" },
+  applying: { label: "Gravando na pasta...", cls: "is-busy" },
+  verifying: { label: "Rodando build / testes...", cls: "is-busy" },
+  fixing: { label: "Corrigindo erro com IA...", cls: "is-busy" },
+  completed: { label: "Aplicado e validado", cls: "is-ok" },
+  failed: { label: "Falha na verificação", cls: "is-err" },
+  stopped: { label: "Interrompido", cls: "is-idle" }
+};
+
+function isLocalPcClient() {
+  const host = window.location?.hostname || "";
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function getLinkedProjectForDebate(debate) {
+  if (!debate?.projectId) return null;
+  const list = Array.isArray(state.userProjects) ? state.userProjects : [];
+  return list.find((p) => p.id === debate.projectId) || null;
+}
+
+function renderDiffLinesDom(diffText) {
+  const pre = document.createElement("pre");
+  pre.className = "builder-diff-pre";
+  const lines = String(diffText || "").split("\n");
+  for (const line of lines) {
+    const span = document.createElement("span");
+    if (line.startsWith("+ ")) {
+      span.className = "diff-line diff-line-add";
+    } else if (line.startsWith("- ")) {
+      span.className = "diff-line diff-line-del";
+    } else if (line.startsWith("@@")) {
+      span.className = "diff-line diff-line-hunk";
+    } else {
+      span.className = "diff-line";
+    }
+    span.textContent = line;
+    pre.appendChild(span);
+  }
+  return pre;
+}
+
+function buildBuilderPanelForTurn(debate, turn, turnResponses) {
+  if (!debate?.id || !turn?.id || debate.id === "optimistic") return null;
+  const linkedProject = getLinkedProjectForDebate(debate);
+  const hasLinkedFolder = Boolean(linkedProject?.linkedFolderPath);
+  const bState = turn.builderState;
+
+  if (!bState && !hasLinkedFolder) return null;
+  if (!bState && turn.status !== "completed") return null;
+
+  const hasCodeFenceInTurn =
+    (turn.conclusion && turn.conclusion.includes("```")) ||
+    (turnResponses || []).some((r) => typeof r.content === "string" && r.content.includes("```"));
+
+  if (!bState && !turn.builderMode && !hasCodeFenceInTurn) {
+    return null;
+  }
+
+  const isLocal = isLocalPcClient();
+  const panel = document.createElement("section");
+  panel.className = "builder-turn-panel";
+  panel.setAttribute("data-builder-turn", turn.id);
+
+  // Caso ainda não tenha extraído: exibe barra enxuta de 1 clique "Extrair arquivos para a pasta"
+  if (!bState) {
+    if (!isLocal) return null;
+    panel.classList.add("is-compact");
+    const row = document.createElement("div");
+    row.className = "builder-compact-row";
+
+    const label = document.createElement("span");
+    label.className = "builder-compact-label";
+    label.textContent = `Projeto "${linkedProject.name}" com pasta vinculada`;
+
+    const extractBtn = document.createElement("button");
+    extractBtn.type = "button";
+    extractBtn.className = "btn-secondary builder-act-btn";
+    extractBtn.textContent = "Extrair arquivos & ver diff →";
+    extractBtn.addEventListener("click", async () => {
+      extractBtn.disabled = true;
+      extractBtn.textContent = "Analisando blocos...";
+      try {
+        const res = await fetchJson(`/debates/${debate.id}/builder/extract`, {
+          method: "POST",
+          body: { turnId: turn.id }
+        });
+        if (res?.debate) {
+          upsertDebateSessionLocally(res.debate);
+          state.lastRenderedChatSignature = "";
+          renderChatStage();
+        }
+      } catch (err) {
+        extractBtn.disabled = false;
+        extractBtn.textContent =
+          err instanceof Error ? err.message : "Erro ao extrair";
+      }
+    });
+
+    row.append(label, extractBtn);
+    panel.appendChild(row);
+    return panel;
+  }
+
+  const stKey = bState.status || "idle";
+  const meta = BUILDER_STATUS_META[stKey] || BUILDER_STATUS_META.idle;
+  const isBusy =
+    stKey === "extracting" ||
+    stKey === "generating" ||
+    stKey === "applying" ||
+    stKey === "verifying" ||
+    stKey === "fixing";
+
+  const header = document.createElement("div");
+  header.className = "builder-panel-header";
+
+  const headLeft = document.createElement("div");
+  headLeft.className = "builder-panel-title-group";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = linkedProject
+    ? `CONSTRUTOR NA PASTA // ${linkedProject.name.toUpperCase()}`
+    : "CONSTRUTOR NA PASTA";
+
+  const statusPill = document.createElement("span");
+  statusPill.className = `builder-status-pill ${meta.cls}`;
+  statusPill.textContent =
+    stKey === "fixing" && bState.fixAttempt
+      ? `Corrigindo (${bState.fixAttempt}/${bState.maxFixAttempts || 3})...`
+      : meta.label;
+
+  headLeft.append(eyebrow, statusPill);
+  header.appendChild(headLeft);
+
+  if (isBusy && isLocal) {
+    const stopBtn = document.createElement("button");
+    stopBtn.type = "button";
+    stopBtn.className = "btn-secondary builder-stop-btn";
+    stopBtn.textContent = "■ Parar";
+    stopBtn.addEventListener("click", async () => {
+      stopBtn.disabled = true;
+      await fetchJson(`/debates/${debate.id}/builder/stop`, {
+        method: "POST",
+        body: { turnId: turn.id }
+      }).catch(() => {});
+      void loadDebateDetail(debate.id);
+    });
+    header.appendChild(stopBtn);
+  }
+
+  panel.appendChild(header);
+
+  if (bState.summary) {
+    const summaryEl = document.createElement("p");
+    summaryEl.className = `builder-panel-summary${stKey === "failed" ? " is-err" : ""}`;
+    summaryEl.textContent = bState.summary;
+    panel.appendChild(summaryEl);
+  }
+
+  const files = Array.isArray(bState.files) ? bState.files : [];
+  const selectedCheckboxes = [];
+
+  if (files.length > 0) {
+    const filesList = document.createElement("div");
+    filesList.className = "builder-files-list";
+
+    for (const file of files) {
+      const item = document.createElement("div");
+      item.className = `builder-file-item is-${file.action || "create"}`;
+
+      const topRow = document.createElement("div");
+      topRow.className = "builder-file-row";
+
+      const leftGroup = document.createElement("div");
+      leftGroup.className = "builder-file-left";
+
+      const isWritable = file.action === "create" || file.action === "overwrite";
+      if (isWritable && isLocal && !isBusy) {
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.className = "builder-file-check";
+        cb.setAttribute("data-builder-path", file.path);
+        cb.setAttribute("aria-label", `Selecionar ${file.path}`);
+        selectedCheckboxes.push(cb);
+        leftGroup.appendChild(cb);
+      }
+
+      const actionBadge = document.createElement("span");
+      actionBadge.className = `builder-file-badge is-${file.action || "create"}`;
+      actionBadge.textContent =
+        file.action === "create"
+          ? "NOVO"
+          : file.action === "overwrite"
+            ? "ALTERADO"
+            : file.action === "unchanged"
+              ? "IGUAL"
+              : "BLOQUEADO";
+
+      const pathCode = document.createElement("code");
+      pathCode.className = "builder-file-path";
+      pathCode.textContent = file.path;
+
+      leftGroup.append(actionBadge, pathCode);
+
+      if (file.incomplete) {
+        const incTag = document.createElement("span");
+        incTag.className = "builder-file-badge is-warn";
+        incTag.textContent = "RESUMIDO";
+        leftGroup.appendChild(incTag);
+      }
+
+      const rightGroup = document.createElement("div");
+      rightGroup.className = "builder-file-stats";
+      if (file.action === "blocked" && file.blockReason) {
+        const reasonSpan = document.createElement("span");
+        reasonSpan.className = "builder-block-reason";
+        reasonSpan.textContent = file.blockReason;
+        rightGroup.appendChild(reasonSpan);
+      } else if (file.addedLines || file.removedLines) {
+        if (file.addedLines) {
+          const addS = document.createElement("span");
+          addS.className = "builder-stat-add";
+          addS.textContent = `+${file.addedLines}`;
+          rightGroup.appendChild(addS);
+        }
+        if (file.removedLines) {
+          const delS = document.createElement("span");
+          delS.className = "builder-stat-del";
+          delS.textContent = `-${file.removedLines}`;
+          rightGroup.appendChild(delS);
+        }
+      }
+
+      topRow.append(leftGroup, rightGroup);
+      item.appendChild(topRow);
+
+      if (file.diffPreview) {
+        const details = document.createElement("details");
+        details.className = "builder-diff-details";
+        const sum = document.createElement("summary");
+        sum.textContent = "Ver diff / conteúdo";
+        details.append(sum, renderDiffLinesDom(file.diffPreview));
+        item.appendChild(details);
+      }
+
+      filesList.appendChild(item);
+    }
+
+    panel.appendChild(filesList);
+  }
+
+  const missingPaths = Array.isArray(bState.missingPaths) ? bState.missingPaths : [];
+  const hasIncomplete = files.some((f) => f.incomplete && f.action !== "blocked");
+  if (missingPaths.length > 0) {
+    const missBox = document.createElement("div");
+    missBox.className = "builder-missing-box";
+    missBox.textContent = `Arquivos citados no plano sem código completo (${missingPaths.length}): ${missingPaths.slice(0, 6).join(", ")}${missingPaths.length > 6 ? "..." : ""}`;
+    panel.appendChild(missBox);
+  }
+
+  // Feedback de ações locais
+  const feedbackEl = document.createElement("div");
+  feedbackEl.className = "builder-action-feedback";
+
+  // Barra de ações (somente no PC local)
+  if (isLocal && !isBusy) {
+    const actionsRow = document.createElement("div");
+    actionsRow.className = "builder-actions-row";
+
+    const runAction = async (endpoint, body, loadingLabel, btnEl) => {
+      feedbackEl.textContent = loadingLabel;
+      const allBtns = actionsRow.querySelectorAll("button");
+      allBtns.forEach((b) => {
+        b.disabled = true;
+      });
+      try {
+        const res = await fetchJson(endpoint, { method: "POST", body });
+        if (res?.debate) {
+          upsertDebateSessionLocally(res.debate);
+          state.lastRenderedChatSignature = "";
+          renderChatStage();
+        }
+        void loadDebateDetail(debate.id);
+      } catch (err) {
+        feedbackEl.textContent =
+          err instanceof Error ? err.message : "Erro ao executar ação do Construtor.";
+        allBtns.forEach((b) => {
+          b.disabled = false;
+        });
+        if (btnEl) btnEl.disabled = false;
+      }
+    };
+
+    const writableFiles = files.filter(
+      (f) => f.action === "create" || f.action === "overwrite"
+    );
+
+    if (writableFiles.length > 0) {
+      const applyTestBtn = document.createElement("button");
+      applyTestBtn.type = "button";
+      applyTestBtn.className = "btn-primary builder-act-btn";
+      applyTestBtn.textContent = "Aplicar na Pasta & Testar →";
+      applyTestBtn.addEventListener("click", () => {
+        const selectedPaths = selectedCheckboxes
+          .filter((cb) => cb.checked)
+          .map((cb) => cb.getAttribute("data-builder-path"))
+          .filter(Boolean);
+        void runAction(
+          `/debates/${debate.id}/builder/apply`,
+          { turnId: turn.id, selectedPaths, runVerification: true, autoFix: true },
+          "Aplicando arquivos com backup e iniciando verificação...",
+          applyTestBtn
+        );
+      });
+      actionsRow.appendChild(applyTestBtn);
+
+      const applyOnlyBtn = document.createElement("button");
+      applyOnlyBtn.type = "button";
+      applyOnlyBtn.className = "btn-secondary builder-act-btn";
+      applyOnlyBtn.textContent = "Só aplicar";
+      applyOnlyBtn.addEventListener("click", () => {
+        const selectedPaths = selectedCheckboxes
+          .filter((cb) => cb.checked)
+          .map((cb) => cb.getAttribute("data-builder-path"))
+          .filter(Boolean);
+        void runAction(
+          `/debates/${debate.id}/builder/apply`,
+          { turnId: turn.id, selectedPaths, runVerification: false },
+          "Gravando arquivos com backup em .ai-council-backup/...",
+          applyOnlyBtn
+        );
+      });
+      actionsRow.appendChild(applyOnlyBtn);
+    }
+
+    if (missingPaths.length > 0 || hasIncomplete) {
+      const genBtn = document.createElement("button");
+      genBtn.type = "button";
+      genBtn.className = "btn-secondary builder-act-btn";
+      genBtn.textContent = `Gerar arquivos restantes (${missingPaths.length + (hasIncomplete ? files.filter((f) => f.incomplete).length : 0)})`;
+      genBtn.addEventListener("click", () => {
+        void runAction(
+          `/debates/${debate.id}/builder/generate-missing`,
+          { turnId: turn.id },
+          "Gerando arquivos completos um a um...",
+          genBtn
+        );
+      });
+      actionsRow.appendChild(genBtn);
+    }
+
+    const verifyBtn = document.createElement("button");
+    verifyBtn.type = "button";
+    verifyBtn.className = "btn-secondary builder-act-btn";
+    verifyBtn.textContent = "Rodar build / test";
+    verifyBtn.addEventListener("click", () => {
+      void runAction(
+        `/debates/${debate.id}/builder/verify`,
+        { turnId: turn.id, autoFix: true },
+        "Executando verificação e autocorreção se necessário...",
+        verifyBtn
+      );
+    });
+    actionsRow.appendChild(verifyBtn);
+
+    const reextractBtn = document.createElement("button");
+    reextractBtn.type = "button";
+    reextractBtn.className = "btn-ghost-pill builder-act-btn";
+    reextractBtn.textContent = "Re-extrair";
+    reextractBtn.addEventListener("click", () => {
+      void runAction(
+        `/debates/${debate.id}/builder/extract`,
+        { turnId: turn.id },
+        "Recalculando diffs contra a pasta...",
+        reextractBtn
+      );
+    });
+    actionsRow.appendChild(reextractBtn);
+
+    if (bState.lastBackup && !bState.lastBackup.undone) {
+      const undoBtn = document.createElement("button");
+      undoBtn.type = "button";
+      undoBtn.className = "btn-ghost-pill btn-danger-outline builder-act-btn";
+      undoBtn.title = `Restaurar backup ${bState.lastBackup.backupRelDir}`;
+      undoBtn.textContent = "Desfazer último lote";
+      undoBtn.addEventListener("click", () => {
+        void runAction(
+          `/debates/${debate.id}/builder/undo`,
+          { turnId: turn.id, batchId: bState.lastBackup.batchId },
+          "Restaurando backup em .ai-council-backup/...",
+          undoBtn
+        );
+      });
+      actionsRow.appendChild(undoBtn);
+    }
+
+    panel.append(actionsRow, feedbackEl);
+  } else if (!isLocal) {
+    const remoteNote = document.createElement("p");
+    remoteNote.className = "builder-remote-note";
+    remoteNote.textContent =
+      "Escrita na pasta e execução de build/test estão bloqueadas no acesso remoto por segurança (disponíveis apenas no PC local).";
+    panel.appendChild(remoteNote);
+  }
+
+  // Resultados dos comandos executados (npm install / build / test)
+  const checks = Array.isArray(bState.checks) ? bState.checks : [];
+  if (checks.length > 0) {
+    const checksWrap = document.createElement("div");
+    checksWrap.className = "builder-checks-list";
+
+    for (const chk of checks) {
+      const det = document.createElement("details");
+      det.className = `builder-check-item ${chk.ok ? "is-ok" : "is-err"}`;
+      if (!chk.ok) det.open = true;
+
+      const sum = document.createElement("summary");
+      sum.className = "builder-check-summary";
+
+      const badge = document.createElement("span");
+      badge.className = `builder-file-badge ${chk.ok ? "is-create" : "is-blocked"}`;
+      badge.textContent = chk.ok ? "OK" : `ERRO (${chk.exitCode})`;
+
+      const cmd = document.createElement("code");
+      cmd.textContent = chk.command;
+
+      const dur = document.createElement("span");
+      dur.className = "builder-check-dur";
+      dur.textContent = `${(Math.max(100, Number(chk.durationMs) || 0) / 1000).toFixed(1)}s`;
+
+      sum.append(badge, cmd, dur);
+
+      const pre = document.createElement("pre");
+      pre.className = "builder-check-output";
+      pre.textContent = chk.output || (chk.ok ? "OK" : "");
+
+      det.append(sum, pre);
+      checksWrap.appendChild(det);
+    }
+
+    panel.appendChild(checksWrap);
+  }
+
+  return panel;
 }
 
 export function buildOptimisticTurnElements(baseDebate) {

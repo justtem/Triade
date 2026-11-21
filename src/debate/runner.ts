@@ -39,6 +39,10 @@ import {
   extractAndSaveUserMemoryFromTurn,
   mightContainPersonalMemory
 } from "./user-memory-extractor.js";
+import {
+  abortBuilderRun,
+  runAutoBuilderAfterTurnCompleted
+} from "../projects/builder-orchestrator.js";
 
 const TICK_MS = 2_500;
 // Cada tarefa já faz até 2-3 tentativas HTTP dentro do provedor (e cada uma conta
@@ -68,6 +72,7 @@ const MAX_USER_MEMORY_HISTORY = 300;
  * conversa via AbortController e devolve o texto parcial já gerado por cada task.
  */
 export function abortDebateTasks(debateId: string): Map<string, string> {
+  abortBuilderRun(debateId);
   const partials = new Map<string, string>();
 
   for (const stream of getActiveStreams(debateId)) {
@@ -267,7 +272,8 @@ async function runTask(
         {
           allowWhilePaused: true,
           model: result.model,
-          tokens: result.totalTokens
+          tokens: result.totalTokens,
+          ...(result.truncated ? { truncated: true } : {})
         }
       );
       if (result.groundingSources && result.groundingSources.length > 0) {
@@ -469,6 +475,16 @@ async function processOnce(): Promise<boolean> {
       if (!autoVerdictInFlight.has(verdictKey) && !autoVerdictAttempted.has(verdictKey)) {
         void runAutoVerdict(session.id, latestTurn.id);
       }
+    }
+
+    if (
+      latestTurn &&
+      latestTurn.status === "completed" &&
+      latestTurn.builderMode &&
+      !latestTurn.builderState &&
+      session.projectId
+    ) {
+      void runAutoBuilderAfterTurnCompleted(session.id, latestTurn.id);
     }
 
     if (

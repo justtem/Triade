@@ -1556,6 +1556,8 @@ export async function createDebateSession(
       ...(resolvedProjectContext ? { projectContext: resolvedProjectContext.meta } : {}),
       ...(input.autoRoute ? { autoRoute: input.autoRoute } : {}),
       ...(input.autoVerdict ? { autoVerdict: true } : {}),
+      ...(input.builderMode ? { builderMode: true } : {}),
+      ...(input.builderMode && input.builderAutoApply ? { builderAutoApply: true } : {}),
       createdAt: now
     };
 
@@ -1682,6 +1684,8 @@ export async function continueDebateSession(
       ...(resolvedProjectContext ? { projectContext: resolvedProjectContext.meta } : {}),
       ...(input.autoRoute ? { autoRoute: input.autoRoute } : {}),
       ...(input.autoVerdict ? { autoVerdict: true } : {}),
+      ...(input.builderMode ? { builderMode: true } : {}),
+      ...(input.builderMode && input.builderAutoApply ? { builderAutoApply: true } : {}),
       createdAt: now
     };
 
@@ -1940,7 +1944,8 @@ export async function submitDebateTaskResponse(
       content,
       submittedAt: now,
       ...(meta.model ? { model: meta.model } : {}),
-      ...(meta.tokens !== undefined ? { tokens: meta.tokens } : {})
+      ...(meta.tokens !== undefined ? { tokens: meta.tokens } : {}),
+      ...(meta.truncated ? { truncated: true } : {})
     };
 
     session.responses.push(responseRecord);

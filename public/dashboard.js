@@ -2,10 +2,10 @@ import {
   LIVE_TIMER_INTERVAL,
   AUTO_PLATFORM_IDS,
   RESPONSE_MODE_STORAGE_KEY,
-  INTERACTION_MODE_STORAGE_KEY,
   WEB_SEARCH_STORAGE_KEY,
   AUTO_VERDICT_STORAGE_KEY,
   AUTO_ROUTE_STORAGE_KEY,
+  BUILDER_AUTO_APPLY_STORAGE_KEY,
   $,
   $$,
   saveStoredOption,
@@ -27,11 +27,14 @@ import {
   refreshDashboard
 } from "./js/api.js";
 import {
+  getEffectiveProjectForComposer,
   renderProjectsSidebar,
   syncComposerProjectPill,
   openProjectModal,
   closeProjectModal,
   handleSaveProjectForm,
+  handlePickProjectFolder,
+  handleCreateProjectSubfolder,
   handleInspectProjectFolder,
   handleUploadProjectFiles,
   handleDeleteProject
@@ -61,8 +64,8 @@ import {
   handleComposerSlashKeydown
 } from "./js/shortcuts.js";
 import {
-  getSelectedParticipants,
   syncAiSelectionUi,
+  applyComposerMode,
   setAutoRouteMode,
   setSelectedParticipants,
   syncComposerWithDebate,
@@ -73,7 +76,9 @@ import {
   saveMemoryModal,
   openTemplatesModal,
   closeTemplatesModal,
-  resetTemplateEditorForm,
+  showTemplatesListView,
+  openTemplateEditorView,
+  syncTemplatePresetFields,
   renderTemplatesModalList,
   handleSaveTemplateForm
 } from "./js/composer.js";
@@ -142,6 +147,7 @@ registerUiHooks({
   renderTemplatesModalList,
   renderProjectsSidebar,
   openProjectModal,
+  getEffectiveProjectForComposer,
   syncComposerProjectPill,
   syncSetupUi,
   renderUserMemoryPanel,
@@ -372,21 +378,30 @@ function initializeUiBindings() {
   $("#debate-rounds")?.addEventListener("change", syncComposerModeUi);
   $("#debate-focus")?.addEventListener("change", syncComposerModeUi);
 
-  // Modal de Biblioteca de Templates
+  // Modal de Biblioteca de Templates (visão lista -> editor sob demanda)
   $("#composer-templates-btn")?.addEventListener("click", () => {
     closeComposerPopover();
     openTemplatesModal();
   });
+  $("#composer-templates-quick-btn")?.addEventListener("click", openTemplatesModal);
   $("#zero-manage-templates-btn")?.addEventListener("click", openTemplatesModal);
   $("#templates-modal-close")?.addEventListener("click", closeTemplatesModal);
   $("#templates-modal")?.addEventListener("click", (e) => {
     if (e.target === $("#templates-modal")) closeTemplatesModal();
   });
   $("#templates-new-btn")?.addEventListener("click", () => {
-    resetTemplateEditorForm();
-    $("#tpl-title")?.focus();
+    openTemplateEditorView(null);
   });
-  $("#tpl-reset-btn")?.addEventListener("click", resetTemplateEditorForm);
+  $("#tpl-back-btn")?.addEventListener("click", showTemplatesListView);
+  $("#tpl-cancel-btn")?.addEventListener("click", showTemplatesListView);
+  $("#tpl-reset-btn")?.addEventListener("click", showTemplatesListView);
+  $("#templates-search-input")?.addEventListener("input", (e) => {
+    state.templatesSearchQuery = e.target.value || "";
+    renderTemplatesModalList();
+  });
+  $("#tpl-preset-mode")?.addEventListener("change", (e) => {
+    syncTemplatePresetFields(e.target.value);
+  });
   $("#template-editor-form")?.addEventListener("submit", handleSaveTemplateForm);
 
   // Lightbox de imagens anexadas e diagramas Mermaid
@@ -399,7 +414,7 @@ function initializeUiBindings() {
     if (e.target === $("#diagram-lightbox-modal")) closeDiagramLightbox();
   });
 
-  // Modal de Projetos / Pastas com Cérebro Local
+  // Modal de Projetos / Pastas com Cérebro Local (seletor nativo + subpasta)
   $("#sidebar-new-project-btn")?.addEventListener("click", (e) => {
     e.stopPropagation();
     openProjectModal(null);
@@ -410,8 +425,35 @@ function initializeUiBindings() {
     if (e.target === $("#project-modal")) closeProjectModal();
   });
   $("#project-editor-form")?.addEventListener("submit", handleSaveProjectForm);
+  $("#proj-pick-folder-btn")?.addEventListener("click", () => {
+    void handlePickProjectFolder();
+  });
   $("#proj-test-folder-btn")?.addEventListener("click", () => {
     void handleInspectProjectFolder();
+  });
+  $("#proj-subfolder-toggle")?.addEventListener("click", () => {
+    const subBox = $("#proj-subfolder-box");
+    const subToggle = $("#proj-subfolder-toggle");
+    if (subBox) subBox.hidden = false;
+    if (subToggle) subToggle.hidden = true;
+    $("#proj-subfolder-name")?.focus();
+  });
+  $("#proj-subfolder-cancel-btn")?.addEventListener("click", () => {
+    const subBox = $("#proj-subfolder-box");
+    const subToggle = $("#proj-subfolder-toggle");
+    const subInput = $("#proj-subfolder-name");
+    if (subBox) subBox.hidden = true;
+    if (subToggle) subToggle.hidden = false;
+    if (subInput) subInput.value = "";
+  });
+  $("#proj-subfolder-create-btn")?.addEventListener("click", () => {
+    void handleCreateProjectSubfolder();
+  });
+  $("#proj-subfolder-name")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void handleCreateProjectSubfolder();
+    }
   });
   $("#proj-delete-btn")?.addEventListener("click", () => {
     void handleDeleteProject();
@@ -705,15 +747,49 @@ function initializeUiBindings() {
     }
   });
 
+  // Barra fixa de 4 modos em 1 clique (Chat Rápido · Conselho · Debate · Construtor)
+  for (const btn of $$("#composer-mode-pills .composer-mode-btn")) {
+    btn.addEventListener("click", () => {
+      const modeKey = btn.getAttribute("data-composer-mode");
+      if (modeKey) {
+        applyComposerMode(modeKey);
+        $("#debate-topic")?.focus();
+      }
+    });
+  }
+
+  // Chips inline de 1 IA no Chat Rápido (Gemini · Groq · OpenRouter)
+  for (const chip of $$("#composer-quick-ai-picker .quick-ai-chip")) {
+    chip.addEventListener("click", () => {
+      const aiKey = chip.getAttribute("data-quick-ai");
+      if (aiKey) {
+        applyComposerMode("quick", { singleAi: aiKey });
+        $("#debate-topic")?.focus();
+      }
+    });
+  }
+
+  // Botão contextual do Modo Construtor para vincular pasta do Projeto
+  $("#composer-builder-link-btn")?.addEventListener("click", () => {
+    const linkedProj = getEffectiveProjectForComposer();
+    openProjectModal(linkedProj?.id || null);
+  });
+
+  // Toggle Auto-aplicar na pasta (Modo Construtor)
+  $("#composer-builder-auto-toggle")?.addEventListener("change", (e) => {
+    const checked = Boolean(e.target?.checked);
+    state.builderAutoApplyPref = checked;
+    saveStoredOption(BUILDER_AUTO_APPLY_STORAGE_KEY, checked ? "on" : "off");
+    syncComposerModeUi();
+  });
+
   for (const checkbox of $$('input[name="participants"]')) {
     checkbox.addEventListener("change", () => {
       if (state.isAutoRouteMode) {
-        // Ao escolher uma IA específica manualmente, sai do modo Auto
         state.isAutoRouteMode = false;
         saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
       }
       if (state.isSingleAiMode) {
-        // No modo "1 IA", clicar em qualquer IA troca diretamente para ela (estilo rádio, 1 clique)
         setSelectedParticipants([checkbox.value], { singleMode: true });
         return;
       }
@@ -726,22 +802,10 @@ function initializeUiBindings() {
     btn.addEventListener("click", () => {
       const preset = btn.getAttribute("data-ai-preset");
       if (preset === "auto") {
-        setAutoRouteMode(true);
-      } else if (preset === "single") {
-        const current = getSelectedParticipants();
-        const chosen =
-          current.length === 1
-            ? current[0]
-            : current.includes(state.preferredSingleAi)
-              ? state.preferredSingleAi
-              : current[0] || state.preferredSingleAi || "gemini";
-        setSelectedParticipants([chosen], { singleMode: true });
-      } else if (preset === "trio") {
-        setSelectedParticipants(AUTO_PLATFORM_IDS, { singleMode: false });
+        setAutoRouteMode(!state.isAutoRouteMode);
       }
     });
   }
-  syncAiSelectionUi();
 
   for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
     btn.addEventListener("click", () => {
@@ -750,26 +814,6 @@ function initializeUiBindings() {
         state.selectedResponseMode = mode;
         saveStoredOption(RESPONSE_MODE_STORAGE_KEY, mode);
         syncComposerModeUi();
-      }
-    });
-  }
-
-  for (const btn of $$("#interaction-mode-toggle .mode-seg-btn")) {
-    btn.addEventListener("click", () => {
-      const mode = btn.getAttribute("data-interaction-mode");
-      if (mode === "direct" || mode === "debate") {
-        state.selectedInteractionMode = mode;
-        saveStoredOption(INTERACTION_MODE_STORAGE_KEY, mode);
-        // Debate exige 2+ IAs: no modo manual sai de 1 IA e ativa o Trio; no modo Auto o roteador já garante 2-3 IAs
-        if (
-          mode === "debate" &&
-          !state.isAutoRouteMode &&
-          (state.isSingleAiMode || getSelectedParticipants().length < 2)
-        ) {
-          setSelectedParticipants(AUTO_PLATFORM_IDS, { singleMode: false });
-        } else {
-          syncComposerModeUi();
-        }
       }
     });
   }
@@ -792,7 +836,8 @@ function initializeUiBindings() {
     syncComposerModeUi();
   });
 
-  syncComposerModeUi();
+  // Inicializa o compositor no modo salvo (padrão: Conselho)
+  applyComposerMode(state.activeComposerMode || "council");
 
   const advBtn = $("#toggle-advanced-btn");
   const advPanel = $("#composer-advanced");

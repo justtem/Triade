@@ -24,6 +24,7 @@ export interface GenerateResult {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  truncated?: boolean;
   groundingSources?: Array<{ title: string; url: string }>;
 }
 
