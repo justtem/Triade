@@ -9,6 +9,10 @@ import { createLoginRateLimiter } from "../src/server/auth.js";
 import { createMonitorServer } from "../src/server/app.js";
 import { getClientIp } from "../src/server/http-utils.js";
 import {
+  classifyApiRateLimitBucket,
+  createApiRateLimiter
+} from "../src/security/rate-limiter.js";
+import {
   clearWebCache,
   fetchPageContent,
   isPublicIpAddress,
@@ -97,8 +101,20 @@ describe("Segurança de Acesso Remoto & Servidor Modularizado (Prioridade #1)", 
     assert.ok(htmlRes.headers.get("permissions-policy")?.includes("microphone=(self)"));
     const csp = htmlRes.headers.get("content-security-policy") ?? "";
     assert.ok(csp.includes("default-src 'self'"));
+    assert.ok(csp.includes("font-src 'self'"));
+    assert.ok(csp.includes("object-src 'none'"));
     assert.ok(csp.includes("frame-ancestors 'none'"));
     assert.ok(csp.includes("media-src 'self' blob: data:"));
+    assert.ok(!csp.includes("fonts.googleapis.com"), "CSP não deve depender de Google Fonts");
+    assert.ok(!csp.includes("fonts.gstatic.com"), "CSP não deve depender de Google Fonts");
+
+    const fontCssRes = await fetch(`${baseUrl}/fonts/fonts.css`);
+    assert.equal(fontCssRes.status, 200);
+    assert.ok(fontCssRes.headers.get("content-type")?.includes("text/css"));
+
+    const fontWoffRes = await fetch(`${baseUrl}/fonts/inter-latin.woff2`);
+    assert.equal(fontWoffRes.status, 200);
+    assert.equal(fontWoffRes.headers.get("content-type"), "font/woff2");
 
     const healthRes = await fetch(`${baseUrl}/health`);
     assert.equal(healthRes.status, 200);
@@ -438,5 +454,82 @@ describe("Segurança de Acesso Remoto & Servidor Modularizado (Prioridade #1)", 
       headers: { Cookie: cookiePair }
     });
     assert.equal(afterWipeStatus.status, 401);
+  });
+
+  it("Item #4: Rate-Limit geral por categoria classifica rotas, retorna HTTP 429 + Retry-After em rajada e isola IPs", async () => {
+    assert.equal(classifyApiRateLimitBucket("POST", "/debates"), "ai_write");
+    assert.equal(
+      classifyApiRateLimitBucket("POST", "/debates/12345678-1234-1234-1234-1234567890ab/message"),
+      "ai_write"
+    );
+    assert.equal(classifyApiRateLimitBucket("POST", "/audio/speak"), "audio");
+    assert.equal(classifyApiRateLimitBucket("GET", "/privacy/export"), "privacy_heavy");
+    assert.equal(classifyApiRateLimitBucket("GET", "/status"), "api_general");
+    assert.equal(classifyApiRateLimitBucket("GET", "/health"), null);
+    assert.equal(classifyApiRateLimitBucket("POST", "/auth/login"), null);
+
+    // Teste unitário determinístico com relógio controlado
+    let fakeNow = 5_000_000;
+    const limiter = createApiRateLimiter({
+      nowFn: () => fakeNow,
+      rules: { ai_write: { maxRequests: 2, windowMs: 60_000 } }
+    });
+    assert.equal(limiter.consume("10.1.1.1", "ai_write").allowed, true);
+    assert.equal(limiter.consume("10.1.1.1", "ai_write").allowed, true);
+    const blocked = limiter.consume("10.1.1.1", "ai_write");
+    assert.equal(blocked.allowed, false);
+    assert.ok(blocked.retryAfterSec >= 1);
+    // Outro IP continua liberado
+    assert.equal(limiter.consume("10.1.1.2", "ai_write").allowed, true);
+    // Avança 61s -> janela desliza e libera
+    fakeNow += 61_000;
+    assert.equal(limiter.consume("10.1.1.1", "ai_write").allowed, true);
+
+    // Teste HTTP real em servidor dedicado com teto baixo (3 req/min em api_general)
+    const { server: rlServer } = createMonitorServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: testToken,
+      accessPassword: testPassword,
+      requirePasswordLocal: false,
+      apiRateLimits: { api_general: { maxRequests: 3, windowMs: 60_000 } }
+    });
+    await new Promise<void>((res) => rlServer.listen(0, "127.0.0.1", () => res()));
+    const rlPort = (rlServer.address() as AddressInfo).port;
+    const rlBase = `http://127.0.0.1:${rlPort}`;
+
+    try {
+      for (let i = 0; i < 3; i++) {
+        const ok = await fetch(`${rlBase}/providers`, {
+          headers: {
+            "X-Forwarded-For": "203.0.113.200",
+            "X-AI-Council-Token": testToken
+          }
+        });
+        assert.equal(ok.status, 200);
+      }
+
+      // 4ª chamada no mesmo minuto -> 429 + Retry-After + X-RateLimit-Remaining: 0
+      const throttled = await fetch(`${rlBase}/providers`, {
+        headers: {
+          "X-Forwarded-For": "203.0.113.200",
+          "X-AI-Council-Token": testToken
+        }
+      });
+      assert.equal(throttled.status, 429);
+      assert.ok(Number(throttled.headers.get("retry-after")) >= 1);
+      assert.equal(throttled.headers.get("x-ratelimit-remaining"), "0");
+      const body = (await throttled.json()) as { code: string; bucket: string };
+      assert.equal(body.code, "RATE_LIMITED");
+      assert.equal(body.bucket, "api_general");
+
+      // /health continua sempre livre mesmo sob rate-limit
+      const healthOk = await fetch(`${rlBase}/health`, {
+        headers: { "X-Forwarded-For": "203.0.113.200" }
+      });
+      assert.equal(healthOk.status, 200);
+    } finally {
+      await new Promise<void>((res) => rlServer.close(() => res()));
+    }
   });
 });

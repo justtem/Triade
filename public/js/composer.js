@@ -25,7 +25,11 @@ import { fetchJson, loadPromptTemplates, refreshDashboard } from "./api.js";
 import { escapeHtml } from "./markdown.js";
 import { openImageLightbox } from "./motion.js";
 import { updateRightAiPanel } from "./telemetry.js";
-import { promptPrivacyShieldDecision } from "./user-memory.js";
+import {
+  openImageRedactModal,
+  promptPrivacyShieldDecision,
+  redactImageAttachmentsWithBoxes
+} from "./user-memory.js";
 
 export function getSelectedParticipants() {
   return $$('input[name="participants"]:checked').map((cb) => cb.value);
@@ -301,16 +305,14 @@ export function syncComposerModeUi() {
   const topicInput = $("#debate-topic");
   if (topicInput) {
     if (isContinuing) {
-      topicInput.placeholder = responder.isSingle
-        ? `Continuar com ${responder.shortLabel}... (Enter envia)`
-        : `Continuar com ${responder.shortLabel}... (Enter envia)`;
+      topicInput.placeholder = `Continuar com ${responder.shortLabel}... (Enter envia · / templates)`;
     } else if (responder.isSingle) {
-      topicInput.placeholder = `Pergunte ao ${responder.shortLabel}... (Enter envia, Shift + Enter quebra linha)`;
+      topicInput.placeholder = `Pergunte ao ${responder.shortLabel}... (Enter envia · / templates)`;
     } else {
       topicInput.placeholder =
         state.selectedResponseMode === "normal"
-          ? "Pergunte algo... (Enter envia, Shift + Enter quebra linha)"
-          : "Descreva o problema... (Enter envia, Shift + Enter quebra linha)";
+          ? "Pergunte algo ou digite / para templates... (Enter envia, Shift + Enter quebra linha)"
+          : "Descreva o problema ou digite / para templates... (Enter envia, Shift + Enter quebra linha)";
     }
   }
 
@@ -447,6 +449,8 @@ export async function handleCreateDebate(event) {
     const routingMode = state.isAutoRouteMode ? "auto" : "manual";
     const autoVerdict = state.selectedAutoVerdict === "on";
 
+    let currentAttachments = attachmentsSnapshot;
+
     const sendRequest = (privacyAction) =>
       currentDebate
         ? fetchJson(`/debates/${currentDebate.id}/message`, {
@@ -463,7 +467,7 @@ export async function handleCreateDebate(event) {
               responseMode: state.selectedResponseMode,
               interactionMode: state.selectedInteractionMode,
               webSearchMode: state.selectedWebSearchMode,
-              attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
+              attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
               ...(privacyAction ? { privacyAction } : {})
             }
           })
@@ -486,7 +490,7 @@ export async function handleCreateDebate(event) {
                 state.activeNewChatProjectId ||
                 state.selectedProjectFilterId ||
                 undefined,
-              attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
+              attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
               ...(privacyAction ? { privacyAction } : {})
             }
           });
@@ -504,10 +508,25 @@ export async function handleCreateDebate(event) {
         updateRightAiPanel();
         if (feedback) feedback.textContent = "";
 
-        const decision = await promptPrivacyShieldDecision(firstErr.data.findings);
+        const imgFindings = Array.isArray(firstErr.data.imageFindings)
+          ? firstErr.data.imageFindings
+          : [];
+        const decision = await promptPrivacyShieldDecision(
+          firstErr.data.findings,
+          imgFindings
+        );
         if (decision === "cancel") {
           topicInput?.focus();
           return;
+        }
+        if (decision === "mask" && imgFindings.length > 0) {
+          if (feedback) feedback.textContent = "Aplicando tarjas automáticas na imagem...";
+          currentAttachments = await redactImageAttachmentsWithBoxes(
+            currentAttachments,
+            imgFindings
+          );
+          state.pendingAttachments = currentAttachments.map((f) => ({ ...f }));
+          renderAttachmentsBar();
         }
         if (feedback) {
           feedback.textContent =
@@ -743,6 +762,21 @@ export function renderAttachmentsBar() {
     sizeSpan.className = "attachment-pill-size";
     sizeSpan.textContent = formatFileSizeShort(file.size);
 
+    let redactBtn = null;
+    if (file.kind === "image" && file.dataBase64) {
+      redactBtn = document.createElement("button");
+      redactBtn.type = "button";
+      redactBtn.className = "attachment-pill-redact";
+      redactBtn.title = "Desenhar tarja preta manual sobre áreas sensíveis antes de enviar";
+      redactBtn.textContent = "Tarjar";
+      redactBtn.addEventListener("click", () => {
+        void openImageRedactModal(file, (updatedFile) => {
+          state.pendingAttachments[idx] = updatedFile;
+          renderAttachmentsBar();
+        });
+      });
+    }
+
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "attachment-pill-remove";
@@ -753,7 +787,11 @@ export function renderAttachmentsBar() {
       renderAttachmentsBar();
     });
 
-    pill.append(nameSpan, sizeSpan, removeBtn);
+    if (redactBtn) {
+      pill.append(nameSpan, sizeSpan, redactBtn, removeBtn);
+    } else {
+      pill.append(nameSpan, sizeSpan, removeBtn);
+    }
     bar.appendChild(pill);
   });
 }
@@ -938,6 +976,11 @@ export function applyPromptTemplate(tpl) {
     topicInput.style.height = "auto";
     topicInput.style.height = `${Math.min(180, topicInput.scrollHeight)}px`;
     topicInput.focus();
+    try {
+      topicInput.setSelectionRange(promptText.length, promptText.length);
+    } catch {
+      // Ignora em navegadores que não suportam seleção imediata
+    }
   }
 
   closeTemplatesModal();

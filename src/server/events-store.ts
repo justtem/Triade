@@ -5,6 +5,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { applyLimitSignalToDebates } from "../debate/debate-engine.js";
+import {
+  decodeStorageText,
+  encodeStorageText
+} from "../security/data-protection.js";
 import type { AuthManager } from "./auth.js";
 import { isRecord, readRequestBody, sendJson } from "./http-utils.js";
 
@@ -170,7 +174,7 @@ function isRecentDuplicate(
 export async function readMonitorEvents(): Promise<StoredMonitorEvent[]> {
   let content: string;
   try {
-    content = await readFile(getEventsFile(), "utf8");
+    content = await decodeStorageText(await readFile(getEventsFile(), "utf8"));
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
       return [];
@@ -197,11 +201,10 @@ async function writeEventsAtomically(
   const temporaryFile = `${eventsFile}.${process.pid}.${randomUUID()}.tmp`;
 
   try {
-    await writeFile(
-      temporaryFile,
-      JSON.stringify(events.slice(-MAX_HISTORY), null, 2),
-      "utf8"
+    const encoded = await encodeStorageText(
+      JSON.stringify(events.slice(-MAX_HISTORY), null, 2)
     );
+    await writeFile(temporaryFile, encoded, { encoding: "utf8", mode: 0o600 });
     await rename(temporaryFile, eventsFile);
   } finally {
     await rm(temporaryFile, { force: true }).catch(() => {});

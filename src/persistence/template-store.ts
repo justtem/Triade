@@ -3,6 +3,10 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  decodeStorageText,
+  encodeStorageText
+} from "../security/data-protection.js";
 import type {
   DebateFocus,
   InteractionMode,
@@ -11,10 +15,16 @@ import type {
 } from "../shared/debate-types.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DATA_DIR = process.env.AI_COUNCIL_DATA_DIR
-  ? resolve(process.env.AI_COUNCIL_DATA_DIR)
-  : resolve(ROOT_DIR, "data");
-const TEMPLATES_FILE = resolve(DATA_DIR, "templates.json");
+
+function getDataDir(): string {
+  return process.env.AI_COUNCIL_DATA_DIR
+    ? resolve(process.env.AI_COUNCIL_DATA_DIR)
+    : resolve(ROOT_DIR, "data");
+}
+
+function getTemplatesFile(): string {
+  return resolve(getDataDir(), "templates.json");
+}
 
 const DEFAULT_TEMPLATES_SEED: Omit<PromptTemplate, "createdAt" | "updatedAt">[] = [
   {
@@ -71,11 +81,13 @@ function withTemplateLock<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function writeTemplatesAtomically(templates: PromptTemplate[]): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true });
-  const tmp = `${TEMPLATES_FILE}.${process.pid}.${randomUUID()}.tmp`;
+  const file = getTemplatesFile();
+  await mkdir(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(tmp, JSON.stringify(templates, null, 2), "utf8");
-    await rename(tmp, TEMPLATES_FILE);
+    const encoded = await encodeStorageText(JSON.stringify(templates, null, 2));
+    await writeFile(tmp, encoded, { encoding: "utf8", mode: 0o600 });
+    await rename(tmp, file);
   } finally {
     await rm(tmp, { force: true }).catch(() => {});
   }
@@ -105,7 +117,7 @@ export interface UpsertPromptTemplateInput {
 
 export async function listPromptTemplates(): Promise<PromptTemplate[]> {
   try {
-    const raw = await readFile(TEMPLATES_FILE, "utf8");
+    const raw = await decodeStorageText(await readFile(getTemplatesFile(), "utf8"));
     const clean = raw.replace(/^\uFEFF/, "").trim();
     if (clean) {
       const parsed: unknown = JSON.parse(clean);

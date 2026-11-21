@@ -49,6 +49,35 @@ export function hideAuthLockOverlay() {
   if (errEl) errEl.textContent = "";
 }
 
+export function showVaultLockOverlay(options = {}) {
+  const overlay = $("#vault-lock-overlay");
+  const form = $("#vault-unlock-form");
+  const remoteBox = $("#vault-remote-blocked");
+  const errEl = $("#vault-lock-error");
+  const input = $("#vault-unlock-input");
+  const isLocal = options.isLocal !== false;
+
+  if (form) form.hidden = !isLocal;
+  if (remoteBox) remoteBox.hidden = isLocal;
+  if (errEl && options.message) errEl.textContent = options.message;
+
+  if (overlay && overlay.hidden) {
+    overlay.hidden = false;
+    if (isLocal) {
+      setTimeout(() => input?.focus(), 60);
+    }
+  }
+}
+
+export function hideVaultLockOverlay() {
+  const overlay = $("#vault-lock-overlay");
+  const errEl = $("#vault-lock-error");
+  const input = $("#vault-unlock-input");
+  if (overlay) overlay.hidden = true;
+  if (errEl) errEl.textContent = "";
+  if (input) input.value = "";
+}
+
 export async function fetchJson(endpoint, options = {}) {
   const method = options.method || "GET";
   const timeoutMs = options.timeoutMs || (method === "GET" ? 15000 : 25000);
@@ -73,8 +102,11 @@ export async function fetchJson(endpoint, options = {}) {
   }
 
   const data = await response.json().catch(() => ({}));
-  if (response.status === 401 && endpoint !== "/auth/login") {
+  if (response.status === 401 && endpoint !== "/auth/login" && endpoint !== "/privacy/vault/unlock") {
     showAuthLockOverlay();
+  }
+  if (response.status === 423 && data?.code === "VAULT_LOCKED") {
+    showVaultLockOverlay({ isLocal: data.isLocal !== false });
   }
   if (!response.ok) {
     const err = new Error(data.error || `Erro HTTP ${response.status}`);

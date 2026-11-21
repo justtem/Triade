@@ -2,7 +2,7 @@ import OpenAI from "openai";
 
 import type { AutoPlatform } from "../shared/debate-types.js";
 import { runWithFallback } from "./policy.js";
-import type { Provider } from "./types.js";
+import type { Provider, ProviderError } from "./types.js";
 import type { UsageGate } from "./usage-gate.js";
 
 export interface OpenAICompatOptions {
@@ -11,6 +11,9 @@ export interface OpenAICompatOptions {
   apiKey: string;
   baseURL: string;
   models: readonly string[];
+  resolveModels?: () => Promise<readonly string[]> | readonly string[];
+  onModelSuccess?: (model: string, ttfbMs?: number) => void;
+  onModelError?: (model: string, error: ProviderError) => void;
   gate: UsageGate;
   maxHttpAttempts: number;
 
@@ -45,11 +48,16 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
     async generate(request) {
       return runWithFallback({
         models: options.models,
+        resolveModels: options.resolveModels,
+        onModelSuccess: options.onModelSuccess,
+        onModelError: options.onModelError,
         maxHttpAttempts: options.maxHttpAttempts,
         gate: options.gate,
         request,
         headroom,
-        call: async (model) => {
+        call: async (model, hooks) => {
+          const effectiveSignal = hooks?.signal ?? request.signal;
+          const effectiveOnDelta = hooks?.onDelta ?? request.onDelta;
           const imageParts =
             options.id === "openrouter"
               ? (request.media ?? []).filter(
@@ -81,7 +89,7 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
               ...(options.extraBody ? options.extraBody(model) : {})
             };
 
-            if (request.onDelta) {
+            if (effectiveOnDelta) {
               const streamParams = {
                 ...baseParams,
                 stream: true as const,
@@ -92,7 +100,7 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
 
               const stream = await client.chat.completions.create(
                 streamParams,
-                request.signal ? { signal: request.signal } : undefined
+                effectiveSignal ? { signal: effectiveSignal } : undefined
               );
 
               let fullText = "";
@@ -101,13 +109,13 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
               let totalTokens: number | undefined;
 
               for await (const chunk of stream) {
-                if (request.signal?.aborted) {
+                if (effectiveSignal?.aborted) {
                   break;
                 }
                 const piece = chunk.choices?.[0]?.delta?.content ?? "";
                 if (piece) {
                   fullText += piece;
-                  request.onDelta(piece);
+                  effectiveOnDelta(piece);
                 }
                 if (chunk.usage) {
                   inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
@@ -129,7 +137,7 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
 
             const response = await client.chat.completions.create(
               params,
-              request.signal ? { signal: request.signal } : undefined
+              effectiveSignal ? { signal: effectiveSignal } : undefined
             );
 
             return {
@@ -144,7 +152,7 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
             try {
               return await executeCall(true);
             } catch (visionError) {
-              if (request.signal?.aborted) {
+              if (effectiveSignal?.aborted) {
                 throw visionError;
               }
               const msg =

@@ -1,12 +1,16 @@
 import { GoogleGenAI } from "@google/genai";
 
-import { runWithFallback } from "./policy.js";
-import type { Provider } from "./types.js";
+import { runWithFallback, type HedgePlan } from "./policy.js";
+import type { Provider, ProviderError } from "./types.js";
 import type { UsageGate } from "./usage-gate.js";
 
 export interface GeminiOptions {
   apiKey: string;
   models: readonly string[];
+  resolveModels?: () => Promise<readonly string[]> | readonly string[];
+  resolveHedgePlan?: (models: readonly string[]) => HedgePlan | null;
+  onModelSuccess?: (model: string, ttfbMs?: number) => void;
+  onModelError?: (model: string, error: ProviderError) => void;
   gate: UsageGate;
   maxHttpAttempts: number;
 
@@ -63,11 +67,17 @@ export function makeGemini(options: GeminiOptions): Provider {
     async generate(request) {
       return runWithFallback({
         models: options.models,
+        resolveModels: options.resolveModels,
+        resolveHedgePlan: options.resolveHedgePlan,
+        onModelSuccess: options.onModelSuccess,
+        onModelError: options.onModelError,
         maxHttpAttempts: options.maxHttpAttempts,
         gate: options.gate,
         request,
         headroom: 1_000,
-        call: async (model) => {
+        call: async (model, hooks) => {
+          const effectiveSignal = hooks?.signal ?? request.signal;
+          const effectiveOnDelta = hooks?.onDelta ?? request.onDelta;
           const noThinking = canDisableThinking(model);
 
           const mediaParts = (request.media ?? [])
@@ -89,14 +99,14 @@ export function makeGemini(options: GeminiOptions): Provider {
               systemInstruction: request.system,
               maxOutputTokens: request.maxTokens + (noThinking ? 0 : 1_500),
               temperature: 0.4,
-              ...(request.signal ? { abortSignal: request.signal } : {}),
+              ...(effectiveSignal ? { abortSignal: effectiveSignal } : {}),
               ...(noThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
               ...(useGrounding ? { tools: [{ googleSearch: {} }] } : {})
             };
 
             const groundingMap = new Map<string, string>();
 
-            if (request.onDelta) {
+            if (effectiveOnDelta) {
               const stream = await ai.models.generateContentStream({
                 model,
                 contents,
@@ -109,13 +119,13 @@ export function makeGemini(options: GeminiOptions): Provider {
               let totalTokens: number | undefined;
 
               for await (const chunk of stream) {
-                if (request.signal?.aborted) {
+                if (effectiveSignal?.aborted) {
                   break;
                 }
                 const piece = chunk.text ?? "";
                 if (piece) {
                   fullText += piece;
-                  request.onDelta(piece);
+                  effectiveOnDelta(piece);
                 }
                 if (chunk.usageMetadata) {
                   inputTokens = chunk.usageMetadata.promptTokenCount ?? inputTokens;
@@ -165,7 +175,7 @@ export function makeGemini(options: GeminiOptions): Provider {
             try {
               return await executeGemini(true);
             } catch (err) {
-              if (request.signal?.aborted) throw err;
+              if (effectiveSignal?.aborted) throw err;
               const msg = err instanceof Error ? err.message : String(err);
               const isGroundingQuotaOrUnsupported =
                 /google_?search|tool|grounding|400|429|RESOURCE_EXHAUSTED|quota|not supported|invalid argument/i.test(

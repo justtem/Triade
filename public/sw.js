@@ -73,8 +73,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Ícones estáticos: cache-first leve com atualização em background
-  if (url.pathname.startsWith("/icons/")) {
+  // Ícones, fontes e bibliotecas locais (KaTeX/Mermaid): cache-first leve com atualização em background
+  if (
+    url.pathname.startsWith("/icons/") ||
+    url.pathname.startsWith("/fonts/") ||
+    url.pathname.startsWith("/vendor/")
+  ) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>

@@ -10,6 +10,11 @@ import {
   formatDate
 } from "./state.js";
 import { loadDebateDetail } from "./api.js";
+import {
+  createMermaidBlockElement,
+  hydrateRichBlocks,
+  looksLikeRealInlineMath
+} from "./rich-render.js";
 
 export function escapeHtml(raw) {
   return String(raw || "")
@@ -20,12 +25,107 @@ export function escapeHtml(raw) {
     .replace(/'/g, "&#39;");
 }
 
-export function formatInlineMarkdown(escapedLine) {
-  return escapedLine
+/**
+ * Valida URLs de links gerados em Markdown (permite estritamente http: e https:,
+ * bloqueando javascript:, data:, vbscript:, file: e caracteres de controle).
+ */
+export function safeMarkdownLinkUrl(rawEscapedOrPlainUrl) {
+  const decoded = String(rawEscapedOrPlainUrl || "")
+    .replace(/&amp;/g, "&")
+    .trim();
+  if (!decoded || /[\u0000-\u001F\u007F\s]/.test(decoded)) {
+    return null;
+  }
+  if (decoded.startsWith("//")) {
+    return null;
+  }
+  try {
+    const parsed = new URL(decoded);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+export function formatInlineMarkdown(escapedLine, options = {}) {
+  const isStreaming = Boolean(options.isStreaming);
+  const codeSlots = [];
+  // 1. Protege inline code (`...`) primeiro para evitar mutação por negrito/itálico/links/fórmulas
+  let out = String(escapedLine || "").replace(/`([^`]+)`/g, (_m, codeBody) => {
+    const idx = codeSlots.length;
+    codeSlots.push(`<code>${codeBody}</code>`);
+    return `\u0000CODE_${idx}\u0000`;
+  });
+
+  // 1b. Fórmulas inline KaTeX: \(...\) e $...$ (com proteção inteligente contra valores monetários R$ 50 / $100)
+  const mathSlots = [];
+  if (!isStreaming) {
+    const decodeEntitiesForLatex = (txt) =>
+      String(txt || "")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+
+    const pushInlineMath = (escapedInner) => {
+      const latex = decodeEntitiesForLatex(escapedInner).trim();
+      if (!latex) return null;
+      const idx = mathSlots.length;
+      const safeAttr = escapeHtml(latex);
+      mathSlots.push(
+        `<span class="math-inline" data-katex-latex="${safeAttr}" data-katex-display="false" title="Clique para copiar o LaTeX"><span class="math-katex-output"><code>${escapedInner}</code></span></span>`
+      );
+      return `\u0000MATH_${idx}\u0000`;
+    };
+
+    // Delimitador explícito \( ... \)
+    out = out.replace(/\\\(([^)\n]{1,260}?)\\\)/g, (full, inner) => {
+      return pushInlineMath(inner) || full;
+    });
+
+    // Delimitador $...$ com proteção contra R$ 50, US$ 100 e números monetários comuns
+    out = out.replace(
+      /(^|[^\\$])\$([^$\n]{1,260}?)\$(?!\$)/g,
+      (full, beforeChar, inner, offset, fullStr) => {
+        const prefixSlice = fullStr.slice(Math.max(0, offset - 4), offset + beforeChar.length);
+        const plainInner = decodeEntitiesForLatex(inner);
+        if (!looksLikeRealInlineMath(plainInner, prefixSlice)) {
+          return full;
+        }
+        const token = pushInlineMath(inner);
+        return token ? `${beforeChar}${token}` : full;
+      }
+    );
+  }
+
+  // 2. Neutraliza imagens Markdown externas (![alt](url)) para impedir exfiltração silenciosa via Prompt Injection
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, altText) => {
+    const label = altText && altText.trim() ? altText.trim() : "imagem";
+    return `<span class="md-blocked-img" title="Imagem externa bloqueada por segurança (anti-exfiltração)">[Imagem externa bloqueada: ${label}]</span>`;
+  });
+
+  // 3. Links Markdown [texto](url) — permite estritamente http(s) com noopener noreferrer
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, linkText, rawUrl) => {
+    const safeHref = safeMarkdownLinkUrl(rawUrl);
+    if (!safeHref) {
+      return `<span class="md-blocked-link" title="Link bloqueado por protocolo inseguro">${linkText}</span>`;
+    }
+    return `<a href="${escapeHtml(safeHref)}" target="_blank" rel="noopener noreferrer" class="md-ext-link">${linkText}</a>`;
+  });
+
+  // 4. Formatação básica
+  out = out
     .replace(/&lt;br\s*\/?&gt;/gi, "<br>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+  // 5. Restaura fórmulas e spans de inline code intactos
+  out = out.replace(/\u0000MATH_(\d+)\u0000/g, (_m, idx) => mathSlots[Number(idx)] || "");
+  return out.replace(/\u0000CODE_(\d+)\u0000/g, (_m, idx) => codeSlots[Number(idx)] || "");
 }
 
 // ============================================================================
@@ -158,41 +258,124 @@ export function highlightCodeHtml(rawCode, rawLang) {
   return out;
 }
 
-export function buildMarkdownDom(markdownText) {
+function createMathBlockElement(latexRaw, isStreaming) {
+  const latex = String(latexRaw || "").trim();
+  const wrap = document.createElement("div");
+  wrap.className = "math-block-wrap";
+
+  if (isStreaming) {
+    const badge = document.createElement("span");
+    badge.className = "mermaid-streaming-badge";
+    badge.textContent = "Gerando fórmula...";
+    const code = document.createElement("code");
+    code.className = "math-block-fallback";
+    code.textContent = latex;
+    wrap.append(badge, code);
+    return wrap;
+  }
+
+  wrap.setAttribute("data-katex-latex", latex);
+  wrap.setAttribute("data-katex-display", "true");
+
+  const output = document.createElement("div");
+  output.className = "math-katex-output";
+  const fallback = document.createElement("code");
+  fallback.className = "math-block-fallback";
+  fallback.textContent = latex;
+  output.appendChild(fallback);
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "btn-copy-code math-copy-btn";
+  copyBtn.title = "Copiar código LaTeX";
+  copyBtn.textContent = "LaTeX";
+  copyBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(latex);
+      copyBtn.textContent = "Copiado";
+      setTimeout(() => {
+        copyBtn.textContent = "LaTeX";
+      }, 1500);
+    } catch {
+      copyBtn.textContent = "Erro";
+    }
+  });
+
+  wrap.append(output, copyBtn);
+  return wrap;
+}
+
+export function buildMarkdownDom(markdownText, options = {}) {
+  const isStreaming = Boolean(options.isStreaming);
   const container = document.createElement("div");
   container.className = "markdown-content";
 
   const raw = String(markdownText || "").replace(/\r\n/g, "\n").trim();
   if (!raw) return container;
 
+  // 1. Divide blocos cercados (```lang ... ```), blocos de matemática ($$...$$ e \[...\]) e bloco mermaid aberto em streaming
   const segments = [];
-  const fenceRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
+  const blockRegex =
+    /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g;
   let lastIndex = 0;
   let match;
 
-  while ((match = fenceRegex.exec(raw)) !== null) {
+  while ((match = blockRegex.exec(raw)) !== null) {
     if (match.index > lastIndex) {
       segments.push({
         type: "prose",
         content: raw.slice(lastIndex, match.index)
       });
     }
-    segments.push({
-      type: "code",
-      lang: (match[1] || "code").trim(),
-      content: match[2].replace(/\n$/, "")
-    });
-    lastIndex = fenceRegex.lastIndex;
+    if (match[2] !== undefined) {
+      const lang = (match[1] || "code").trim().toLowerCase();
+      const body = match[2].replace(/\n$/, "");
+      if (lang === "mermaid") {
+        segments.push({ type: "mermaid", content: body });
+      } else if (lang === "math" || lang === "latex") {
+        segments.push({ type: "math", content: body });
+      } else {
+        segments.push({
+          type: "code",
+          lang: (match[1] || "code").trim(),
+          content: body
+        });
+      }
+    } else if (match[3] !== undefined || match[4] !== undefined) {
+      segments.push({
+        type: "math",
+        content: (match[3] ?? match[4] ?? "").trim()
+      });
+    }
+    lastIndex = blockRegex.lastIndex;
   }
 
   if (lastIndex < raw.length) {
-    segments.push({
-      type: "prose",
-      content: raw.slice(lastIndex)
-    });
+    const tail = raw.slice(lastIndex);
+    // Durante streaming, detecta bloco ```mermaid aberto antes de fechar para evitar piscar
+    const openMermaid = isStreaming ? tail.match(/^([\s\S]*?)```mermaid\n([\s\S]*)$/i) : null;
+    if (openMermaid) {
+      if (openMermaid[1].trim()) {
+        segments.push({ type: "prose", content: openMermaid[1] });
+      }
+      segments.push({ type: "mermaid", content: openMermaid[2] });
+    } else {
+      segments.push({ type: "prose", content: tail });
+    }
   }
 
   for (const seg of segments) {
+    if (seg.type === "mermaid") {
+      container.appendChild(createMermaidBlockElement(seg.content, { isStreaming }));
+      continue;
+    }
+
+    if (seg.type === "math") {
+      container.appendChild(createMathBlockElement(seg.content, isStreaming));
+      continue;
+    }
+
     if (seg.type === "code") {
       const codeWrapper = document.createElement("div");
       codeWrapper.className = "code-block-wrapper";
@@ -255,7 +438,7 @@ export function buildMarkdownDom(markdownText) {
       if (headingMatch) {
         const level = Math.min(4, headingMatch[1].length);
         const h = document.createElement(`h${level}`);
-        h.innerHTML = formatInlineMarkdown(escapeHtml(headingMatch[2]));
+        h.innerHTML = formatInlineMarkdown(escapeHtml(headingMatch[2]), { isStreaming });
         container.appendChild(h);
         i++;
         continue;
@@ -284,7 +467,7 @@ export function buildMarkdownDom(markdownText) {
         const trHead = document.createElement("tr");
         for (const hText of headers) {
           const th = document.createElement("th");
-          th.innerHTML = formatInlineMarkdown(escapeHtml(hText));
+          th.innerHTML = formatInlineMarkdown(escapeHtml(hText), { isStreaming });
           trHead.appendChild(th);
         }
         thead.appendChild(trHead);
@@ -297,7 +480,7 @@ export function buildMarkdownDom(markdownText) {
           const tr = document.createElement("tr");
           for (const cText of cells) {
             const td = document.createElement("td");
-            td.innerHTML = formatInlineMarkdown(escapeHtml(cText));
+            td.innerHTML = formatInlineMarkdown(escapeHtml(cText), { isStreaming });
             tr.appendChild(td);
           }
           tbody.appendChild(tr);
@@ -314,7 +497,7 @@ export function buildMarkdownDom(markdownText) {
         while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
           const itemText = lines[i].trim().replace(/^[-*]\s+/, "");
           const li = document.createElement("li");
-          li.innerHTML = formatInlineMarkdown(escapeHtml(itemText));
+          li.innerHTML = formatInlineMarkdown(escapeHtml(itemText), { isStreaming });
           ul.appendChild(li);
           i++;
         }
@@ -327,7 +510,7 @@ export function buildMarkdownDom(markdownText) {
         while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
           const itemText = lines[i].trim().replace(/^\d+\.\s+/, "");
           const li = document.createElement("li");
-          li.innerHTML = formatInlineMarkdown(escapeHtml(itemText));
+          li.innerHTML = formatInlineMarkdown(escapeHtml(itemText), { isStreaming });
           ol.appendChild(li);
           i++;
         }
@@ -342,7 +525,7 @@ export function buildMarkdownDom(markdownText) {
           quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
           i++;
         }
-        bq.innerHTML = formatInlineMarkdown(escapeHtml(quoteLines.join(" ")));
+        bq.innerHTML = formatInlineMarkdown(escapeHtml(quoteLines.join(" ")), { isStreaming });
         container.appendChild(bq);
         continue;
       }
@@ -358,12 +541,30 @@ export function buildMarkdownDom(markdownText) {
       }
       if (paraLines.length > 0) {
         const p = document.createElement("p");
-        p.innerHTML = formatInlineMarkdown(escapeHtml(paraLines.join(" ")));
+        p.innerHTML = formatInlineMarkdown(escapeHtml(paraLines.join(" ")), { isStreaming });
         container.appendChild(p);
       } else {
         i++;
       }
     }
+  }
+
+  // Clique em qualquer fórmula inline copia o LaTeX original
+  if (!isStreaming) {
+    container.addEventListener("click", async (e) => {
+      const inlineMath = e.target?.closest?.(".math-inline[data-katex-latex]");
+      if (!inlineMath) return;
+      const latex = inlineMath.getAttribute("data-katex-latex") || "";
+      if (!latex) return;
+      try {
+        await navigator.clipboard.writeText(latex);
+        inlineMath.classList.add("is-copied");
+        setTimeout(() => inlineMath.classList.remove("is-copied"), 1200);
+      } catch {
+        // Ignora
+      }
+    });
+    hydrateRichBlocks(container);
   }
 
   return container;

@@ -12,6 +12,9 @@ import {
 
 const STATIC_JS_MODULE_REGEX = /^\/js\/([a-z0-9_-]+)\.js$/;
 const STATIC_ICON_REGEX = /^\/icons\/([a-z0-9_-]+\.(?:svg|png|ico))$/;
+const STATIC_FONT_REGEX = /^\/fonts\/([a-z0-9_-]+\.(?:woff2|css))$/;
+const STATIC_VENDOR_REGEX =
+  /^\/vendor\/(?:katex\/(?:katex\.min\.(?:js|css)|fonts\/[A-Za-z0-9_-]+\.woff2)|mermaid\/mermaid\.min\.js)$/;
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -20,7 +23,8 @@ const MIME_TYPES: Record<string, string> = {
   ".json": "application/manifest+json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
-  ".ico": "image/x-icon"
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2"
 };
 
 export function resolveDashboardFilename(pathname: string): string | null {
@@ -49,6 +53,15 @@ export function resolveDashboardFilename(pathname: string): string | null {
     return `icons/${iconMatch[1]}`;
   }
 
+  const fontMatch = pathname.match(STATIC_FONT_REGEX);
+  if (fontMatch?.[1]) {
+    return `fonts/${fontMatch[1]}`;
+  }
+
+  if (STATIC_VENDOR_REGEX.test(pathname)) {
+    return pathname.slice(1);
+  }
+
   return null;
 }
 
@@ -75,7 +88,7 @@ export async function serveDashboardFile(
     const content = await readFile(filePath);
     const ext = extname(filePath);
     const acceptEncoding = response.req?.headers["accept-encoding"];
-    const compressible = ext !== ".png" && ext !== ".ico";
+    const compressible = ext !== ".png" && ext !== ".ico" && ext !== ".woff2";
     const useGzip =
       compressible &&
       content.byteLength > 1024 &&
@@ -92,9 +105,11 @@ export async function serveDashboardFile(
       "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
       "Content-Length": String(payload.byteLength),
       "Cache-Control":
-        ext === ".png" || ext === ".ico" || ext === ".svg"
-          ? "public, max-age=86400"
-          : "no-store",
+        ext === ".woff2" || pathname.startsWith("/vendor/")
+          ? "public, max-age=31536000, immutable"
+          : ext === ".png" || ext === ".ico" || ext === ".svg"
+            ? "public, max-age=86400"
+            : "no-store",
       ...(pathname === "/sw.js" ? { "Service-Worker-Allowed": "/" } : {}),
       ...(useGzip
         ? {

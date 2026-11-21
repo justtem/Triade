@@ -5,8 +5,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { startRunner } from "./debate/runner.js";
+import { reinitProviders } from "./providers/registry.js";
 import {
   applyNtfsOwnerOnlyPermissions,
+  loadSealedApiKeysIntoRam,
   readPrivacySettings
 } from "./security/data-protection.js";
 import { createMonitorServer } from "./server/app.js";
@@ -37,6 +39,12 @@ async function main(): Promise<void> {
     DATA_DIR
   ]);
   const privacySettings = await readPrivacySettings();
+  if (privacySettings.sealApiKeysInVault && privacySettings.vaultMode === "dpapi") {
+    const loaded = await loadSealedApiKeysIntoRam().catch(() => ({ loadedCount: 0 }));
+    if (loaded.loadedCount > 0) {
+      reinitProviders();
+    }
+  }
 
   const { server, auth } = createMonitorServer({
     host: HOST,
@@ -62,8 +70,14 @@ async function main(): Promise<void> {
       );
     }
     console.log("• Acesso remoto:       protegido por ACCESS_PASSWORD + rate-limit (5 erros / 15 min)");
+    const vaultDesc =
+      privacySettings.vaultMode === "master_password"
+        ? `AES-256-GCM + Senha Mestra (auto-lock ${privacySettings.vaultAutoLockMinutes}m)`
+        : privacySettings.vaultMode === "dpapi"
+          ? "AES-256-GCM + DPAPI"
+          : "JSON local";
     console.log(
-      `• Privacidade local:   Escudo DLP (${privacySettings.shieldMode}) | Repouso (${privacySettings.encryptAtRest ? "AES-256-GCM + DPAPI" : "JSON local"}) | NTFS (${ntfsResult.applied ? "restrito ao usuário" : ntfsResult.supported ? "pendente" : "N/A"})`
+      `• Privacidade local:   Escudo DLP (${privacySettings.shieldMode}) | Cofre (${vaultDesc}) | Chaves API (${privacySettings.sealApiKeysInVault ? "seladas no cofre" : ".env"}) | NTFS (${ntfsResult.applied ? "restrito ao usuário" : ntfsResult.supported ? "pendente" : "N/A"})`
     );
     if (auth.isUsingWeakDefaultPassword()) {
       console.warn(

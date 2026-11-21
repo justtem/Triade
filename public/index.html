@@ -13,11 +13,9 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
     <title>AI Council — Intelligence Hub</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Oswald:wght@700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=20261120m">
-    <script type="module" src="dashboard.js?v=20261120m"></script>
+    <link rel="stylesheet" href="/fonts/fonts.css?v=20261121h">
+    <link rel="stylesheet" href="styles.css?v=20261121h">
+    <script type="module" src="dashboard.js?v=20261121h"></script>
 </head>
 <body>
 
@@ -38,7 +36,7 @@
             </div>
 
             <p class="auth-lock-desc">
-                Digite a senha configurada em <code>ACCESS_PASSWORD</code> no arquivo <code>.env</code> para acessar suas inteligências à distância.
+                Digite sua senha de acesso para continuar.
             </p>
 
             <form id="auth-login-form" class="auth-lock-form" novalidate>
@@ -60,6 +58,57 @@
                     <span class="cta-arrow" aria-hidden="true">→</span>
                 </button>
             </form>
+        </div>
+    </div>
+
+    <!-- TELA DE DESBLOQUEIO DO COFRE LOCAL (SENHA MESTRA — SOMENTE PC LOCAL) -->
+    <div class="auth-lock-overlay" id="vault-lock-overlay" hidden>
+        <div class="auth-lock-card">
+            <div class="auth-lock-header">
+                <div class="brand-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <span class="eyebrow">COFRE LOCAL</span>
+                    <h2>COFRE TRANCADO</h2>
+                </div>
+            </div>
+
+            <p class="auth-lock-desc" id="vault-lock-desc">
+                Digite sua <strong>Senha Mestra</strong> neste PC para destrancar o acesso.
+            </p>
+
+            <form id="vault-unlock-form" class="auth-lock-form" novalidate>
+                <div class="form-group">
+                    <label for="vault-unlock-input" id="vault-unlock-label">Senha Mestra</label>
+                    <input
+                        type="password"
+                        id="vault-unlock-input"
+                        placeholder="Digite sua Senha Mestra..."
+                        autocomplete="off"
+                        required
+                    >
+                </div>
+
+                <span class="auth-lock-error" id="vault-lock-error" role="alert"></span>
+
+                <div class="vault-unlock-actions">
+                    <button type="button" class="btn-ghost-pill" id="vault-recovery-toggle">Usar Chave de Recuperação</button>
+                    <button type="submit" class="btn-primary auth-submit-btn" id="vault-unlock-submit-btn">
+                        <span>Destrancar Cofre</span>
+                        <span class="cta-arrow" aria-hidden="true">→</span>
+                    </button>
+                </div>
+            </form>
+
+            <div class="vault-remote-blocked" id="vault-remote-blocked" hidden>
+                <p class="auth-lock-desc">
+                    Por segurança, o cofre só pode ser destrancado diretamente no navegador do <strong>PC local</strong> (<code>http://127.0.0.1:4317</code>). Após destrancar lá, o acesso remoto volta normalmente.
+                </p>
+                <button type="button" class="btn-secondary" id="vault-remote-retry-btn">Verificar novamente</button>
+            </div>
         </div>
     </div>
 
@@ -234,8 +283,47 @@
                 <div class="memory-modal-actions">
                     <button type="button" class="btn-ghost-pill" id="privacy-shield-cancel-btn">Cancelar e Editar</button>
                     <button type="button" class="btn-primary" id="privacy-shield-mask-btn">
-                        <span>Mascarar e Enviar</span>
+                        <span id="privacy-shield-mask-label">Mascarar e Enviar</span>
                         <span class="cta-arrow" aria-hidden="true">→</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: EDITOR DE TARJA MANUAL EM IMAGENS ANEXADAS -->
+    <div class="memory-modal-overlay" id="image-redact-modal" hidden>
+        <div class="memory-modal-card image-redact-modal-card" role="dialog" aria-modal="true" aria-labelledby="image-redact-title">
+            <div class="memory-modal-header">
+                <div class="memory-modal-title-group">
+                    <span class="eyebrow">ESCUDO VISUAL // TARJA MANUAL</span>
+                    <h3 id="image-redact-title">Tarjar áreas sensíveis da imagem</h3>
+                </div>
+                <button type="button" class="icon-btn" id="image-redact-close" aria-label="Fechar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <p class="privacy-meta">
+                Clique e arraste sobre a imagem para desenhar tarjas pretas sólidas sobre senhas, chaves, rostos ou dados pessoais. Os pixels originais são substituídos antes do envio.
+            </p>
+
+            <div class="image-redact-stage">
+                <canvas id="image-redact-canvas"></canvas>
+            </div>
+
+            <div class="memory-modal-footer">
+                <div class="image-redact-tools">
+                    <button type="button" class="btn-ghost-pill" id="image-redact-undo-btn">Desfazer</button>
+                    <button type="button" class="btn-ghost-pill" id="image-redact-clear-btn">Limpar tarjas</button>
+                </div>
+                <div class="memory-modal-actions">
+                    <button type="button" class="btn-ghost-pill" id="image-redact-cancel-btn">Cancelar</button>
+                    <button type="button" class="btn-primary" id="image-redact-apply-btn">
+                        <span>Aplicar Tarja</span>
                     </button>
                 </div>
             </div>
@@ -432,6 +520,59 @@
         </figure>
     </div>
 
+    <!-- LIGHTBOX PARA AMPLIAR DIAGRAMAS MERMAID EM TELA CHEIA -->
+    <div class="memory-modal-overlay" id="diagram-lightbox-modal" hidden>
+        <div class="memory-modal-card diagram-lightbox-card" role="dialog" aria-modal="true" aria-labelledby="diagram-lightbox-caption">
+            <div class="memory-modal-header">
+                <div class="memory-modal-title-group">
+                    <span class="eyebrow">DIAGRAMA MERMAID // SVG</span>
+                    <h3 id="diagram-lightbox-caption">Diagrama</h3>
+                </div>
+                <div class="diagram-lightbox-actions">
+                    <button type="button" class="btn-secondary" id="diagram-lightbox-download">Baixar SVG</button>
+                    <button type="button" class="icon-btn" id="diagram-lightbox-close" aria-label="Fechar diagrama">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="diagram-lightbox-stage" id="diagram-lightbox-stage"></div>
+        </div>
+    </div>
+
+    <!-- PALETA DE COMANDOS (CTRL+K) -->
+    <div class="memory-modal-overlay cmd-palette-overlay" id="command-palette-modal" hidden>
+        <div class="cmd-palette-card" role="dialog" aria-modal="true" aria-label="Paleta de Comandos">
+            <div class="cmd-palette-header">
+                <span class="cmd-palette-search-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="7"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                </span>
+                <input
+                    type="text"
+                    id="command-palette-input"
+                    class="cmd-palette-input"
+                    placeholder="Buscar conversas, projetos, templates ou executar comando..."
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="Filtrar comandos, conversas, projetos e templates"
+                >
+                <button type="button" class="cmd-palette-esc-btn" id="command-palette-close" title="Fechar (Esc)">Esc</button>
+            </div>
+            <div class="cmd-palette-list" id="command-palette-list" role="listbox" aria-label="Resultados da paleta"></div>
+            <div class="cmd-palette-footer">
+                <span>↑↓ navegar</span>
+                <span>Enter executar</span>
+                <span>Alt+N nova conversa</span>
+                <span>/ templates no chat</span>
+            </div>
+        </div>
+    </div>
+
     <div class="app-container" id="app-shell">
 
         <!-- OVERLAY MOBILE PARA DRAWERS -->
@@ -546,6 +687,7 @@
                         autocomplete="off"
                         aria-label="Buscar conversas por título ou conteúdo"
                     >
+                    <button type="button" class="sidebar-cmd-k-pill" id="sidebar-cmd-k-btn" title="Abrir Paleta de Comandos (Ctrl+K)">Ctrl+K</button>
                     <button type="button" class="sidebar-search-clear" id="sidebar-search-clear" aria-label="Limpar busca" hidden>×</button>
                 </div>
 
@@ -570,6 +712,9 @@
                     <div class="connection-meta">
                         <small id="server-status">Verificando conexão...</small>
                     </div>
+                    <button type="button" class="btn-lock-remote" id="btn-lock-vault" title="Trancar cofre local" hidden>
+                        Trancar Cofre
+                    </button>
                     <button type="button" class="btn-lock-remote" id="btn-lock-session" title="Bloquear acesso neste dispositivo" hidden>
                         Bloquear
                     </button>
@@ -793,13 +938,22 @@
                             <span class="voice-rec-hint" id="voice-record-hint">Arraste para cancelar</span>
                         </div>
 
+                        <!-- MENU SLASH "/" PARA TEMPLATES DE PROMPT -->
+                        <div class="slash-templates-menu" id="slash-templates-menu" hidden role="listbox" aria-label="Templates de prompt rápidos">
+                            <div class="slash-menu-header">
+                                <span id="slash-templates-query">TEMPLATES DE PROMPT</span>
+                                <span class="slash-menu-keys">↑↓ · Enter · Esc</span>
+                            </div>
+                            <div class="slash-templates-list" id="slash-templates-list"></div>
+                        </div>
+
                         <!-- CAMPO PRINCIPAL DE TEXTO (AUTO-EXPANSÍVEL) -->
                         <div class="composer-input-wrap">
                             <label for="debate-topic" class="sr-only">Mensagem</label>
                             <textarea
                                 id="debate-topic"
                                 rows="2"
-                                placeholder="Pergunte algo... (Enter envia, Shift + Enter quebra linha)"
+                                placeholder="Pergunte algo ou digite / para templates... (Enter envia, Shift + Enter quebra linha)"
                                 required
                             ></textarea>
                         </div>
@@ -1063,6 +1217,10 @@
                                         <strong data-field="event-count">0</strong>
                                     </div>
                                 </div>
+                                <div class="openrouter-free-panel" id="gemini-autopilot-panel">
+                                    <span class="openrouter-free-title">PILOTO AUTOMÁTICO</span>
+                                    <div class="openrouter-free-models" id="gemini-autopilot-models"></div>
+                                </div>
                             </article>
 
                             <!-- GROQ -->
@@ -1092,6 +1250,10 @@
                                         <strong data-field="event-count">0</strong>
                                     </div>
                                 </div>
+                                <div class="openrouter-free-panel" id="groq-autopilot-panel">
+                                    <span class="openrouter-free-title">PILOTO AUTOMÁTICO</span>
+                                    <div class="openrouter-free-models" id="groq-autopilot-models"></div>
+                                </div>
                             </article>
 
                             <!-- OPENROUTER -->
@@ -1120,6 +1282,16 @@
                                         <span>Eventos históricos</span>
                                         <strong data-field="event-count">0</strong>
                                     </div>
+                                </div>
+                                <div class="openrouter-free-panel" id="openrouter-free-panel">
+                                    <div class="openrouter-free-header">
+                                        <div>
+                                            <span class="openrouter-free-title">FILA :FREE (AUTO-FALLBACK)</span>
+                                            <small id="openrouter-free-meta">Híbrido (.env + auto-descoberta :free)</small>
+                                        </div>
+                                        <button type="button" class="btn-secondary openrouter-refresh-btn" id="openrouter-refresh-free-btn" title="Consultar catálogo :free do OpenRouter agora (0 tokens)">Atualizar :free</button>
+                                    </div>
+                                    <div class="openrouter-free-models" id="openrouter-free-models-list"></div>
                                 </div>
                             </article>
 
@@ -1205,11 +1377,11 @@
                         </div>
                     </section>
 
-                    <!-- PRIVACIDADE & DADOS LOCAIS (LGPD: TRANSPARÊNCIA, PORTABILIDADE E ELIMINAÇÃO) -->
+                    <!-- PRIVACIDADE & DADOS LOCAIS -->
                     <section class="privacy-section" id="privacy-section" data-scroll-reveal>
                         <div class="section-heading">
                             <div>
-                                <span class="eyebrow">PRIVACIDADE &amp; CONTROLE // LGPD</span>
+                                <span class="eyebrow">PRIVACIDADE &amp; CONTROLE</span>
                                 <h3>Privacidade e dados locais</h3>
                             </div>
                         </div>
@@ -1218,72 +1390,143 @@
                             <div class="privacy-controls-grid">
                                 <div class="privacy-control-row">
                                     <div class="privacy-control-info">
-                                        <strong>Escudo de Privacidade (DLP Híbrido)</strong>
-                                        <small>Pede confirmação para textos digitados no chat e mascara automaticamente anexos, PDFs e projetos antes do envio às IAs.</small>
+                                        <div class="privacy-control-title-line">
+                                            <strong>Escudo de privacidade</strong>
+                                            <span class="privacy-control-badge is-ok" id="privacy-ocr-status">Ativo</span>
+                                        </div>
+                                        <small>Filtra dados sensíveis antes do envio.</small>
                                     </div>
                                     <div class="mode-segmented-pill" id="privacy-shield-mode-toggle" role="group" aria-label="Modo do Escudo de Privacidade">
-                                        <button type="button" class="mode-seg-btn is-active" data-shield-mode="strict" aria-pressed="true" title="Segredos, CPF, CNPJ, cartão, e-mail e telefone">Estrito</button>
-                                        <button type="button" class="mode-seg-btn" data-shield-mode="standard" aria-pressed="false" title="Segredos, CPF, CNPJ e cartão (sem e-mail/telefone)">Padrão</button>
-                                        <button type="button" class="mode-seg-btn" data-shield-mode="off" aria-pressed="false" title="Desativa o filtro local">Desligado</button>
+                                        <button type="button" class="mode-seg-btn is-active" data-shield-mode="strict" aria-pressed="true" title="Proteção máxima">Estrito</button>
+                                        <button type="button" class="mode-seg-btn" data-shield-mode="standard" aria-pressed="false" title="Proteção padrão">Padrão</button>
+                                        <button type="button" class="mode-seg-btn" data-shield-mode="off" aria-pressed="false" title="Desativar filtro">Desligado</button>
                                     </div>
                                 </div>
 
                                 <div class="privacy-control-row" id="privacy-encrypt-row">
                                     <div class="privacy-control-info">
                                         <div class="privacy-control-title-line">
-                                            <strong>Criptografia em repouso (AES-256-GCM + Windows DPAPI)</strong>
-                                            <span class="privacy-control-badge" id="privacy-encrypt-status">Desativada</span>
+                                            <strong>Cofre local</strong>
+                                            <span class="privacy-control-badge" id="privacy-encrypt-status">Desativado</span>
                                         </div>
-                                        <small>Cifra debates, projetos e memória em <code>data/</code> usando chave amarrada ao seu usuário Windows. Inicia em 1 clique sem senha extra.</small>
+                                        <small>Proteção dos dados armazenados neste dispositivo.</small>
                                     </div>
-                                    <div class="mode-segmented-pill" id="privacy-encrypt-toggle" role="group" aria-label="Criptografia em repouso">
-                                        <button type="button" class="mode-seg-btn" data-encrypt-rest="true" aria-pressed="false">Ativa</button>
-                                        <button type="button" class="mode-seg-btn is-active" data-encrypt-rest="false" aria-pressed="true">Desativada</button>
+                                    <div class="mode-segmented-pill" id="privacy-vault-mode-toggle" role="group" aria-label="Modo do Cofre local">
+                                        <button type="button" class="mode-seg-btn is-active" data-vault-mode="off" aria-pressed="true">Desativado</button>
+                                        <button type="button" class="mode-seg-btn" data-vault-mode="dpapi" aria-pressed="false">Automático</button>
+                                        <button type="button" class="mode-seg-btn" data-vault-mode="master_password" aria-pressed="false">Senha Mestra</button>
                                     </div>
                                 </div>
 
-                                <div class="privacy-control-row" id="privacy-ntfs-row">
-                                    <div class="privacy-control-info">
-                                        <div class="privacy-control-title-line">
-                                            <strong>Permissões NTFS (Windows)</strong>
-                                            <span class="privacy-control-badge" id="privacy-ntfs-status">Verificando...</span>
+                                <!-- BARRA ATIVA DO COFRE COM SENHA MESTRA -->
+                                <div class="privacy-sub-box" id="privacy-master-active-bar" hidden>
+                                    <div class="privacy-master-bar-left">
+                                        <label for="privacy-autolock-select">Auto-bloqueio:</label>
+                                        <select id="privacy-autolock-select">
+                                            <option value="15">15 minutos</option>
+                                            <option value="30" selected>30 minutos</option>
+                                            <option value="60">1 hora</option>
+                                            <option value="0">Apenas ao fechar o PC</option>
+                                        </select>
+                                    </div>
+                                    <div class="privacy-master-bar-actions">
+                                        <button type="button" class="btn-ghost-pill" id="privacy-master-change-btn">Trocar senha</button>
+                                        <button type="button" class="btn-secondary" id="privacy-vault-lock-btn">Trancar cofre</button>
+                                    </div>
+                                </div>
+
+                                <!-- FORMULÁRIO INLINE PARA DEFINIR / TROCAR SENHA MESTRA -->
+                                <div class="privacy-sub-box privacy-master-setup-box" id="privacy-master-setup-box" hidden>
+                                    <p class="privacy-meta">
+                                        Defina uma Senha Mestra com pelo menos 10 caracteres.
+                                    </p>
+                                    <div class="privacy-master-inputs">
+                                        <input type="password" id="privacy-master-pass-1" autocomplete="new-password" placeholder="Nova Senha Mestra (mín. 10 caracteres)">
+                                        <input type="password" id="privacy-master-pass-2" autocomplete="new-password" placeholder="Confirme a Senha Mestra">
+                                    </div>
+                                    <div class="privacy-master-bar-actions">
+                                        <button type="button" class="btn-ghost-pill" id="privacy-master-cancel-btn">Cancelar</button>
+                                        <button type="button" class="btn-primary" id="privacy-master-save-btn">Ativar Senha Mestra</button>
+                                    </div>
+                                </div>
+
+                                <!-- CAIXA DE CHAVE DE RECUPERAÇÃO (EXIBIDA UMA ÚNICA VEZ) -->
+                                <div class="privacy-sub-box privacy-recovery-box" id="privacy-recovery-box" hidden>
+                                    <p class="privacy-wipe-warning">
+                                        <strong>Guarde sua Chave de Recuperação agora (exibida uma única vez).</strong> Sem ela, não é possível recuperar o cofre caso esqueça a Senha Mestra.
+                                    </p>
+                                    <div class="privacy-recovery-code-row">
+                                        <code class="privacy-recovery-code" id="privacy-recovery-code"></code>
+                                        <button type="button" class="btn-secondary" id="privacy-recovery-copy-btn">Copiar</button>
+                                        <button type="button" class="btn-ghost-pill" id="privacy-recovery-dismiss-btn">Já anotei</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- CONTROLES AVANÇADOS (RECOLHIDOS POR PADRÃO PARA MENOS POLUIÇÃO E MAIS DISCRIÇÃO) -->
+                            <details class="privacy-advanced-details" id="privacy-advanced-details">
+                                <summary class="privacy-advanced-summary">
+                                    <span>Opções avançadas e dados</span>
+                                    <svg class="privacy-advanced-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </summary>
+
+                                <div class="privacy-advanced-body">
+                                    <div class="privacy-control-row" id="privacy-seal-keys-row" hidden>
+                                        <div class="privacy-control-info">
+                                            <div class="privacy-control-title-line">
+                                                <strong>Chaves de API</strong>
+                                                <span class="privacy-control-badge" id="privacy-seal-keys-status">Padrão</span>
+                                            </div>
+                                            <small>Define se as chaves ficam guardadas dentro do cofre.</small>
                                         </div>
-                                        <small>Restringe <code>.env</code> e <code>data/</code> exclusivamente à sua conta de usuário Windows + SYSTEM.</small>
+                                        <div class="mode-segmented-pill" id="privacy-seal-keys-toggle" role="group" aria-label="Armazenamento das chaves de API">
+                                            <button type="button" class="mode-seg-btn" data-seal-keys="true" aria-pressed="false">No cofre</button>
+                                            <button type="button" class="mode-seg-btn is-active" data-seal-keys="false" aria-pressed="true">Padrão</button>
+                                        </div>
                                     </div>
-                                    <button type="button" class="btn-secondary" id="privacy-ntfs-harden-btn">Reaplicar NTFS</button>
+
+                                    <div class="privacy-control-row" id="privacy-ntfs-row">
+                                        <div class="privacy-control-info">
+                                            <div class="privacy-control-title-line">
+                                                <strong>Acesso do sistema</strong>
+                                                <span class="privacy-control-badge" id="privacy-ntfs-status">Verificando...</span>
+                                            </div>
+                                            <small>Restringe os arquivos locais apenas à sua conta.</small>
+                                        </div>
+                                        <button type="button" class="btn-secondary" id="privacy-ntfs-harden-btn">Reaplicar</button>
+                                    </div>
+
+                                    <div class="privacy-actions privacy-advanced-actions">
+                                        <button type="button" class="btn-secondary" id="privacy-export-btn">
+                                            <span>Exportar backup</span>
+                                        </button>
+                                        <button type="button" class="btn-ghost-pill btn-danger-outline" id="privacy-wipe-toggle-btn" hidden>
+                                            <span>Apagar dados locais</span>
+                                        </button>
+                                    </div>
+
+                                    <div class="privacy-wipe-box" id="privacy-wipe-confirm-box" hidden>
+                                        <p class="privacy-wipe-warning">
+                                            Esta ação apaga permanentemente conversas, projetos, memória pessoal e histórico local. Suas chaves configuradas permanecem intactas. Digite <code>APAGAR TUDO</code> para confirmar:
+                                        </p>
+                                        <div class="privacy-wipe-row">
+                                            <input
+                                                type="text"
+                                                id="privacy-wipe-input"
+                                                autocomplete="off"
+                                                spellcheck="false"
+                                                placeholder="Digite APAGAR TUDO"
+                                            >
+                                            <button type="button" class="btn-ghost-pill" id="privacy-wipe-cancel-btn">Cancelar</button>
+                                            <button type="button" class="btn-ghost-pill btn-danger-outline" id="privacy-wipe-confirm-btn">Confirmar</button>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            </details>
 
-                            <p class="privacy-meta">
-                                Seus debates, projetos, templates e memória pessoal ficam salvos localmente neste PC. Apenas o conteúdo que você enviar no chat é transmitido às APIs externas configuradas (Google Gemini, Groq, OpenRouter e Microsoft Edge TTS quando usar voz). A exportação inclui todos os seus dados pessoais, mas <strong>nunca</strong> inclui seu arquivo <code>.env</code>, chaves de API ou senhas.
-                            </p>
-
-                            <div class="privacy-actions">
-                                <button type="button" class="btn-secondary" id="privacy-export-btn">
-                                    <span>Exportar meus dados (.json)</span>
-                                </button>
-                                <button type="button" class="btn-ghost-pill btn-danger-outline" id="privacy-wipe-toggle-btn" hidden>
-                                    <span>Apagar dados locais</span>
-                                </button>
-                                <span class="form-feedback" id="privacy-feedback" role="status" aria-live="polite"></span>
-                            </div>
-
-                            <div class="privacy-wipe-box" id="privacy-wipe-confirm-box" hidden>
-                                <p class="privacy-wipe-warning">
-                                    Esta ação apaga permanentemente todas as conversas, projetos, memória pessoal, histórico de eventos e desconecta sessões remotas. Suas chaves no <code>.env</code> serão preservadas. Digite <code>APAGAR TUDO</code> para confirmar:
-                                </p>
-                                <div class="privacy-wipe-row">
-                                    <input
-                                        type="text"
-                                        id="privacy-wipe-input"
-                                        autocomplete="off"
-                                        spellcheck="false"
-                                        placeholder="Digite APAGAR TUDO"
-                                    >
-                                    <button type="button" class="btn-ghost-pill" id="privacy-wipe-cancel-btn">Cancelar</button>
-                                    <button type="button" class="btn-ghost-pill btn-danger-outline" id="privacy-wipe-confirm-btn">Confirmar eliminação</button>
-                                </div>
-                            </div>
+                            <span class="form-feedback privacy-status-feedback" id="privacy-feedback" role="status" aria-live="polite"></span>
                         </div>
                     </section>
 

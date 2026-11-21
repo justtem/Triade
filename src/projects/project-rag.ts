@@ -10,6 +10,7 @@ import {
   getProjectById,
   readProjectFileText
 } from "../persistence/project-store.js";
+import { wrapUntrustedDataBlock } from "../security/prompt-defense.js";
 import { extractPdfTextFromBuffer } from "./pdf-extract.js";
 
 // ============================================
@@ -1096,8 +1097,10 @@ export function buildProjectContextBlock(
   used += modeNote.length + 2;
 
   let addedChunks = 0;
+  const chunkBlocks: string[] = [];
+  const wrapperOverhead = 110;
   for (const chunk of resolved.chunks) {
-    const remaining = safeMax - used;
+    const remaining = safeMax - used - wrapperOverhead;
     if (remaining < 240) break;
 
     const originTag = chunk.origin === "folder" ? "pasta local" : "upload";
@@ -1111,9 +1114,13 @@ export function buildProjectContextBlock(
         : chunk.content;
 
     const block = `${heading}\n${body}`;
-    parts.push("", block);
+    chunkBlocks.push(block);
     used += block.length + 2;
     addedChunks++;
+  }
+
+  if (chunkBlocks.length > 0) {
+    parts.push("", wrapUntrustedDataBlock("project_file", chunkBlocks.join("\n\n")));
   }
 
   if (!resolved.instructions && addedChunks === 0) {

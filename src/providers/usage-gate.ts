@@ -170,6 +170,26 @@ export class UsageGate {
   }
 
   /**
+   * Verifica sem consumir cota se há folga segura para disparar uma corrida paralela
+   * (Hedged Request): exige folga de pelo menos 2 slots no minuto atual e >25% da cota diária.
+   */
+  async canHedgeSafely(): Promise<boolean> {
+    await loadCounters();
+    const now = Date.now();
+    this.events = this.events.filter((event) => now - event.at < 60_000);
+
+    const rpmCap = this.effective(this.limits.rpm);
+    const rpdCap = this.effective(this.limits.rpd);
+    const counter = this.counter();
+
+    const remainingDailyRatio = (rpdCap - counter.requests) / Math.max(1, rpdCap);
+    const hasRpmHeadroom = rpmCap - this.events.length >= 2;
+    const hasDailyHeadroom = remainingDailyRatio > 0.25;
+
+    return hasRpmHeadroom && hasDailyHeadroom;
+  }
+
+  /**
    * Reserva uma chamada. Espera se o limite por minuto estiver cheio e
    * falha (quota_exhausted) se o limite diário já foi atingido.
    */

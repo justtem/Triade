@@ -5,6 +5,26 @@ import type { AutoPlatform } from "../shared/debate-types.js";
 import { isValidApiKeyValue } from "../server/env-config.js";
 import { makeGemini } from "./gemini.js";
 import { makeOpenAICompat } from "./openai-compat.js";
+import {
+  getProviderAutopilotSnapshot,
+  pickGeminiHedgePlan,
+  recordAutopilotFailure,
+  recordAutopilotSuccess,
+  refreshGeminiCatalog,
+  refreshGroqCatalog,
+  resolveGeminiAutopilotModels,
+  resolveGroqAutopilotModels,
+  type ProviderAutopilotSnapshot
+} from "./model-autopilot.js";
+import {
+  buildHybridFreeModelList,
+  getOpenRouterFreeDiscoverySnapshot,
+  recordOpenRouterModelFailure,
+  recordOpenRouterModelSuccess,
+  refreshOpenRouterFreeCatalog,
+  resolveOpenRouterFreeModels,
+  type OpenRouterFreeDiscoverySnapshot
+} from "./openrouter-free.js";
 import type { Provider } from "./types.js";
 import { UsageGate, type GateSnapshot } from "./usage-gate.js";
 
@@ -84,6 +104,9 @@ function initGemini(): void {
     return;
   }
 
+  const baseUrl = envString("GEMINI_BASE_URL");
+  const autopilotEnabled = envString("GEMINI_AUTOPILOT") !== "false";
+
   // O Google não publica mais os limites gratuitos por modelo na documentação:
   // confira o console do AI Studio e ajuste estes valores no .env se precisar.
   const gate = new UsageGate(
@@ -104,11 +127,32 @@ function initGemini(): void {
     makeGemini({
       apiKey,
       models,
+      resolveModels: autopilotEnabled
+        ? () =>
+            resolveGeminiAutopilotModels(models, {
+              apiKey,
+              baseUrl,
+              skipNetwork: isRunningUnderTest()
+            })
+        : undefined,
+      resolveHedgePlan: autopilotEnabled
+        ? (activeModels) => pickGeminiHedgePlan(activeModels, models)
+        : undefined,
+      onModelSuccess: (model, ttfbMs) => {
+        void recordAutopilotSuccess("gemini", model, ttfbMs);
+      },
+      onModelError: (model, error) => {
+        void recordAutopilotFailure("gemini", model, error);
+      },
       gate,
       maxHttpAttempts: envInt("GEMINI_MAX_ATTEMPTS", 2),
-      baseUrl: envString("GEMINI_BASE_URL")
+      baseUrl
     })
   );
+
+  if (autopilotEnabled && !isRunningUnderTest()) {
+    void refreshGeminiCatalog({ apiKey, baseUrl }).catch(() => {});
+  }
 }
 
 function initGroq(): void {
@@ -124,6 +168,9 @@ function initGroq(): void {
     issues.set("groq", "GROQ_API_KEY ausente no .env.");
     return;
   }
+
+  const baseURL = envString("GROQ_BASE_URL") ?? "https://api.groq.com/openai/v1";
+  const autopilotEnabled = envString("GROQ_AUTOPILOT") !== "false";
 
   // Limites do plano gratuito para gpt-oss-120b (por organização).
   // A página de limites da sua conta na Groq é a referência final.
@@ -147,8 +194,22 @@ function initGroq(): void {
       id: "groq",
       name: "Groq",
       apiKey,
-      baseURL: envString("GROQ_BASE_URL") ?? "https://api.groq.com/openai/v1",
+      baseURL,
       models,
+      resolveModels: autopilotEnabled
+        ? () =>
+            resolveGroqAutopilotModels(models, {
+              apiKey,
+              baseURL,
+              skipNetwork: isRunningUnderTest()
+            })
+        : undefined,
+      onModelSuccess: (model, ttfbMs) => {
+        void recordAutopilotSuccess("groq", model, ttfbMs);
+      },
+      onModelError: (model, error) => {
+        void recordAutopilotFailure("groq", model, error);
+      },
       gate,
       maxHttpAttempts: envInt("GROQ_MAX_ATTEMPTS", 2),
       maxTokensParam: "max_completion_tokens",
@@ -156,6 +217,17 @@ function initGroq(): void {
       extraBody: (model) =>
         model.startsWith("openai/gpt-oss") ? { reasoning_effort: "low" } : {}
     })
+  );
+
+  if (autopilotEnabled && !isRunningUnderTest()) {
+    void refreshGroqCatalog({ apiKey, baseURL }).catch(() => {});
+  }
+}
+
+function isRunningUnderTest(): boolean {
+  return (
+    process.env.NODE_ENV === "test" ||
+    process.argv.some((arg) => arg === "--test" || arg.includes(".test."))
   );
 }
 
@@ -179,6 +251,9 @@ function initOpenRouter(): void {
     return;
   }
 
+  const baseURL = envString("OPENROUTER_BASE_URL") ?? "https://openrouter.ai/api/v1";
+  const autoDiscoverFree = envString("OPENROUTER_AUTO_DISCOVER_FREE") !== "false";
+
   const gate = new UsageGate(
     "openrouter",
     {
@@ -198,8 +273,23 @@ function initOpenRouter(): void {
       id: "openrouter",
       name: "OpenRouter",
       apiKey,
-      baseURL: envString("OPENROUTER_BASE_URL") ?? "https://openrouter.ai/api/v1",
+      baseURL,
       models,
+      resolveModels: autoDiscoverFree
+        ? () =>
+            resolveOpenRouterFreeModels(models, {
+              baseURL,
+              skipNetwork: isRunningUnderTest()
+            })
+        : () => buildHybridFreeModelList(models),
+      onModelSuccess: (model, ttfbMs) => {
+        recordOpenRouterModelSuccess(model);
+        void recordAutopilotSuccess("openrouter", model, ttfbMs);
+      },
+      onModelError: (model, error) => {
+        recordOpenRouterModelFailure(model, error);
+        void recordAutopilotFailure("openrouter", model, error);
+      },
       gate,
       // Cada tentativa gasta 1 das 50 requisições diárias: no máximo 3, com troca de modelo.
       maxHttpAttempts: envInt("OPENROUTER_MAX_ATTEMPTS", 3),
@@ -208,6 +298,11 @@ function initOpenRouter(): void {
       extraHeaders: { "X-Title": "AI Council" }
     })
   );
+
+  // Aquecimento assíncrono não-bloqueante do catálogo :free (zero tokens, custo zero)
+  if (autoDiscoverFree && !isRunningUnderTest()) {
+    void refreshOpenRouterFreeCatalog({ baseURL }).catch(() => {});
+  }
 }
 
 export function initProviders(): void {
@@ -255,6 +350,21 @@ export interface ProviderStatus {
     maxOutputTokens: number;
     synthesisOutputTokens: number;
   };
+  autopilot?: ProviderAutopilotSnapshot;
+  freeDiscovery?: OpenRouterFreeDiscoverySnapshot;
+}
+
+export async function refreshOpenRouterFreeModelsNow(options: {
+  force?: boolean;
+} = {}): Promise<OpenRouterFreeDiscoverySnapshot> {
+  initProviders();
+  const baseURL = envString("OPENROUTER_BASE_URL") ?? "https://openrouter.ai/api/v1";
+  const preferred = configuredModels.get("openrouter") ?? DEFAULT_OPENROUTER_MODELS;
+  await refreshOpenRouterFreeCatalog({
+    baseURL,
+    force: options.force ?? true
+  });
+  return getOpenRouterFreeDiscoverySnapshot(preferred);
 }
 
 export async function getProvidersStatus(): Promise<ProviderStatus[]> {
@@ -266,19 +376,35 @@ export async function getProvidersStatus(): Promise<ProviderStatus[]> {
   for (const id of ids) {
     const gate = gates.get(id);
     const budget = budgetForPlatform(id);
+    const preferred = configuredModels.get(id) ?? [];
+    const autopilot =
+      id === "gemini" || id === "groq"
+        ? await getProviderAutopilotSnapshot(id, preferred)
+        : undefined;
+    const freeDiscovery =
+      id === "openrouter"
+        ? getOpenRouterFreeDiscoverySnapshot(preferred)
+        : undefined;
 
     result.push({
       id,
       name: PLATFORM_LABELS[id],
       ready: providers.has(id),
       reason: issues.get(id) ?? null,
-      models: configuredModels.get(id) ?? [],
+      models:
+        id === "openrouter" && freeDiscovery && freeDiscovery.activeModels.length > 0
+          ? freeDiscovery.activeModels
+          : autopilot && autopilot.activeModels.length > 0
+            ? autopilot.activeModels
+            : preferred,
       usage: gate ? await gate.snapshot() : null,
       contextBudget: {
         historyChars: budget.historyChars,
         maxOutputTokens: budget.maxTokens.initial_response,
         synthesisOutputTokens: budget.maxTokens.synthesis
-      }
+      },
+      ...(autopilot ? { autopilot } : {}),
+      ...(freeDiscovery ? { freeDiscovery } : {})
     });
   }
 

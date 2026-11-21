@@ -105,6 +105,64 @@ export async function upsertEnvFile(
   await rename(tempPath, envPath);
 }
 
+/**
+ * Lê os pares KEY=VALUE de um arquivo .env sem alterar process.env.
+ */
+export async function readEnvFileValues(
+  envPath: string
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  try {
+    const content = await readFile(envPath, "utf8");
+    for (const rawLine of content.replace(/\r\n/g, "\n").split("\n")) {
+      const match = rawLine.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+      if (!match?.[1]) continue;
+      let val = (match[2] ?? "").trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      out[match[1]] = val;
+    }
+  } catch {
+    // Arquivo ainda não existe
+  }
+  return out;
+}
+
+/**
+ * Remove apenas as chaves especificadas de um arquivo .env, preservando comentários
+ * e todas as demais variáveis (como ACCESS_PASSWORD e MONITOR_TOKEN).
+ */
+export async function removeEnvKeys(
+  envPath: string,
+  keysToRemove: string[]
+): Promise<void> {
+  const targetSet = new Set(keysToRemove.map((k) => k.trim()));
+  if (targetSet.size === 0) return;
+
+  let existing = "";
+  try {
+    existing = await readFile(envPath, "utf8");
+  } catch {
+    return;
+  }
+
+  const lines = existing.replace(/\r\n/g, "\n").split("\n");
+  const filtered = lines.filter((line) => {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=/);
+    if (!match?.[1]) return true;
+    return !targetSet.has(match[1]);
+  });
+
+  const finalContent = `${filtered.join("\n").replace(/\n+$/, "")}\n`;
+  const tempPath = `${envPath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, finalContent, { encoding: "utf8", mode: 0o600 });
+  await rename(tempPath, envPath);
+}
+
 export interface BootstrapEnvResult {
   envPath: string;
   token: string;

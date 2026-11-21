@@ -27,6 +27,10 @@ import { routeAutoParticipants } from "../debate/auto-router.js";
 import { gatherProjectContext } from "../projects/project-rag.js";
 import { readPrivacySettings } from "../security/data-protection.js";
 import {
+  scanImageAttachmentForPrivacy,
+  type ImagePrivacyScanResult
+} from "../security/image-ocr.js";
+import {
   mergePrivacyFindings,
   normalizePrivacyAction,
   redactAttachmentsForShield,
@@ -327,15 +331,34 @@ export async function handleDebateRoutes(
         let rulesStr = rawRulesStr;
         let titleStr = rawTitleStr;
         let promptMasked = false;
+        let workingAttachments = rawAttachments;
+        let flaggedImagesCount = 0;
 
         if (shieldMode !== "off") {
           const topicScan = scanAndRedactText(rawTopicStr, shieldMode);
           const rulesScan = rawRulesStr
             ? scanAndRedactText(rawRulesStr, shieldMode)
             : null;
+
+          // OCR 100% local em imagens anexadas (Windows WinRT OCR)
+          const imageAttachments = (rawAttachments ?? []).filter(
+            (a) => a.kind === "image" && Boolean(a.dataBase64)
+          );
+          const imageScans: ImagePrivacyScanResult[] =
+            imageAttachments.length > 0
+              ? await Promise.all(
+                  imageAttachments.map((att) =>
+                    scanImageAttachmentForPrivacy(att, shieldMode)
+                  )
+                )
+              : [];
+          const flaggedImages = imageScans.filter((s) => s.hasFindings);
+          flaggedImagesCount = flaggedImages.length;
+
           const combinedFindings = mergePrivacyFindings([
             topicScan.findings,
-            ...(rulesScan ? [rulesScan.findings] : [])
+            ...(rulesScan ? [rulesScan.findings] : []),
+            ...flaggedImages.map((img) => img.findings)
           ]);
 
           if (combinedFindings.length > 0 && !privacyAction) {
@@ -346,8 +369,21 @@ export async function handleDebateRoutes(
                 code: "PRIVACY_SHIELD_WARNING",
                 mode: shieldMode,
                 error:
-                  "Escudo de Privacidade: dados sensíveis detectados na mensagem antes do envio às IAs.",
-                findings: combinedFindings
+                  flaggedImages.length > 0
+                    ? "Escudo de Privacidade: dados sensíveis detectados na mensagem ou em imagem anexada (OCR local)."
+                    : "Escudo de Privacidade: dados sensíveis detectados na mensagem antes do envio às IAs.",
+                findings: combinedFindings,
+                ...(flaggedImages.length > 0
+                  ? {
+                      imageFindings: flaggedImages.map((img) => ({
+                        attachmentName: img.attachmentName,
+                        findings: img.findings,
+                        sensitiveBoxes: img.sensitiveBoxes,
+                        imageWidth: img.imageWidth,
+                        imageHeight: img.imageHeight
+                      }))
+                    }
+                  : {})
               },
               origin
             );
@@ -355,14 +391,24 @@ export async function handleDebateRoutes(
           }
 
           if (combinedFindings.length > 0 && privacyAction === "mask") {
-            topicStr = topicScan.redactedText;
+            if (topicScan.hasFindings) {
+              topicStr = topicScan.redactedText;
+              promptMasked = true;
+            }
             if (rulesScan && rulesScan.hasFindings) {
               rulesStr = rulesScan.redactedText;
+              promptMasked = true;
             }
             if (titleStr) {
               titleStr = scanAndRedactText(titleStr, shieldMode).redactedText;
             }
-            promptMasked = true;
+            // Defesa em profundidade: se um chamador externo mandou mask sem tarjar a imagem, remove a imagem sinalizada
+            if (flaggedImages.length > 0 && workingAttachments) {
+              const flaggedNames = new Set(flaggedImages.map((i) => i.attachmentName));
+              workingAttachments = workingAttachments.filter(
+                (att) => !(att.kind === "image" && flaggedNames.has(att.name))
+              );
+            }
           }
         }
 
@@ -376,10 +422,10 @@ export async function handleDebateRoutes(
           await Promise.all([
             gatherWebContext(topicStr, {
               mode: webSearchMode,
-              hasAttachments: Boolean(rawAttachments && rawAttachments.length > 0)
+              hasAttachments: Boolean(workingAttachments && workingAttachments.length > 0)
             }).catch(() => []),
             gatherProjectContext(projectId, topicStr).catch(() => null),
-            enrichPdfAttachments(rawAttachments).catch(() => rawAttachments)
+            enrichPdfAttachments(workingAttachments).catch(() => workingAttachments)
           ]);
 
         // Modo Híbrido: anexos, PDFs e arquivos de Projeto são mascarados automaticamente
@@ -448,7 +494,8 @@ export async function handleDebateRoutes(
               mode: shieldMode,
               promptMasked,
               attachmentsMaskedCount: shieldedAttachments.redactedCount,
-              projectMaskedCount: shieldedProject.redactedCount
+              projectMaskedCount: shieldedProject.redactedCount,
+              imagesScannedFlaggedCount: flaggedImagesCount
             }
           },
           origin
@@ -526,15 +573,33 @@ export async function handleDebateRoutes(
         let messageStr = rawMessageStr;
         let rulesStr = rawRulesStr;
         let promptMasked = false;
+        let workingAttachments = rawAttachments;
+        let flaggedImagesCount = 0;
 
         if (shieldMode !== "off") {
           const msgScan = scanAndRedactText(rawMessageStr, shieldMode);
           const rulesScan = rawRulesStr
             ? scanAndRedactText(rawRulesStr, shieldMode)
             : null;
+
+          const imageAttachments = (rawAttachments ?? []).filter(
+            (a) => a.kind === "image" && Boolean(a.dataBase64)
+          );
+          const imageScans: ImagePrivacyScanResult[] =
+            imageAttachments.length > 0
+              ? await Promise.all(
+                  imageAttachments.map((att) =>
+                    scanImageAttachmentForPrivacy(att, shieldMode)
+                  )
+                )
+              : [];
+          const flaggedImages = imageScans.filter((s) => s.hasFindings);
+          flaggedImagesCount = flaggedImages.length;
+
           const combinedFindings = mergePrivacyFindings([
             msgScan.findings,
-            ...(rulesScan ? [rulesScan.findings] : [])
+            ...(rulesScan ? [rulesScan.findings] : []),
+            ...flaggedImages.map((img) => img.findings)
           ]);
 
           if (combinedFindings.length > 0 && !privacyAction) {
@@ -545,8 +610,21 @@ export async function handleDebateRoutes(
                 code: "PRIVACY_SHIELD_WARNING",
                 mode: shieldMode,
                 error:
-                  "Escudo de Privacidade: dados sensíveis detectados na mensagem antes do envio às IAs.",
-                findings: combinedFindings
+                  flaggedImages.length > 0
+                    ? "Escudo de Privacidade: dados sensíveis detectados na mensagem ou em imagem anexada (OCR local)."
+                    : "Escudo de Privacidade: dados sensíveis detectados na mensagem antes do envio às IAs.",
+                findings: combinedFindings,
+                ...(flaggedImages.length > 0
+                  ? {
+                      imageFindings: flaggedImages.map((img) => ({
+                        attachmentName: img.attachmentName,
+                        findings: img.findings,
+                        sensitiveBoxes: img.sensitiveBoxes,
+                        imageWidth: img.imageWidth,
+                        imageHeight: img.imageHeight
+                      }))
+                    }
+                  : {})
               },
               origin
             );
@@ -554,11 +632,20 @@ export async function handleDebateRoutes(
           }
 
           if (combinedFindings.length > 0 && privacyAction === "mask") {
-            messageStr = msgScan.redactedText;
+            if (msgScan.hasFindings) {
+              messageStr = msgScan.redactedText;
+              promptMasked = true;
+            }
             if (rulesScan && rulesScan.hasFindings) {
               rulesStr = rulesScan.redactedText;
+              promptMasked = true;
             }
-            promptMasked = true;
+            if (flaggedImages.length > 0 && workingAttachments) {
+              const flaggedNames = new Set(flaggedImages.map((i) => i.attachmentName));
+              workingAttachments = workingAttachments.filter(
+                (att) => !(att.kind === "image" && flaggedNames.has(att.name))
+              );
+            }
           }
         }
 
@@ -574,10 +661,10 @@ export async function handleDebateRoutes(
           await Promise.all([
             gatherWebContext(messageStr, {
               mode: webSearchMode,
-              hasAttachments: Boolean(rawAttachments && rawAttachments.length > 0)
+              hasAttachments: Boolean(workingAttachments && workingAttachments.length > 0)
             }).catch(() => []),
             gatherProjectContext(activeProjectId, messageStr).catch(() => null),
-            enrichPdfAttachments(rawAttachments).catch(() => rawAttachments)
+            enrichPdfAttachments(workingAttachments).catch(() => workingAttachments)
           ]);
 
         const shieldedAttachments = redactAttachmentsForShield(
@@ -636,7 +723,8 @@ export async function handleDebateRoutes(
               mode: shieldMode,
               promptMasked,
               attachmentsMaskedCount: shieldedAttachments.redactedCount,
-              projectMaskedCount: shieldedProject.redactedCount
+              projectMaskedCount: shieldedProject.redactedCount,
+              imagesScannedFlaggedCount: flaggedImagesCount
             }
           },
           origin

@@ -657,7 +657,7 @@ export function renderStreamingMarkdownInto(containerEl, rawText) {
 
   containerEl.replaceChildren();
   if (text.trim()) {
-    const mdDom = buildMarkdownDom(text);
+    const mdDom = buildMarkdownDom(text, { isStreaming: true });
     const caret = document.createElement("span");
     caret.className = "streaming-caret";
     caret.setAttribute("aria-hidden", "true");

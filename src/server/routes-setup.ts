@@ -3,7 +3,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { emitProvidersUpdated } from "../debate/stream-hub.js";
 import { reinitProviders } from "../providers/registry.js";
-import { applyNtfsOwnerOnlyPermissions } from "../security/data-protection.js";
+import {
+  applyNtfsOwnerOnlyPermissions,
+  readPrivacySettings,
+  sealApiKeysIntoVault,
+  type SealedApiEnvKey
+} from "../security/data-protection.js";
 import type { AutoPlatform } from "../shared/debate-types.js";
 import { DEFAULT_WEAK_PASSWORD, type AuthManager } from "./auth.js";
 import {
@@ -216,36 +221,51 @@ export async function handleSetupRoutes(
     }
 
     // Salva somente as chaves alteradas (ou todas as 3 garantidas) + senha se fornecida
-    const envUpdates: Record<string, string> = {};
+    const apiKeyUpdates: Partial<Record<SealedApiEnvKey, string>> = {};
     for (const plat of REQUIRED_PROVIDERS) {
-      const envName = PROVIDER_ENV_KEYS[plat];
-      envUpdates[envName] = effectiveKeys[plat];
-    }
-    if (incomingPassword) {
-      envUpdates.ACCESS_PASSWORD = incomingPassword;
+      const envName = PROVIDER_ENV_KEYS[plat] as SealedApiEnvKey;
+      apiKeyUpdates[envName] = effectiveKeys[plat];
     }
 
+    const privacySettings = await readPrivacySettings();
+    const keepKeysInVault =
+      privacySettings.sealApiKeysInVault && privacySettings.vaultMode !== "off";
+
     try {
-      await upsertEnvFile(options.envPath, envUpdates);
+      if (keepKeysInVault) {
+        if (incomingPassword) {
+          await upsertEnvFile(options.envPath, {
+            ACCESS_PASSWORD: incomingPassword
+          });
+        }
+        await sealApiKeysIntoVault(options.envPath, apiKeyUpdates);
+      } else {
+        const envUpdates: Record<string, string> = { ...apiKeyUpdates };
+        if (incomingPassword) {
+          envUpdates.ACCESS_PASSWORD = incomingPassword;
+        }
+        await upsertEnvFile(options.envPath, envUpdates);
+      }
       if (process.platform === "win32" && !options.envPath.startsWith(tmpdir())) {
         await applyNtfsOwnerOnlyPermissions([options.envPath]).catch(() => {});
       }
     } catch (error) {
-      console.error("[AI Council] Falha ao gravar .env no setup:", error);
+      console.error("[AI Council] Falha ao gravar configuração no setup:", error);
       sendJson(
         response,
         500,
-        { error: "Não foi possível gravar o arquivo .env local." },
+        { error: "Não foi possível gravar as chaves localmente." },
         origin
       );
       return true;
     }
 
     // Hot-reload imediato em memória (sem precisar reiniciar o servidor!)
-    for (const [envKey, envVal] of Object.entries(envUpdates)) {
-      process.env[envKey] = envVal;
+    for (const [envKey, envVal] of Object.entries(apiKeyUpdates)) {
+      if (envVal) process.env[envKey] = envVal;
     }
     if (incomingPassword) {
+      process.env.ACCESS_PASSWORD = incomingPassword;
       auth.updateAccessPassword(incomingPassword);
     }
     reinitProviders();

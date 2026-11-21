@@ -24,6 +24,7 @@ import {
   setScrollFocusedAiInRightDock,
   uiHooks
 } from "./state.js";
+import { fetchJson } from "./api.js";
 import { escapeHtml } from "./markdown.js";
 
 export function getEventDate(event) {
@@ -627,6 +628,194 @@ export function updateProviderCards(providers) {
     if (badge) {
       badge.textContent = badgeText;
       badge.className = `platform-badge ${badgeClass}`;
+    }
+
+    if (provider.id === "openrouter") {
+      renderOpenRouterFreeDiscoveryCard(provider);
+    } else if (provider.id === "gemini" || provider.id === "groq") {
+      renderProviderAutopilotStrip(provider);
+    }
+  }
+}
+
+function formatRemainingPause(untilIso) {
+  const untilMs = Date.parse(String(untilIso || ""));
+  if (!Number.isFinite(untilMs)) return "";
+  const diffSec = Math.max(0, Math.round((untilMs - Date.now()) / 1000));
+  if (diffSec < 60) return "<1m";
+  const totalMin = Math.ceil(diffSec / 60);
+  if (totalMin < 60) return `${totalMin}m`;
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
+}
+
+export function renderProviderAutopilotStrip(provider) {
+  const listEl = $(`#${provider.id}-autopilot-models`);
+  if (!listEl) return;
+
+  const ap = provider?.autopilot;
+  const models = Array.isArray(ap?.activeModels)
+    ? ap.activeModels
+    : Array.isArray(provider?.models)
+      ? provider.models
+      : [];
+  const cooledList = Array.isArray(ap?.cooledDown) ? ap.cooledDown : [];
+  const cooledMap = new Map(cooledList.map((c) => [c.model, c]));
+  const latencies = ap?.latenciesMs && typeof ap.latenciesMs === "object" ? ap.latenciesMs : {};
+
+  listEl.replaceChildren();
+  if (models.length === 0) return;
+
+  const healthyModels = models.filter((m) => !cooledMap.has(m));
+  const displayModels = healthyModels.length > 0 ? healthyModels : models;
+
+  const MAX_VISIBLE = 3;
+  displayModels.slice(0, MAX_VISIBLE).forEach((modelId, idx) => {
+    const pill = document.createElement("span");
+    const isCooled = cooledMap.has(modelId);
+    const ms = latencies[modelId];
+    pill.className = `openrouter-free-pill${idx === 0 && !isCooled ? " is-primary" : ""}${isCooled ? " is-cooled" : ""}`;
+    const latLabel = typeof ms === "number" && ms > 0 ? ` · ${(ms / 1000).toFixed(1)}s` : "";
+    pill.title = isCooled
+      ? `${modelId} (em pausa automática)`
+      : idx === 0
+        ? `${modelId} (ativo #1)`
+        : `${modelId} (fallback automático #${idx + 1})`;
+    pill.textContent = `${modelId}${latLabel}`;
+    listEl.appendChild(pill);
+  });
+
+  if (displayModels.length > MAX_VISIBLE) {
+    const more = document.createElement("span");
+    more.className = "openrouter-free-pill is-more";
+    more.textContent = `+${displayModels.length - MAX_VISIBLE}`;
+    more.title = displayModels.slice(MAX_VISIBLE).join("\n");
+    listEl.appendChild(more);
+  }
+
+  // Linha discreta de modelos em pausa (visível apenas quando houver pausa ativa)
+  const panelEl = listEl.parentElement;
+  if (panelEl) {
+    let pauseEl = panelEl.querySelector(".autopilot-pause-note");
+    if (cooledList.length === 0) {
+      pauseEl?.remove();
+    } else {
+      if (!pauseEl) {
+        pauseEl = document.createElement("div");
+        pauseEl.className = "autopilot-pause-note";
+        panelEl.appendChild(pauseEl);
+      }
+      const parts = cooledList.slice(0, 2).map((item) => {
+        const rem = formatRemainingPause(item.until);
+        return rem ? `${item.model} (${rem})` : item.model;
+      });
+      if (cooledList.length > 2) {
+        parts.push(`+${cooledList.length - 2}`);
+      }
+      pauseEl.textContent = `pausa: ${parts.join(", ")}`;
+      pauseEl.title = cooledList
+        .map((item) => `${item.model} — retorna às ${formatDate(item.until)}`)
+        .join("\n");
+    }
+  }
+}
+
+export function renderOpenRouterFreeDiscoveryCard(provider) {
+  const listEl = $("#openrouter-free-models-list");
+  const metaEl = $("#openrouter-free-meta");
+  if (!listEl || !metaEl) return;
+
+  const discovery = provider?.freeDiscovery;
+  const models = Array.isArray(discovery?.activeModels)
+    ? discovery.activeModels
+    : Array.isArray(provider?.models)
+      ? provider.models
+      : [];
+  const cooledSet = new Set(
+    Array.isArray(discovery?.cooledDown)
+      ? discovery.cooledDown.map((c) => c.model)
+      : []
+  );
+
+  if (discovery?.lastFetchedAt) {
+    const syncText = formatDate(discovery.lastFetchedAt);
+    const totalDiscovered = Number(discovery.discoveredCount) || 0;
+    metaEl.textContent =
+      totalDiscovered > 0
+        ? `${totalDiscovered} :free descobertos · sinc. ${syncText}`
+        : `Fallback local · sinc. ${syncText}`;
+  } else if (discovery?.lastError) {
+    metaEl.textContent = `Usando fallback local (${discovery.lastError})`;
+  } else {
+    metaEl.textContent = "Híbrido (.env + auto-descoberta :free)";
+  }
+
+  listEl.replaceChildren();
+  if (models.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "openrouter-free-empty";
+    empty.textContent = "Nenhum modelo :free carregado.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  const MAX_VISIBLE = 5;
+  models.slice(0, MAX_VISIBLE).forEach((modelId, idx) => {
+    const pill = document.createElement("span");
+    const isCooled = cooledSet.has(modelId);
+    pill.className = `openrouter-free-pill${idx === 0 && !isCooled ? " is-primary" : ""}${isCooled ? " is-cooled" : ""}`;
+    pill.title = isCooled
+      ? `${modelId} (em cooldown temporário — pulado automaticamente)`
+      : idx === 0
+        ? `${modelId} (prioridade #1)`
+        : `${modelId} (fallback #${idx + 1})`;
+    const shortName = modelId.replace(/:free$/, "");
+    pill.textContent = isCooled ? `${shortName} [cooldown]` : shortName;
+    listEl.appendChild(pill);
+  });
+
+  if (models.length > MAX_VISIBLE) {
+    const more = document.createElement("span");
+    more.className = "openrouter-free-pill is-more";
+    more.textContent = `+${models.length - MAX_VISIBLE} :free`;
+    more.title = models.slice(MAX_VISIBLE).join("\n");
+    listEl.appendChild(more);
+  }
+}
+
+export async function handleRefreshOpenRouterFreeModels() {
+  const btn = $("#openrouter-refresh-free-btn");
+  const metaEl = $("#openrouter-free-meta");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Atualizando...";
+  }
+  if (metaEl) {
+    metaEl.textContent = "Consultando catálogo :free no OpenRouter...";
+  }
+
+  try {
+    const res = await fetchJson("/providers/openrouter/refresh-free", {
+      method: "POST",
+      timeoutMs: 15000
+    });
+    if (Array.isArray(res?.providers)) {
+      state.latestProviders = res.providers;
+      updateProviderCards(res.providers);
+      updateRightAiPanel();
+    }
+  } catch (error) {
+    if (metaEl) {
+      metaEl.textContent =
+        error instanceof Error
+          ? error.message
+          : "Falha ao atualizar lista :free.";
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Atualizar :free";
     }
   }
 }

@@ -41,6 +41,7 @@ import {
   setCardsUnknownOnError,
   updatePlatformCards,
   updateProviderCards,
+  handleRefreshOpenRouterFreeModels,
   updateHistory,
   updateDashboardDebatesSummary,
   updateRightAiPanel,
@@ -52,6 +53,13 @@ import {
   updateChatScrollLinkedEffects,
   closeImageLightbox
 } from "./js/motion.js";
+import { closeDiagramLightbox } from "./js/rich-render.js";
+import {
+  initShortcutsUi,
+  closeCommandPalette,
+  closeSlashMenu,
+  handleComposerSlashKeydown
+} from "./js/shortcuts.js";
 import {
   getSelectedParticipants,
   syncAiSelectionUi,
@@ -100,9 +108,15 @@ import {
   handleExportPrivacyData,
   handleWipeLocalData,
   closePrivacyShieldModal,
+  closeImageRedactModal,
   loadPrivacyStatus,
   setPrivacyShieldMode,
-  setEncryptAtRest,
+  setVaultMode,
+  handleSetupMasterPassword,
+  setVaultAutoLock,
+  handleLockVaultNow,
+  handleUnlockVaultSubmit,
+  setSealApiKeysInVault,
   handleReapplyNtfs
 } from "./js/user-memory.js";
 
@@ -375,10 +389,14 @@ function initializeUiBindings() {
   $("#tpl-reset-btn")?.addEventListener("click", resetTemplateEditorForm);
   $("#template-editor-form")?.addEventListener("submit", handleSaveTemplateForm);
 
-  // Lightbox de imagens anexadas
+  // Lightbox de imagens anexadas e diagramas Mermaid
   $("#image-lightbox-close")?.addEventListener("click", closeImageLightbox);
   $("#image-lightbox-modal")?.addEventListener("click", (e) => {
     if (e.target === $("#image-lightbox-modal")) closeImageLightbox();
+  });
+  $("#diagram-lightbox-close")?.addEventListener("click", closeDiagramLightbox);
+  $("#diagram-lightbox-modal")?.addEventListener("click", (e) => {
+    if (e.target === $("#diagram-lightbox-modal")) closeDiagramLightbox();
   });
 
   // Modal de Projetos / Pastas com Cérebro Local
@@ -441,7 +459,7 @@ function initializeUiBindings() {
     void handleClearUserMemory();
   });
 
-  // Privacidade & Dados Locais (LGPD: Escudo DLP, Criptografia, NTFS, Exportação e Eliminação)
+  // Privacidade & Dados Locais (LGPD: Escudo DLP, Cofre DPAPI/Senha Mestra, NTFS, Exportação e Eliminação)
   for (const btn of $$("#privacy-shield-mode-toggle .mode-seg-btn")) {
     btn.addEventListener("click", () => {
       const mode = btn.getAttribute("data-shield-mode");
@@ -450,10 +468,83 @@ function initializeUiBindings() {
       }
     });
   }
-  for (const btn of $$("#privacy-encrypt-toggle .mode-seg-btn")) {
+  for (const btn of $$("#privacy-vault-mode-toggle .mode-seg-btn")) {
     btn.addEventListener("click", () => {
-      const enabled = btn.getAttribute("data-encrypt-rest") === "true";
-      void setEncryptAtRest(enabled);
+      const mode = btn.getAttribute("data-vault-mode");
+      if (mode === "off" || mode === "dpapi" || mode === "master_password") {
+        void setVaultMode(mode);
+      }
+    });
+  }
+  $("#privacy-master-change-btn")?.addEventListener("click", () => {
+    const box = $("#privacy-master-setup-box");
+    if (box) {
+      box.hidden = false;
+      $("#privacy-master-pass-1")?.focus();
+    }
+  });
+  $("#privacy-master-cancel-btn")?.addEventListener("click", () => {
+    const box = $("#privacy-master-setup-box");
+    if (box) box.hidden = true;
+    const p1 = $("#privacy-master-pass-1");
+    const p2 = $("#privacy-master-pass-2");
+    if (p1) p1.value = "";
+    if (p2) p2.value = "";
+  });
+  $("#privacy-master-save-btn")?.addEventListener("click", () => {
+    void handleSetupMasterPassword();
+  });
+  $("#privacy-autolock-select")?.addEventListener("change", (e) => {
+    void setVaultAutoLock(e.target.value);
+  });
+  $("#privacy-vault-lock-btn")?.addEventListener("click", () => {
+    void handleLockVaultNow();
+  });
+  $("#btn-lock-vault")?.addEventListener("click", () => {
+    void handleLockVaultNow();
+  });
+  $("#privacy-recovery-copy-btn")?.addEventListener("click", async () => {
+    const code = $("#privacy-recovery-code")?.textContent?.trim() || "";
+    const fb = $("#privacy-feedback");
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      if (fb) fb.textContent = "Chave de Recuperação copiada! Guarde fora deste PC.";
+    } catch {
+      if (fb) fb.textContent = "Selecione e copie a Chave de Recuperação manualmente.";
+    }
+  });
+  $("#privacy-recovery-dismiss-btn")?.addEventListener("click", () => {
+    const recBox = $("#privacy-recovery-box");
+    const recCode = $("#privacy-recovery-code");
+    if (recBox) recBox.hidden = true;
+    if (recCode) recCode.textContent = "";
+  });
+  $("#vault-unlock-form")?.addEventListener("submit", handleUnlockVaultSubmit);
+  $("#vault-recovery-toggle")?.addEventListener("click", () => {
+    const input = $("#vault-unlock-input");
+    const label = $("#vault-unlock-label");
+    const btn = $("#vault-recovery-toggle");
+    if (!input) return;
+    const nextRec = input.getAttribute("data-recovery-mode") !== "true";
+    input.setAttribute("data-recovery-mode", String(nextRec));
+    input.type = nextRec ? "text" : "password";
+    input.placeholder = nextRec
+      ? "Cole a Chave de Recuperação (XXXX-XXXX-...)"
+      : "Digite sua Senha Mestra...";
+    if (label) label.textContent = nextRec ? "Chave de Recuperação" : "Senha Mestra";
+    if (btn) btn.textContent = nextRec ? "Voltar para Senha Mestra" : "Usar Chave de Recuperação";
+    input.value = "";
+    input.focus();
+  });
+  $("#vault-remote-retry-btn")?.addEventListener("click", () => {
+    void loadPrivacyStatus();
+    void refreshDashboard();
+  });
+  for (const btn of $$("#privacy-seal-keys-toggle .mode-seg-btn")) {
+    btn.addEventListener("click", () => {
+      const wantSeal = btn.getAttribute("data-seal-keys") === "true";
+      void setSealApiKeysInVault(wantSeal);
     });
   }
   $("#privacy-ntfs-harden-btn")?.addEventListener("click", () => {
@@ -508,8 +599,17 @@ function initializeUiBindings() {
     void saveMemoryModal("");
   });
 
+  // Atualização manual de modelos :free no card do OpenRouter (Monitor)
+  $("#openrouter-refresh-free-btn")?.addEventListener("click", () => {
+    void handleRefreshOpenRouterFreeModels();
+  });
+
+  // Atalhos globais (Ctrl+K Paleta de Comandos, Alt+N Nova Conversa, / Templates)
+  initShortcutsUi();
+
   document.addEventListener("click", () => {
     closeComposerPopover();
+    closeSlashMenu(false);
     for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
       openMenu.hidden = true;
     }
@@ -518,13 +618,17 @@ function initializeUiBindings() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       stopSpeech();
+      closeCommandPalette();
+      closeSlashMenu(true);
       closeComposerPopover();
       closeImageLightbox();
+      closeDiagramLightbox();
       closeTemplatesModal();
       closeProjectModal();
       closeMemoryModal();
       closeSetupWizard();
       closePrivacyShieldModal();
+      closeImageRedactModal();
       if (state.editingTurnKey) {
         state.editingTurnKey = null;
         state.lastRenderedChatSignature = "";
@@ -548,6 +652,9 @@ function initializeUiBindings() {
   const topicTextarea = $("#debate-topic");
   if (topicTextarea) {
     topicTextarea.addEventListener("keydown", (e) => {
+      if (handleComposerSlashKeydown(e)) {
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         createForm?.requestSubmit();

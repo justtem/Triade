@@ -3,9 +3,21 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { listDebateSummaries } from "../debate/debate-engine.js";
-import { getActiveStreams, subscribeStreamHub } from "../debate/stream-hub.js";
+import { getActiveStreams, subscribeStreamHub, emitProvidersUpdated } from "../debate/stream-hub.js";
 import { listProjects } from "../persistence/project-store.js";
-import { getProvidersStatus } from "../providers/registry.js";
+import {
+  getProvidersStatus,
+  refreshOpenRouterFreeModelsNow
+} from "../providers/registry.js";
+import {
+  isVaultLocked,
+  touchVaultActivity
+} from "../security/data-protection.js";
+import {
+  createApiRateLimiter,
+  type RateLimitBucketName,
+  type RateLimitRule
+} from "../security/rate-limiter.js";
 import {
   createAuthManager,
   DEFAULT_WEAK_PASSWORD,
@@ -38,6 +50,7 @@ export interface MonitorServerOptions extends Partial<AuthConfig> {
   publicDir?: string;
   envPath?: string;
   validateKeyFn?: KeyValidatorFn;
+  apiRateLimits?: Partial<Record<RateLimitBucketName, Partial<RateLimitRule>>>;
 }
 
 export function createMonitorServer(options: MonitorServerOptions = {}): {
@@ -68,6 +81,10 @@ export function createMonitorServer(options: MonitorServerOptions = {}): {
 
   const MAX_SSE_CLIENTS = 20;
   let activeSseClients = 0;
+  const apiRateLimiter = createApiRateLimiter({
+    rules: options.apiRateLimits,
+    nowFn: options.nowFn
+  });
 
   const server = createServer(async (request, response) => {
     const origin = request.headers.origin;
@@ -131,6 +148,56 @@ export function createMonitorServer(options: MonitorServerOptions = {}): {
 
     // 5. Autenticação remota + Rate-Limiter (/auth/*)
     if (await auth.handleAuthRoute(request, response, url, origin)) {
+      return;
+    }
+
+    // 5b. Rotas do cofre que precisam funcionar mesmo quando o cofre está trancado
+    if (
+      url.pathname === "/privacy/status" ||
+      url.pathname === "/privacy/vault/unlock"
+    ) {
+      if (await handlePrivacyRoutes(request, response, url, origin, auth, { envPath })) {
+        return;
+      }
+    }
+
+    // 5c. Trava global do Cofre com Senha Mestra (HTTP 423 Locked até destrancar no PC local)
+    if (await isVaultLocked()) {
+      sendJson(
+        response,
+        423,
+        {
+          code: "VAULT_LOCKED",
+          vaultLocked: true,
+          isLocal: auth.isDirectLocalPCRequest(request),
+          error:
+            "Cofre local trancado. Digite sua Senha Mestra no PC local para destrancar."
+        },
+        origin
+      );
+      return;
+    }
+    touchVaultActivity();
+
+    // 5d. Rate-limit geral por IP e categoria de rota (anti-abuso / anti-DoS)
+    const rateGate = apiRateLimiter.checkRequest(request, url.pathname);
+    if (rateGate && !rateGate.allowed) {
+      sendJson(
+        response,
+        429,
+        {
+          code: "RATE_LIMITED",
+          bucket: rateGate.bucket,
+          retryAfterSec: rateGate.retryAfterSec,
+          error: `Muitas requisições em pouco tempo (${rateGate.label}). Aguarde ${rateGate.retryAfterSec}s e tente novamente.`
+        },
+        origin,
+        {
+          "Retry-After": String(rateGate.retryAfterSec),
+          "X-RateLimit-Limit": String(rateGate.limit),
+          "X-RateLimit-Remaining": "0"
+        }
+      );
       return;
     }
 
@@ -236,7 +303,12 @@ export function createMonitorServer(options: MonitorServerOptions = {}): {
               autoUserMemory: true,
               editTurn: true,
               privacyShield: true,
-              encryptAtRest: true
+              encryptAtRest: true,
+              masterPasswordVault: true,
+              localImageOcr: true,
+              openrouterFreeAutoDiscovery: true,
+              modelAutopilot: true,
+              commandPalette: true
             },
             setup: {
               complete: missingProviders.length === 0,
@@ -283,6 +355,41 @@ export function createMonitorServer(options: MonitorServerOptions = {}): {
           response,
           500,
           { error: "Não foi possível ler o estado dos provedores." },
+          origin
+        );
+      }
+      return;
+    }
+
+    // 8b. Atualização manual sob demanda da lista de modelos :free do OpenRouter
+    if (
+      request.method === "POST" &&
+      url.pathname === "/providers/openrouter/refresh-free"
+    ) {
+      if (!auth.isAuthorizedLocalClient(request)) {
+        sendJson(response, 401, { error: "Não autorizado." }, origin);
+        return;
+      }
+
+      try {
+        const discovery = await refreshOpenRouterFreeModelsNow({ force: true });
+        emitProvidersUpdated();
+        sendJson(
+          response,
+          200,
+          {
+            ok: true,
+            discovery,
+            providers: await getProvidersStatus()
+          },
+          origin
+        );
+      } catch (error) {
+        console.error("[AI Council] Erro ao atualizar modelos :free:", error);
+        sendJson(
+          response,
+          500,
+          { error: "Não foi possível atualizar a lista de modelos :free do OpenRouter." },
           origin
         );
       }
