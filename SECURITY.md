@@ -1,63 +1,70 @@
 # Política de Segurança — AI Council
 
-Este documento descreve a arquitetura de segurança, os controles implementados e as limitações conhecidas do **AI Council** (execução local-first no seu computador).
+Este documento apresenta o modelo de ameaças, as camadas de defesa implementadas, os limites conhecidos e o processo de reporte responsável de vulnerabilidades do **AI Council**.
+
+> Para detalhes sobre fluxo de dados pessoais, operadores externos e direitos de privacidade (LGPD), consulte [PRIVACY.md](PRIVACY.md).
 
 ---
 
-## 1. Modelo de Ameaças e Fronteiras de Confiança
+## 1. Modelo de Ameaças e Princípios
 
-O AI Council foi projetado para rodar localmente no PC do usuário (`127.0.0.1:4317`) com acesso remoto opcional protegido por senha (via Wi-Fi local ou Tailscale Serve HTTPS).
+O **AI Council** é uma aplicação **local-first** executada na máquina do usuário (`127.0.0.1:4317`), com suporte opcional a acesso remoto protegido por senha (rede local ou túnel HTTPS privado).
 
-### Controles Implementados
-
-- **Autenticação e Sessões Remotas ([src/server/auth.ts](src/server/auth.ts)):**
-  - Sessões remotas utilizam tokens opacos aleatórios (`randomBytes(32)`), armazenados no servidor apenas como **hash SHA-256** (`data/sessions.json`, TTL 30 dias, teto de 25 sessões) com revogação real no `POST /auth/logout` e na troca de senha.
-  - Sessões trafegam exclusivamente por cookie `HttpOnly; SameSite=Lax` (e `Secure` atrás de proxy HTTPS), nunca expostas em `localStorage` nem query strings.
-  - Rate-limit no `/auth/login` e no destrancamento do cofre: **5 falhas em 15 minutos → bloqueio temporário (`429 Too Many Requests` + `Retry-After`)**.
-  - Cabeçalhos de proxy (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`) só são confiados quando o socket vem de loopback local.
-
-- **Isolamento de Operações Sensíveis (Localhost-Only):**
-  - Setup de chaves (`/setup/*`), vinculação/inspeção de pastas do PC (`/projects/inspect-folder`, `linkedFolderPath`), gestão do cofre local (`/privacy/vault/*`), aplicação de permissões NTFS (`/privacy/ntfs-harden`) e eliminação total (`/privacy/wipe`) são bloqueados com **`403`** para qualquer acesso remoto/proxy.
-
-- **Defesa Web, Tráfego e Rede ([src/server/http-utils.ts](src/server/http-utils.ts), [src/server/app.ts](src/server/app.ts), [src/web/web-context.ts](src/web/web-context.ts), [src/security/rate-limiter.ts](src/security/rate-limiter.ts)):**
-  - Cabeçalhos de segurança obrigatórios: `Content-Security-Policy` 100% self-hosted (`default-src 'self'`, `script-src 'self'`, `font-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, zero CDNs externas), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy` e `Strict-Transport-Security` (HSTS) atrás de proxy HTTPS local.
-  - Fontes (`Inter`, `JetBrains Mono`, `Oswald`) auto-hospedadas localmente em `public/fonts/` sem chamadas ao Google Fonts.
-  - Defesa em profundidade contra CSRF bloqueando requisições mutáveis com `Sec-Fetch-Site: cross-site` (`403`).
-  - Rate-limit geral por IP e categoria de rota (`ai_write`, `audio`, `privacy_heavy`, `api_general`) retornando `429` + `Retry-After`.
-  - Timeouts explícitos no servidor HTTP (`headersTimeout`, `keepAliveTimeout`, `requestTimeout`) e limite máximo de conexões SSE simultâneas (`20`).
-  - **Anti-SSRF completo na leitura de URLs:** bloqueia IPs privados/loopback/LAN/CGNAT/Tailscale, resolve DNS antes de conectar (`isSafeResolvedUrl` contra DNS rebinding) e valida manualmente cada salto de redirecionamento (`redirect: "manual"`, máx. 3 saltos).
-
-- **Defesa contra Prompt Injection Indireto e XSS no Markdown ([src/security/prompt-defense.ts](src/security/prompt-defense.ts), [public/js/markdown.js](public/js/markdown.js)):**
-  - Páginas web, anexos, PDFs e arquivos de Projetos são isolados em delimitadores `<untrusted_data>` (com escape de fuga de tag e heurística de alerta) e regra explícita anti-injeção nos system prompts.
-  - Renderizador Markdown neutraliza imagens externas (`![...](http...)`, anti-exfiltração) e permite links clicáveis estritamente `http:`/`https:` com `noopener noreferrer`.
-
-- **Escudo de Privacidade — DLP Híbrido + OCR Local ([src/security/privacy-shield.ts](src/security/privacy-shield.ts), [src/security/image-ocr.ts](src/security/image-ocr.ts)):**
-  - Detecta chaves de API, chaves privadas PEM, JWT, senhas, CPF (Mod-11), CNPJ (Mod-11), cartões de crédito (Luhn) e, no modo **Estrito** (padrão), e-mails e telefones.
-  - Pausa com alerta (`409`) antes de enviar texto digitado ou prints com dados sensíveis; mascara automaticamente anexos de texto, PDFs (removendo o binário bruto quando há achados) e arquivos de Projetos.
-  - No Windows 10/11, inspeciona imagens anexadas offline com `Windows.Media.Ocr` e oferece tarja automática (`<canvas>`) e editor de tarja manual antes do envio.
-
-- **Proteção de Dados em Repouso ([src/security/data-protection.ts](src/security/data-protection.ts)):**
-  - **Permissões NTFS no Windows (`icacls` por SID):** remove herança e restringe `.env` e `data/` exclusivamente à conta do usuário atual e `SYSTEM`.
-  - **Criptografia `AES-256-GCM` completa em `data/`** (`sessions/`, `projects/`, `user-memory.json`, `templates.json`, `monitor-events.json` e opcionalmente as 3 chaves de API em `data/.secrets.vault`) em dois modos opcionais:
-    1. **DPAPI (1-clique Windows):** chave de 256 bits amarrada ao login Windows (`data/.vault.key`).
-    2. **Senha Mestra (Envelope Encryption `scrypt` + `AES-256-GCM`):** chave de dados (DEK) embrulhada pela Senha Mestra + Chave de Recuperação de 24 caracteres (`data/.vault.meta.json`), mantida apenas em RAM enquanto destrancado, com **auto-bloqueio por inatividade** e limpeza de buffer (`Buffer.fill(0)`).
-
-- **Auditoria Contínua Automatizada (`npm run security:check`):**
-  - Valida ausência de segredos no Git, integridade da CSP/ativos 100% locais, `npm audit`, permissões NTFS no Windows e todas as suítes de testes de segurança e integridade ESM.
+O projeto adota **Defesa em Profundidade**, **Menor Privilégio**, **Fail-Closed** em controles críticos e **Privacidade desde a Concepção**:
+- Nenhuma credencial ou segredo é exposto ao navegador ou versionado no Git.
+- Operações administrativas e sensíveis são restritas exclusivamente ao acesso direto em `localhost`.
+- Conteúdo externo (páginas web, PDFs, anexos e código) é tratado como entrada não confiável em todas as camadas.
 
 ---
 
-## 2. Limitações Conhecidas e Boas Práticas do Usuário
+## 2. Controles de Segurança por Camada
 
-- **Malware ativo na sessão:** nenhum aplicativo local pode vencer um sistema operacional já comprometido em tempo real (ex.: *keylogger* ou leitura direta da RAM enquanto o cofre está destrancado). Mantenha Windows Defender/antivírus, BitLocker e atualizações do SO ativos.
-- **OCR em imagens:** o OCR local tem alta precisão em prints de tela, mas pode falhar em fotos borradas, fontes minúsculas ou escrita manual — use o editor de tarja manual quando necessário.
-- **Acesso remoto:** prefira **Tailscale Serve** (HTTPS fim-a-fim privado) com `ACCESS_PASSWORD` forte (mínimo 12+ caracteres) em vez de expor portas HTTP na internet pública.
-- **Segredos no Git:** nunca versione `.env`, `data/`, `.vault.key` ou `.vault.meta.json` (todos ignorados em `.gitignore`).
+| Camada | Controles Implementados |
+| :--- | :--- |
+| **Autenticação & Sessões** | Tokens opacos aleatórios (`randomBytes(32)`), armazenados no servidor apenas como **hash SHA-256**, trafegando exclusivamente por cookie `HttpOnly; SameSite=Lax` (`Secure` atrás de proxy HTTPS), com expiração, limite de sessões ativas e revogação real no logout ou na troca de senha. Proteção contra força bruta (**5 tentativas / 15 min → HTTP 429 + `Retry-After`**). |
+| **Isolamento Localhost-Only** | Configuração de chaves, gestão do cofre local, vínculo de pastas do sistema, aplicação de permissões NTFS e eliminação total de dados locais retornam **HTTP 403** para qualquer conexão remota ou via proxy. Cabeçalhos de proxy (`X-Forwarded-*`) só são aceitos quando originados em loopback local. |
+| **Defesa Web, CSP & Rede** | `Content-Security-Policy` 100% self-hosted (`default-src 'self'`, `script-src 'self'`, `font-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, **zero CDNs externas**), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy` e HSTS atrás de proxy HTTPS. Defesa CSRF contra requisições mutáveis `Sec-Fetch-Site: cross-site`. |
+| **Anti-Abuso & Disponibilidade** | Rate-limiting por IP e categoria de rota (`429` + `Retry-After`), limites rígidos de tamanho de payload, timeouts HTTP explícitos (`headersTimeout`, `keepAliveTimeout`, `requestTimeout`) e teto de conexões SSE simultâneas. |
+| **Anti-SSRF (Busca Web & URLs)** | Bloqueio de loopback, IPs privados/LAN/CGNAT/link-local e protocolos não-HTTP, com resolução DNS prévia contra *DNS rebinding* e validação manual de cada salto de redirecionamento (`redirect: "manual"`). |
+| **Prompt Injection & XSS** | Isolamento de páginas web, anexos e arquivos de Projetos em blocos `<untrusted_data>` (com escape de tag) + instruções anti-injeção nos system prompts. Renderização de Markdown segura via DOM, neutralização de imagens externas (anti-exfiltração), `KaTeX` com `trust: false`, `Mermaid` com `securityLevel: "strict"` + sanitizador próprio de SVG e zero `innerHTML` com entradas não confiáveis na paleta/atalhos. |
+| **Prevenção de Vazamento (DLP + OCR)** | Escudo de Privacidade híbrido com detecção de chaves de API, chaves PEM, JWT, credenciais, CPF/CNPJ (Mod-11), cartões (Luhn), e-mails e telefones. Confirmação interativa para mensagens/prints (com **OCR local offline** no Windows e tarja visual via `<canvas>`) e mascaramento automático de anexos, PDFs e arquivos de Projetos. |
+| **Criptografia em Repouso & Sistema** | Criptografia opcional **`AES-256-GCM`** para conversas, projetos, templates, memória, eventos e selagem opcional de chaves de API — via **Windows DPAPI** ou **Senha Mestra** (*Envelope Encryption* com `scrypt`, Chave de Recuperação, chave mantida apenas em RAM, auto-bloqueio por inatividade e zeramento de buffer com `Buffer.fill(0)`). Restrição de permissões NTFS exclusivas ao usuário local + `SYSTEM` no Windows. |
+| **Trava de Custo Zero** | Validação fail-closed nos provedores: `OpenRouter` aceita apenas modelos `:free` com preço explicitamente zerado; auto-descoberta do `Gemini` usa allowlist restrita às famílias `Flash`/`Gemma`; `UsageGate` impõe margem preventiva de 90%. |
 
 ---
 
-## 3. Reporte de Vulnerabilidades
+## 3. Verificação Contínua Automatizada
 
-Se você encontrar uma vulnerabilidade neste projeto:
-1. **Não** publique detalhes exploráveis nem segredos em issues públicas.
-2. Abra um aviso privado de segurança (*GitHub Security Advisories*) ou entre em contato diretamente com o mantenedor descrevendo os passos para reproduzir e o impacto estimado.
+O projeto inclui um gate automatizado de segurança executável localmente ou em CI:
+
+```bash
+npm run security:check
+```
+
+Os 5 controles verificados continuamente são:
+1. **Segredos e Dados Pessoais no Git:** garante ausência de `.env`, `data/`, chaves hardcoded, hostnames/IPs privados ou caminhos locais pessoais em todos os arquivos rastreados.
+2. **CSP e Ativos 100% Locais:** valida diretivas críticas da CSP e ausência de CDNs externas no HTML.
+3. **Dependências (`npm audit`):** verifica vulnerabilidades conhecidas na árvore de dependências.
+4. **Permissões de Sistema (Windows NTFS):** valida restrição de acesso aos diretórios locais sensíveis.
+5. **Suítes de Segurança & Integridade ESM:** executa testes automatizados de autenticação, CSRF, rate-limit, anti-SSRF, DLP, criptografia, Prompt Injection, XSS e integridade acíclica do frontend.
+
+---
+
+## 4. Limitações Conhecidas e Responsabilidade do Usuário
+
+Nenhum software oferece segurança absoluta. Ao utilizar o AI Council, considere os seguintes limites:
+
+- **Sistema operacional comprometido:** controles em nível de aplicação não protegem contra malware ativo com privilégios na sessão do usuário (ex.: *keyloggers* ou inspeção direta da RAM enquanto o cofre estiver destrancado). Mantenha o SO atualizado, antivírus ativo e criptografia de disco (como BitLocker/FileVault) habilitada.
+- **Limites do OCR local:** a detecção de texto sensível em imagens funciona bem em capturas de tela nítidas, mas pode falhar em fotos borradas, fontes muito pequenas ou escrita manual; revise e utilize o editor de tarja manual quando necessário.
+- **Exposição de rede:** para acesso remoto, prefira túneis privados com HTTPS fim-a-fim (como Tailscale Serve) e senha forte (`12+` caracteres) em vez de expor a porta diretamente na internet pública.
+- **Provedores externos:** o conteúdo enviado nas conversas é processado pelas APIs de terceiros configuradas pelo próprio usuário, sujeitas às políticas de privacidade de cada provedor.
+
+---
+
+## 5. Reporte Responsável de Vulnerabilidades
+
+Caso identifique uma falha de segurança neste projeto:
+
+1. **Não** abra issues públicas contendo provas de conceito exploráveis, credenciais ou detalhes que facilitem exploração.
+2. Utilize o recurso privado **GitHub Security Advisories** deste repositório (ou entre em contato diretamente com o mantenedor) informando descrição técnica, passos para reprodução e impacto estimado.
+3. Relatos válidos serão analisados com prioridade para correção, teste de regressão e divulgação coordenada.
