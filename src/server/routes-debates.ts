@@ -24,6 +24,7 @@ import { abortDebateTasks, kickRunner } from "../debate/runner.js";
 import { getActiveStreams } from "../debate/stream-hub.js";
 import { generateTurnVerdict } from "../debate/verdict.js";
 import {
+  resolveAutoResponseMode,
   routeAutoComposerStrategy,
   routeAutoParticipants
 } from "../debate/auto-router.js";
@@ -477,18 +478,35 @@ export async function handleDebateRoutes(
           }
         }
 
-        const responseMode =
-          payload.responseMode === "normal" ? "normal" : "prompt_markdown";
         const requestedInteractionMode: InteractionMode =
           payload.interactionMode === "direct" ? "direct" : "debate";
         const useAutoRoute = payload.routingMode === "auto";
         const autoSelectInteraction = payload.autoSelectInteraction === true;
 
+        const linkedProjectObj = projectId
+          ? await getProjectById(projectId).catch(() => null)
+          : null;
+        const hasLinkedFolder = Boolean(linkedProjectObj?.linkedFolderPath?.trim());
+        const isLocalPcReq = auth.isDirectLocalPCRequest(request);
+        const folderPolicy = normalizeFolderPolicy(payload.folderPolicy);
+
+        const isLocalCodeTask =
+          hasLinkedFolder &&
+          classifyBuilderIntent({
+            prompt: topicStr,
+            hasLinkedFolder,
+            isLocalPc: isLocalPcReq,
+            folderPolicy,
+            interactionMode: "direct",
+            participantCount: 1
+          }).level === "write_explicit";
+
         const [webSources, rawProjectContext, rawEnrichedAttachments] =
           await Promise.all([
             gatherWebContext(topicStr, {
               mode: webSearchMode,
-              hasAttachments: Boolean(workingAttachments && workingAttachments.length > 0)
+              hasAttachments: Boolean(workingAttachments && workingAttachments.length > 0),
+              isLocalCodeTask
             }).catch(() => []),
             gatherProjectContext(projectId, topicStr).catch(() => null),
             enrichPdfAttachments(workingAttachments).catch(() => workingAttachments)
@@ -506,12 +524,16 @@ export async function handleDebateRoutes(
         const enrichedAttachments = shieldedAttachments.attachments;
         const resolvedProjectContext = shieldedProject.context;
 
-        const linkedProjectObj = projectId
-          ? await getProjectById(projectId).catch(() => null)
-          : null;
-        const hasLinkedFolder = Boolean(linkedProjectObj?.linkedFolderPath?.trim());
-        const isLocalPcReq = auth.isDirectLocalPCRequest(request);
-        const folderPolicy = normalizeFolderPolicy(payload.folderPolicy);
+        const responseMode =
+          payload.responseMode === "auto"
+            ? resolveAutoResponseMode({
+                prompt: topicStr,
+                hasLinkedFolder,
+                attachments: enrichedAttachments
+              })
+            : payload.responseMode === "normal"
+              ? "normal"
+              : "prompt_markdown";
 
         let interactionMode: InteractionMode = requestedInteractionMode;
         let resolvedTotalRounds = Number(payload.totalRounds) || 2;
@@ -581,6 +603,11 @@ export async function handleDebateRoutes(
           ? titleStr.trim()
           : buildLocalCleanTitle(topicStr);
 
+        const effectiveAutoVerdict =
+          payload.autoVerdict === false
+            ? false
+            : interactionMode === "direct" && finalParticipants.length >= 2;
+
         const session = await createDebateSession({
           title: effectiveTitle,
           topic: topicStr,
@@ -599,7 +626,7 @@ export async function handleDebateRoutes(
           ...(projectId && resolvedProjectContext ? { projectId } : {}),
           ...(resolvedProjectContext ? { resolvedProjectContext } : {}),
           ...(autoRoute ? { autoRoute } : {}),
-          ...(payload.autoVerdict === true ? { autoVerdict: true } : {}),
+          ...(effectiveAutoVerdict ? { autoVerdict: true } : {}),
           ...(effectiveBuilderMode ? { builderMode: true } : {}),
           ...(effectiveBuilderMode && effectiveBuilderAutoApply
             ? { builderAutoApply: true }
@@ -786,18 +813,35 @@ export async function handleDebateRoutes(
 
         const existingSession = await getDebateSessionById(debateId).catch(() => null);
         const activeProjectId = existingSession?.projectId;
-        const responseMode =
-          payload.responseMode === "normal" ? "normal" : "prompt_markdown";
         const requestedInteractionMode: InteractionMode =
           payload.interactionMode === "direct" ? "direct" : "debate";
         const useAutoRoute = payload.routingMode === "auto";
         const autoSelectInteraction = payload.autoSelectInteraction === true;
 
+        const linkedProjectObj = activeProjectId
+          ? await getProjectById(activeProjectId).catch(() => null)
+          : null;
+        const hasLinkedFolder = Boolean(linkedProjectObj?.linkedFolderPath?.trim());
+        const isLocalPcReq = auth.isDirectLocalPCRequest(request);
+        const folderPolicy = normalizeFolderPolicy(payload.folderPolicy);
+
+        const isLocalCodeTask =
+          hasLinkedFolder &&
+          classifyBuilderIntent({
+            prompt: messageStr,
+            hasLinkedFolder,
+            isLocalPc: isLocalPcReq,
+            folderPolicy,
+            interactionMode: "direct",
+            participantCount: 1
+          }).level === "write_explicit";
+
         const [webSources, rawProjectContext, rawEnrichedAttachments] =
           await Promise.all([
             gatherWebContext(messageStr, {
               mode: webSearchMode,
-              hasAttachments: Boolean(workingAttachments && workingAttachments.length > 0)
+              hasAttachments: Boolean(workingAttachments && workingAttachments.length > 0),
+              isLocalCodeTask
             }).catch(() => []),
             gatherProjectContext(activeProjectId, messageStr).catch(() => null),
             enrichPdfAttachments(workingAttachments).catch(() => workingAttachments)
@@ -814,12 +858,16 @@ export async function handleDebateRoutes(
         const enrichedAttachments = shieldedAttachments.attachments;
         const resolvedProjectContext = shieldedProject.context;
 
-        const linkedProjectObj = activeProjectId
-          ? await getProjectById(activeProjectId).catch(() => null)
-          : null;
-        const hasLinkedFolder = Boolean(linkedProjectObj?.linkedFolderPath?.trim());
-        const isLocalPcReq = auth.isDirectLocalPCRequest(request);
-        const folderPolicy = normalizeFolderPolicy(payload.folderPolicy);
+        const responseMode =
+          payload.responseMode === "auto"
+            ? resolveAutoResponseMode({
+                prompt: messageStr,
+                hasLinkedFolder,
+                attachments: enrichedAttachments
+              })
+            : payload.responseMode === "normal"
+              ? "normal"
+              : "prompt_markdown";
 
         let interactionMode: InteractionMode = requestedInteractionMode;
         let resolvedTotalRounds = Number(payload.totalRounds) || 2;
@@ -877,6 +925,11 @@ export async function handleDebateRoutes(
             ? [rulesStr, AUTO_BUILDER_HINT_RULE].filter(Boolean).join(" | ")
             : rulesStr;
 
+        const effectiveAutoVerdict =
+          payload.autoVerdict === false
+            ? false
+            : interactionMode === "direct" && finalParticipants.length >= 2;
+
         const updated = await continueDebateSession(debateId, {
           message: messageStr,
           rules: effectiveRules,
@@ -893,7 +946,7 @@ export async function handleDebateRoutes(
           webSources,
           ...(resolvedProjectContext ? { resolvedProjectContext } : {}),
           ...(autoRoute ? { autoRoute } : {}),
-          ...(payload.autoVerdict === true ? { autoVerdict: true } : {}),
+          ...(effectiveAutoVerdict ? { autoVerdict: true } : {}),
           ...(effectiveBuilderMode ? { builderMode: true } : {}),
           ...(effectiveBuilderMode && effectiveBuilderAutoApply
             ? { builderAutoApply: true }

@@ -1216,6 +1216,128 @@ export function pickRelator(_participants?: AIPlatform[]): AIPlatform {
   return "gemini";
 }
 
+const DIVERGENCE_STOPWORDS = new Set([
+  "para", "como", "mais", "menos", "isso", "esse", "essa", "este", "esta",
+  "pelo", "pela", "pelos", "pelas", "com", "sem", "sobre", "entre", "onde",
+  "quando", "porque", "pois", "tambem", "muito", "muita", "pode", "podem",
+  "deve", "devem", "fazer", "feito", "usar", "usando", "aqui", "voce",
+  "seus", "suas", "nosso", "nossa", "cada", "todo", "toda", "todos", "todas",
+  "apenas", "somente", "forma", "modo", "caso", "parte", "ponto", "exemplo",
+  "melhor", "maior", "menor", "outro", "outra", "outros", "outras", "ainda",
+  "agora", "depois", "antes", "entao", "assim", "seja", "sendo", "foram",
+  "esta", "estao", "tenha", "ter", "tem", "uma", "uns", "umas", "dos", "das"
+]);
+
+const COMPETING_TECH_PAIRS: ReadonlyArray<[RegExp, RegExp, string]> = [
+  [/\bsqlite\b/, /\bpostgres(?:ql)?\b/, "SQLite vs PostgreSQL"],
+  [/\bmongodb\b/, /\bpostgres(?:ql)?|mysql|sqlite\b/, "NoSQL vs SQL"],
+  [/\bmonolit[oa]\b/, /\bmicros?servi[cç]os?\b/, "Monolito vs Microsserviços"],
+  [/\brest\b/, /\bgraphql\b/, "REST vs GraphQL"],
+  [/\breact\b/, /\b(?:vue|svelte|angular)\b/, "frameworks frontend distintos"],
+  [/\bnext\.?js\b/, /\b(?:astro|remix|vite)\b/, "meta-frameworks distintos"],
+  [/\bjwt\b/, /\bsess(?:ao|ion)\s+cookie|stateful\b/, "JWT vs sessão stateful"]
+];
+
+function extractNormalizedTerms(text: string): Set<string> {
+  const norm = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ");
+  const terms = new Set<string>();
+  for (const word of norm.split(/\s+/)) {
+    if (word.length >= 4 && !DIVERGENCE_STOPWORDS.has(word) && !/^\d+$/.test(word)) {
+      terms.add(word);
+    }
+  }
+  return terms;
+}
+
+/**
+ * Detector local 0ms de divergência entre as propostas de uma rodada de Debate:
+ * - Se as IAs convergem na mesma abordagem (alta sobreposição semântica e sem conflito técnico),
+ *   permite pular a Rodada 2 (Crítica) e ir direto para a Síntese no Gemini.
+ * - Se há conflito de arquitetura/tecnologia, disparidade estrutural ou baixa sobreposição,
+ *   mantém a Rodada 2 de Crítica Cruzada.
+ */
+export function detectRoundDivergence(responses: DebateResponse[]): {
+  hasDivergence: boolean;
+  reason: string;
+  overlapRatio: number;
+} {
+  const valid = responses.filter((r) => r.content && r.content.trim().length > 0);
+  if (valid.length < 2) {
+    return {
+      hasDivergence: false,
+      reason: "apenas 1 proposta válida na rodada",
+      overlapRatio: 1
+    };
+  }
+
+  const normalizedTexts = valid.map((r) =>
+    r.content
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+  );
+
+  // 1. Conflito explícito de tecnologia/arquitetura (uma IA defende A sem B e outra defende B sem A)
+  for (const [reA, reB, label] of COMPETING_TECH_PAIRS) {
+    const onlyA = normalizedTexts.some((t) => reA.test(t) && !reB.test(t));
+    const onlyB = normalizedTexts.some((t) => reB.test(t) && !reA.test(t));
+    if (onlyA && onlyB) {
+      return {
+        hasDivergence: true,
+        reason: `abordagens concorrentes (${label})`,
+        overlapRatio: 0
+      };
+    }
+  }
+
+  // 2. Disparidade estrutural forte (ex.: uma trouxe código completo e outra só teoria)
+  const codeFlags = valid.map((r) => /```[\s\S]{40,}```/.test(r.content));
+  if (codeFlags.some(Boolean) && codeFlags.some((f) => !f)) {
+    return {
+      hasDivergence: true,
+      reason: "uma proposta trouxe código e outra não",
+      overlapRatio: 0.15
+    };
+  }
+
+  // 3. Sobreposição lexical (Jaccard) entre pares de respostas
+  const termSets = valid.map((r) => extractNormalizedTerms(r.content));
+  let minOverlap = 1;
+  for (let i = 0; i < termSets.length; i++) {
+    for (let j = i + 1; j < termSets.length; j++) {
+      const a = termSets[i]!;
+      const b = termSets[j]!;
+      if (a.size === 0 || b.size === 0) continue;
+      let intersection = 0;
+      for (const term of a) {
+        if (b.has(term)) intersection++;
+      }
+      const denom = Math.min(a.size, b.size);
+      const overlap = denom > 0 ? intersection / denom : 1;
+      if (overlap < minOverlap) minOverlap = overlap;
+    }
+  }
+
+  if (minOverlap < 0.28) {
+    return {
+      hasDivergence: true,
+      reason: `baixa convergência (${Math.round(minOverlap * 100)}%)`,
+      overlapRatio: minOverlap
+    };
+  }
+
+  return {
+    hasDivergence: false,
+    reason: `alta convergência (${Math.round(minOverlap * 100)}%)`,
+    overlapRatio: minOverlap
+  };
+}
+
 function buildTask(
   session: DebateSession,
   turn: ChatTurn,
@@ -2074,21 +2196,46 @@ export async function submitDebateTaskResponse(
           activeTurn.completedAt = now;
         }
       } else if (session.currentRound < session.totalRounds) {
-        session.currentRound += 1;
-        session.currentStage = "critique";
         const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;
-        turnForStage.currentRound = session.currentRound;
-        turnForStage.currentStage = "critique";
-        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
-        session.tasks.push(
-          ...createTasksForStage(
-            session,
-            turnForStage,
-            session.currentRound,
-            "critique",
-            projInstr
-          )
+        const roundResponses = responsesForTurn(session, turnForStage.id).filter(
+          (r) => r.round === session.currentRound && r.stage !== "synthesis"
         );
+        const divergence = detectRoundDivergence(roundResponses);
+        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
+
+        if (!divergence.hasDivergence) {
+          // Onda 3 — Debate Adaptativo: consenso claro na rodada atual -> pula Crítica e vai direto à Síntese no Gemini!
+          session.totalRounds = session.currentRound;
+          turnForStage.totalRounds = session.currentRound;
+          session.currentStage = "synthesis";
+          turnForStage.currentStage = "synthesis";
+          console.log(
+            `[AI Council] Debate adaptativo: ${divergence.reason} na rodada ${session.currentRound} — pulando crítica e iniciando Síntese no Gemini.`
+          );
+          session.tasks.push(
+            ...createTasksForStage(
+              session,
+              turnForStage,
+              session.currentRound,
+              "synthesis",
+              projInstr
+            )
+          );
+        } else {
+          session.currentRound += 1;
+          session.currentStage = "critique";
+          turnForStage.currentRound = session.currentRound;
+          turnForStage.currentStage = "critique";
+          session.tasks.push(
+            ...createTasksForStage(
+              session,
+              turnForStage,
+              session.currentRound,
+              "critique",
+              projInstr
+            )
+          );
+        }
       } else {
         session.currentStage = "synthesis";
         const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;
@@ -2190,21 +2337,46 @@ export async function skipStragglerTaskAndAdvanceStage(
           activeTurn.completedAt = now;
         }
       } else if (session.currentRound < session.totalRounds) {
-        session.currentRound += 1;
-        session.currentStage = "critique";
         const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;
-        turnForStage.currentRound = session.currentRound;
-        turnForStage.currentStage = "critique";
-        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
-        session.tasks.push(
-          ...createTasksForStage(
-            session,
-            turnForStage,
-            session.currentRound,
-            "critique",
-            projInstr
-          )
+        const roundResponses = responsesForTurn(session, turnForStage.id).filter(
+          (r) => r.round === session.currentRound && r.stage !== "synthesis"
         );
+        const divergence = detectRoundDivergence(roundResponses);
+        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
+
+        if (!divergence.hasDivergence) {
+          // Onda 3 — Debate Adaptativo: consenso claro na rodada atual -> pula Crítica e vai direto à Síntese no Gemini!
+          session.totalRounds = session.currentRound;
+          turnForStage.totalRounds = session.currentRound;
+          session.currentStage = "synthesis";
+          turnForStage.currentStage = "synthesis";
+          console.log(
+            `[AI Council] Debate adaptativo: ${divergence.reason} na rodada ${session.currentRound} — pulando crítica e iniciando Síntese no Gemini.`
+          );
+          session.tasks.push(
+            ...createTasksForStage(
+              session,
+              turnForStage,
+              session.currentRound,
+              "synthesis",
+              projInstr
+            )
+          );
+        } else {
+          session.currentRound += 1;
+          session.currentStage = "critique";
+          turnForStage.currentRound = session.currentRound;
+          turnForStage.currentStage = "critique";
+          session.tasks.push(
+            ...createTasksForStage(
+              session,
+              turnForStage,
+              session.currentRound,
+              "critique",
+              projInstr
+            )
+          );
+        }
       } else {
         session.currentStage = "synthesis";
         const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;

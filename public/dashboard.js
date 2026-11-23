@@ -861,7 +861,7 @@ function initializeUiBindings() {
   for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
     btn.addEventListener("click", () => {
       const mode = btn.getAttribute("data-response-mode");
-      if (mode === "normal" || mode === "prompt_markdown") {
+      if (mode === "auto" || mode === "normal" || mode === "prompt_markdown") {
         state.selectedResponseMode = mode;
         saveStoredOption(RESPONSE_MODE_STORAGE_KEY, mode);
         syncComposerModeUi();

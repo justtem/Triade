@@ -16,6 +16,7 @@ const {
   searchDebateSessions,
   stopDebateGeneration,
   skipStragglerTaskAndAdvanceStage,
+  detectRoundDivergence,
   pickRelator,
   deleteDebateSession,
   listDebateSummaries,
@@ -233,6 +234,65 @@ describe("debate-engine — Fluxo Completo, Anexos, Busca & Pin", () => {
     );
     assert.ok(synthTask);
     assert.equal(synthTask.platform, "gemini");
+  });
+
+  it("Onda 3 — Debate Adaptativo pula Rodada 2 quando há consenso na Rodada 1 e mantém Crítica quando há divergência real", async () => {
+    // Caso 1: Consenso claro -> pula Rodada 2 e vai direto para Síntese no Gemini
+    const consensusSession = await createDebateSession({
+      title: "Debate Consenso",
+      topic: "Como estruturar autenticação segura em Node.js?",
+      participants: ["gemini", "groq"],
+      interactionMode: "debate",
+      totalRounds: 2,
+      responseMode: "prompt_markdown"
+    });
+
+    const gTask1 = consensusSession.tasks.find((t) => t.platform === "gemini")!;
+    const qTask1 = consensusSession.tasks.find((t) => t.platform === "groq")!;
+
+    await submitDebateTaskResponse(consensusSession.id, {
+      taskId: gTask1.id,
+      content:
+        "Use scryptSync com salt aleatorio, timingSafeEqual, cookies HttpOnly SameSite Strict e rate limit em rotas de login."
+    });
+    const afterConsensus = await submitDebateTaskResponse(consensusSession.id, {
+      taskId: qTask1.id,
+      content:
+        "Recomendo scryptSync com salt aleatorio, timingSafeEqual, cookies HttpOnly SameSite Strict e rate limit nas rotas de login."
+    });
+
+    assert.equal(afterConsensus.currentStage, "synthesis");
+    assert.equal(afterConsensus.totalRounds, 1);
+    const consensusSynth = afterConsensus.tasks.find(
+      (t) => t.stage === "synthesis" && t.status === "pending"
+    );
+    assert.equal(consensusSynth?.platform, "gemini");
+
+    // Caso 2: Divergência real (SQLite vs PostgreSQL) -> avança para Rodada 2 (critique)
+    const divCheck = detectRoundDivergence([
+      {
+        id: "r1",
+        taskId: "t1",
+        round: 1,
+        stage: "initial_response",
+        platform: "gemini",
+        promptUsed: "",
+        content: "Use SQLite embarcado para simplicidade local e zero configuracao.",
+        submittedAt: new Date().toISOString()
+      },
+      {
+        id: "r2",
+        taskId: "t2",
+        round: 1,
+        stage: "initial_response",
+        platform: "groq",
+        promptUsed: "",
+        content: "Use PostgreSQL dedicado para concorrencia pesada e particionamento.",
+        submittedAt: new Date().toISOString()
+      }
+    ]);
+    assert.equal(divCheck.hasDivergence, true);
+    assert.match(divCheck.reason, /SQLite vs PostgreSQL/);
   });
 });
 

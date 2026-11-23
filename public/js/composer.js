@@ -403,9 +403,9 @@ export function applyComposerMode(modeKey, options = {}) {
     saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "on");
     state.isSingleAiMode = false;
     state.selectedInteractionMode = "direct";
-    state.selectedResponseMode = "normal";
+    state.selectedResponseMode = "auto";
     saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
-    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
+    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "auto");
     for (const cb of $$('input[name="participants"]')) {
       cb.checked = CORE_AUTO_PLATFORM_IDS.includes(cb.value);
     }
@@ -422,11 +422,7 @@ export function applyComposerMode(modeKey, options = {}) {
     saveStoredOption(SINGLE_AI_STORAGE_KEY, chosenAi);
     state.isSingleAiMode = true;
     state.selectedInteractionMode = "direct";
-    state.selectedResponseMode = "normal";
-    state.selectedAutoVerdict = "off";
     saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
-    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
-    saveStoredOption(AUTO_VERDICT_STORAGE_KEY, "off");
     for (const cb of $$('input[name="participants"]')) {
       cb.checked = cb.value === chosenAi;
     }
@@ -435,11 +431,7 @@ export function applyComposerMode(modeKey, options = {}) {
     saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
     state.isSingleAiMode = false;
     state.selectedInteractionMode = "direct";
-    state.selectedResponseMode = "normal";
-    state.selectedAutoVerdict = "off";
     saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
-    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
-    saveStoredOption(AUTO_VERDICT_STORAGE_KEY, "off");
     for (const cb of $$('input[name="participants"]')) {
       cb.checked = CORE_AUTO_PLATFORM_IDS.includes(cb.value);
     }
@@ -448,7 +440,11 @@ export function applyComposerMode(modeKey, options = {}) {
     saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
     state.isSingleAiMode = false;
     state.selectedInteractionMode = "debate";
-    if (options.responseMode === "prompt_markdown" || options.responseMode === "normal") {
+    if (
+      options.responseMode === "auto" ||
+      options.responseMode === "prompt_markdown" ||
+      options.responseMode === "normal"
+    ) {
       state.selectedResponseMode = options.responseMode;
       saveStoredOption(RESPONSE_MODE_STORAGE_KEY, options.responseMode);
     }
@@ -632,8 +628,10 @@ export function syncComposerModeUi() {
     const extras = [];
     if (state.selectedResponseMode === "prompt_markdown") {
       extras.push("Prompt MD");
+    } else if (state.selectedResponseMode === "normal") {
+      extras.push("Normal");
     }
-    if (state.selectedAutoVerdict === "on") extras.push("Veredito");
+    if (state.selectedAutoVerdict === "off") extras.push("Veredito manual");
     const checkedNow = getSelectedParticipants();
     if (checkedNow.some((id) => !AUTO_PLATFORM_IDS.includes(id))) {
       extras.push("Manual");
@@ -662,7 +660,7 @@ export function syncComposerModeUi() {
       btn.classList.toggle("is-active", isWebOn);
       btn.setAttribute("aria-pressed", String(isWebOn));
       const lbl = btn.querySelector(".arrow-shortcut-label");
-      if (lbl) lbl.textContent = isWebOn ? "Busca na Web" : "Web desativada";
+      if (lbl) lbl.textContent = isWebOn ? "Web inteligente" : "Web desativada";
     } else if (act === "mode-quick") {
       const active = modeKey === "quick";
       btn.classList.toggle("is-active", active);

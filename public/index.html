@@ -1110,9 +1110,9 @@
                                 <span class="arrow-glyph" aria-hidden="true">↳</span>
                                 <span>Anexar arquivo</span>
                             </button>
-                            <button type="button" class="arrow-shortcut-btn is-web-active" data-arrow-action="web" aria-pressed="true" title="Alternar busca automática na Web">
+                            <button type="button" class="arrow-shortcut-btn is-web-active" data-arrow-action="web" aria-pressed="true" title="Busca na Web inteligente por intenção (só busca em fatos atuais, preços, versões ou links)">
                                 <span class="arrow-glyph" aria-hidden="true">↳</span>
-                                <span class="arrow-shortcut-label">Busca na Web</span>
+                                <span class="arrow-shortcut-label">Web inteligente</span>
                                 <span class="arrow-status-dot" aria-hidden="true"></span>
                             </button>
                             <button type="button" class="arrow-shortcut-btn" data-arrow-action="templates" title="Abrir biblioteca de templates (ou digite /)">
@@ -1189,13 +1189,14 @@
                                 <span class="composer-pop-label">FORMATO &amp; VEREDITO</span>
                                 <div class="composer-pop-row">
                                     <div class="mode-segmented-pill" id="response-mode-toggle" role="group" aria-label="Formato da resposta">
-                                        <button type="button" class="mode-seg-btn is-active" data-response-mode="normal" aria-pressed="true">Normal</button>
+                                        <button type="button" class="mode-seg-btn is-active" data-response-mode="auto" aria-pressed="true" title="Automático em 0ms: Prompt MD em código/arquitetura/projetos e Normal em conversa geral">Auto</button>
+                                        <button type="button" class="mode-seg-btn" data-response-mode="normal" aria-pressed="false">Normal</button>
                                         <button type="button" class="mode-seg-btn" data-response-mode="prompt_markdown" aria-pressed="false">Prompt MD</button>
                                     </div>
 
-                                    <div class="mode-segmented-pill" id="auto-verdict-toggle" role="group" aria-label="Veredito automático ao concluir respostas de 2+ IAs">
-                                        <button type="button" class="mode-seg-btn is-active" data-auto-verdict="off" aria-pressed="true" title="Padrão: preserva cota gratuita (gere o Veredito quando quiser)">Veredito manual</button>
-                                        <button type="button" class="mode-seg-btn" data-auto-verdict="on" aria-pressed="false" title="Gera o Veredito do Conselho automaticamente após 2+ IAs responderem">Veredito auto</button>
+                                    <div class="mode-segmented-pill" id="auto-verdict-toggle" role="group" aria-label="Veredito automático no Conselho (Groq)">
+                                        <button type="button" class="mode-seg-btn" data-auto-verdict="off" aria-pressed="false" title="Gere o Veredito manualmente quando quiser">Veredito manual</button>
+                                        <button type="button" class="mode-seg-btn is-active" data-auto-verdict="on" aria-pressed="true" title="Automático no Groq (~0,5s) sempre que o Conselho (2+ IAs) concluir sem Síntese">Veredito auto</button>
                                     </div>
                                 </div>
                             </div>

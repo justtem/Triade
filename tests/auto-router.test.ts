@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   resolveAutoComposerStrategy,
+  resolveAutoResponseMode,
   resolveAutoRoute
 } from "../src/debate/auto-router.js";
 import type { ProviderStatus } from "../src/providers/registry.js";
@@ -572,5 +573,38 @@ describe("auto-router (Modo Auto 0ms)", () => {
       allHealthy()
     );
     assert.equal(explicitRebuild.interactionMode, "debate");
+  });
+
+  it("Onda 3 — resolveAutoResponseMode ativa Prompt MD em código/arquitetura/projetos e Normal em conversa geral", () => {
+    assert.equal(
+      resolveAutoResponseMode({ prompt: "Me explique o que é inflação em linguagem simples" }),
+      "normal"
+    );
+    assert.equal(
+      resolveAutoResponseMode({ prompt: "Me ajude a escrever um e-mail educado de follow-up" }),
+      "normal"
+    );
+    assert.equal(
+      resolveAutoResponseMode({ prompt: "Corrija o erro TS2322 em src/server.ts" }),
+      "prompt_markdown"
+    );
+    assert.equal(
+      resolveAutoResponseMode({ prompt: "Compare arquitetura de microsserviços vs monolito" }),
+      "prompt_markdown"
+    );
+    assert.equal(
+      resolveAutoResponseMode({
+        prompt: "Mude a cor do cabeçalho para escuro",
+        hasLinkedFolder: true
+      }),
+      "prompt_markdown"
+    );
+    assert.equal(
+      resolveAutoResponseMode({
+        prompt: "Revise este arquivo",
+        attachments: [{ name: "server.ts", content: "export const a = 1;", size: 20 }]
+      }),
+      "prompt_markdown"
+    );
   });
 });

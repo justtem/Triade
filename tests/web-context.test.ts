@@ -51,6 +51,15 @@ describe("web-context — Busca na Web, Leitor de Links & Anti-SSRF", () => {
       }),
       true
     );
+    // Onda 3 — Busca Web por intenção: nunca busca em edição de código/app local ou escrita criativa
+    assert.equal(shouldAutoSearchWeb("Quanto está o dólar hoje?"), true);
+    assert.equal(shouldAutoSearchWeb("Mude a cor do botão no cabeçalho"), false);
+    assert.equal(shouldAutoSearchWeb("Crie um app de controle de livros"), false);
+    assert.equal(shouldAutoSearchWeb("Reescreva este e-mail em tom mais cordial"), false);
+    assert.equal(
+      shouldAutoSearchWeb("Adicione um filtro por data", { isLocalCodeTask: true }),
+      false
+    );
   });
 
   it("limpa HTML removendo scripts/estilos e extraindo título e conteúdo principal", () => {

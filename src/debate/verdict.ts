@@ -242,15 +242,16 @@ export async function rankJudgeCandidates(
         tokCap && tokCap > 0 ? Math.max(0, 1 - tokUsed / tokCap) : 1;
       const remainingRatio = Math.min(reqRatio, tokRatio);
 
-      // Bônus de contexto priorizando NVIDIA NIM e OpenRouter para aliviar a cota do Gemini
+      // Onda 3: prioriza Groq (~0,5s e 900 req/dia) como Juiz do Veredito Automático,
+      // com Gemini e OpenRouter como reserva imediata (e NVIDIA por último por ser mais lenta).
       const contextBonus =
-        s.id === "nvidia"
-          ? 0.22
-          : s.id === "openrouter"
+        s.id === "groq"
+          ? 0.3
+          : s.id === "gemini"
             ? 0.18
-            : s.id === "gemini"
-              ? 0.1
-              : 0;
+            : s.id === "openrouter"
+              ? 0.12
+              : 0.04;
       return {
         id: s.id,
         remainingRatio,

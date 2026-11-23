@@ -142,10 +142,10 @@ export const verdictLoadingTurnKeys = new Set();
 export const stackedRoundKeys = new Set(); // Permite alternar Horizontal Scroll <-> Empilhado por rodada
 export const localTaskStartMs = new Map();
 
-export const RESPONSE_MODE_STORAGE_KEY = "ai-council-response-mode";
+export const RESPONSE_MODE_STORAGE_KEY = "ai-council-response-mode-v2";
 export const INTERACTION_MODE_STORAGE_KEY = "ai-council-interaction-mode";
-export const WEB_SEARCH_STORAGE_KEY = "ai-council-web-search-mode";
-export const AUTO_VERDICT_STORAGE_KEY = "ai-council-auto-verdict";
+export const WEB_SEARCH_STORAGE_KEY = "ai-council-web-search-mode-v2";
+export const AUTO_VERDICT_STORAGE_KEY = "ai-council-auto-verdict-v2";
 export const COMPOSER_MODE_STORAGE_KEY = "ai-council-composer-mode";
 export const FOLDER_POLICY_STORAGE_KEY = "ai-council-folder-policy";
 export const FOLDER_INFO_SEEN_KEY = "ai-council-folder-info-seen";
@@ -158,6 +158,7 @@ export const COMPOSER_MODE_LABELS = {
 };
 
 export const RESPONSE_MODE_LABELS = {
+  auto: "Auto",
   normal: "Normal",
   prompt_markdown: "Prompt MD"
 };
@@ -196,10 +197,10 @@ export const state = {
   activeComposerMode: loadStoredOption(COMPOSER_MODE_STORAGE_KEY, "auto", ["auto", "quick", "council", "debate"]),
   folderPolicy: loadStoredOption(FOLDER_POLICY_STORAGE_KEY, "auto", ["auto", "confirm", "readonly"]),
   folderInfoSeen: loadStoredOption(FOLDER_INFO_SEEN_KEY, "no", ["yes", "no"]) === "yes",
-  selectedResponseMode: loadStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal", ["normal", "prompt_markdown"]),
+  selectedResponseMode: loadStoredOption(RESPONSE_MODE_STORAGE_KEY, "auto", ["auto", "normal", "prompt_markdown"]),
   selectedInteractionMode: loadStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct", ["direct", "debate"]),
   selectedWebSearchMode: loadStoredOption(WEB_SEARCH_STORAGE_KEY, "auto", ["auto", "off"]),
-  selectedAutoVerdict: loadStoredOption(AUTO_VERDICT_STORAGE_KEY, "off", ["off", "on"]),
+  selectedAutoVerdict: loadStoredOption(AUTO_VERDICT_STORAGE_KEY, "on", ["off", "on"]),
   pendingAttachments: [],
   streamPaintRafId: null,
   eventSource: null,

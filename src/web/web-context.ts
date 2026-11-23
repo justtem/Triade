@@ -74,7 +74,13 @@ const GREETING_ONLY_REGEX =
   /^(oi+|ol[aá]+|opa+|e\s*a[ií]|fala+|salve|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem\??|obrigad[oa]+|valeu+|vlw|ok+|blz|beleza|show|perfeito|entendi|sim|n[aã]o|t[aá]\s+bom|legal|massa|top|hello|hi|hey|thanks|thank\s+you)[\s!.,?]*$/i;
 
 const EXPLICIT_SEARCH_REGEX =
-  /\b(pesquis[ae]|busqu[ea]|procur[ae]|na\s+web|na\s+internet|online|atualizad[oa]|hoje|ontem|agora|lan[cç]ament|not[ií]cia|pre[cç]o|cota[cç][aã]o|vers[aã]o\s+atual|2025|2026|2027|quem\s+[eé]|o\s+que\s+[eé])\b/i;
+  /\b(pesquis[ae]|busqu[ea]|procur[ae]|na\s+web|na\s+internet|online|atualizad[oa]|hoje|ontem|agora|lan[cç]ament|not[ií]cia|pre[cç]o|cota[cç][aã]o|d[oó]lar|euro|selic|ipca|bitcoin|clima|previs[aã]o\s+do\s+tempo|placar|vers[aã]o\s+(?:atual|mais\s+recente)|[uú]ltima\s+vers[aã]o|changelog|release\s+notes|documenta[cç][aã]o\s+oficial|2025|2026|2027|quem\s+[eé]|quem\s+ganhou|o\s+que\s+aconteceu)\b/i;
+
+const LOCAL_CODE_OR_APP_TASK_REGEX =
+  /\b(crie|criar|gere|gerar|monte|montar|construa|construir|adicione|adicionar|mude|mudar|altere|alterar|modifique|modificar|corrija|corrigir|arrume|arrumar|refatore|refatorar|remova|remover|exclua|excluir)\s+(?:na\s+pasta\s+)?(?:um|uma|o|a|os|as)?\s*(?:app|aplicativo|site|sistema|projeto|landing|painel|dashboard|bot[aã]o|filtro|cabe[cç]alho|header|footer|menu|sidebar|card|tela|p[aá]gina|rota|endpoint|fun[cç][aã]o|arquivo|css|html|tema|cor|bug|erro|teste|testes)\b/i;
+
+const FACTUAL_WEB_INTENT_REGEX =
+  /\b(como\s+funciona|o\s+que\s+[eé]|qual\s+(?:[eé]\s+)?a\s+diferen[cç]a|qual\s+(?:[eé]\s+)?o\s+melhor|quais\s+(?:s[aã]o\s+)?os\s+melhores|quanto\s+custa|onde\s+fica|quando\s+(?:foi|vai|sai)|comparativ[oa]|benchmark|protocolo|norma|lei|imposto|taxa|estat[ií]stica|dados\s+oficiais|tend[eê]ncias|mercado|biblioteca|framework)\b/i;
 
 /** Desembrulha URLs redirecionadoras comuns (Google Search mobile, Facebook, Instagram, Reddit). */
 export function unwrapRedirectUrl(rawUrl: string): string {
@@ -269,22 +275,26 @@ export function extractDomain(rawUrl: string): string {
 }
 
 /**
- * Decide se a pesquisa automática na web deve rodar.
- * Regra escolhida pelo usuário: pesquisar em praticamente TODA pergunta,
- * pulando apenas saudações curtas ou prompts com código/anexo grande (salvo pedido explícito).
+ * Onda 3 — Busca Web Inteligente por Intenção (0ms):
+ * - Dispara apenas quando o pedido pede fatos atuais, preços, notícias, versões, links colados,
+ *   pesquisa explícita ou dúvidas factuais/técnicas objetivas;
+ * - NUNCA dispara em edição/criação de código/app local, saudações, anexos ou escrita criativa.
  */
 export function shouldAutoSearchWeb(
   prompt: string,
-  options: { hasAttachments?: boolean; extractedUrls?: string[] } = {}
+  options: {
+    hasAttachments?: boolean;
+    extractedUrls?: string[];
+    isLocalCodeTask?: boolean;
+  } = {}
 ): boolean {
   const trimmed = prompt.trim();
-  if (!trimmed) return false;
+  if (!trimmed || trimmed.length < 4) return false;
 
   // Se o usuário colou URL(s) e está apenas pedindo para ler/resumir/explicar o link,
   // ler a página diretamente já basta (sem poluir com busca genérica).
   const urls = options.extractedUrls ?? [];
   if (urls.length > 0) {
-    // Remove tanto as URLs originais quanto as desembrulhadas antes de medir o texto restante
     const rawUrlMatches = trimmed.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/gi) ?? [];
     let textWithoutUrls = trimmed;
     for (const u of [...rawUrlMatches, ...urls]) {
@@ -296,18 +306,18 @@ export function shouldAutoSearchWeb(
     }
   }
 
-  // Se o usuário pediu explicitamente pesquisa web, sempre pesquisa
+  // Pedido explícito de pesquisa ou dado em tempo real sempre busca (mesmo com anexos)
   if (EXPLICIT_SEARCH_REGEX.test(trimmed)) {
     return true;
   }
 
-  // Saudações e confirmações curtas não precisam ir à internet
+  // Saudações e confirmações curtas nunca vão à internet
   if (GREETING_ONLY_REGEX.test(trimmed)) {
     return false;
   }
 
-  // Se já tem anexo (print/PDF/código) ou bloco grande de código colado, foca no material enviado
-  if (options.hasAttachments) {
+  // Anexos, blocos grandes de código ou tarefas locais de código/app NUNCA disparam busca genérica
+  if (options.hasAttachments || options.isLocalCodeTask) {
     return false;
   }
   const hasBigCodeBlock =
@@ -315,9 +325,12 @@ export function shouldAutoSearchWeb(
   if (hasBigCodeBlock) {
     return false;
   }
+  if (LOCAL_CODE_OR_APP_TASK_REGEX.test(trimmed)) {
+    return false;
+  }
 
-  // Requer ao menos 4 caracteres úteis
-  return trimmed.length >= 4;
+  // Intenção factual/informativa (ex.: "Como funciona HTTP/3?", "Qual a diferença entre...")
+  return FACTUAL_WEB_INTENT_REGEX.test(trimmed);
 }
 
 function decodeHtmlEntities(input: string): string {
@@ -815,7 +828,11 @@ export async function performWebSearch(
  */
 export async function gatherWebContext(
   prompt: string,
-  options: { mode?: WebSearchMode; hasAttachments?: boolean } = {}
+  options: {
+    mode?: WebSearchMode;
+    hasAttachments?: boolean;
+    isLocalCodeTask?: boolean;
+  } = {}
 ): Promise<WebSource[]> {
   const mode = options.mode ?? "auto";
   if (mode === "off") return [];
@@ -823,7 +840,8 @@ export async function gatherWebContext(
   const pastedUrls = extractUrlsFromText(prompt);
   const runSearch = shouldAutoSearchWeb(prompt, {
     hasAttachments: options.hasAttachments,
-    extractedUrls: pastedUrls
+    extractedUrls: pastedUrls,
+    isLocalCodeTask: options.isLocalCodeTask
   });
 
   if (pastedUrls.length === 0 && !runSearch) {

@@ -19,6 +19,57 @@ const QUOTA_HEALTHY_MIN_RATIO = 0.1; // Pula provedores com menos de 10% de cota
 const COMPLEX_COUNCIL_REGEX =
   /\b(compar[ae]|versus|vs\.?|pr[oó]s e contras|trade-?offs?|qual (escolher|melhor|usar|vale mais)|arquitetura|micros?servi[cç]os|monolito|refator[ae]|auditoria|vulnerabilidad|seguran[cç]a|design system|analise critic|avalia[cç][aã]o|estrat[eé]gia|decis[aã]o|otimiz[ae]|performance|concorr[eê]ncia|implemente um|sistema completo)\b/i;
 
+const TECHNICAL_PROMPT_MD_REGEX =
+  /\b(c[oó]digo|bug|erro\s+ts\d{4}|typeerror|referenceerror|syntaxerror|stack\s*trace|refator[ae]|arquitetura|micros?servi[cç]os|monolito|auditoria|owasp|vulnerabilidad|endpoint|api\s+rest|graphql|sql|schema|migra[cç][aã]o|docker|kubernetes|algoritmo|regex|typescript|javascript|python|node\.?js|react|css|html|teste\s+unit[aá]rio|implemente|corrija\s+o\s+(?:bug|erro|c[oó]digo)|debug|otimiz[ae]\s+(?:query|c[oó]digo|performance)|package\.json|tsconfig|src\/|public\/)\b/i;
+
+const CODE_ATTACHMENT_EXT_RE = /\.(?:ts|tsx|js|jsx|mjs|cjs|py|java|go|rs|sql|css|html|json|yml|yaml|sh|ps1|c|cpp|h|php|rb)$/i;
+
+/**
+ * Onda 3 — Classificador 0ms para Prompt MD vs. Normal:
+ * - Ativa Prompt MD (estrutura técnica concisa em Markdown) em código, bugs, arquitetura,
+ *   auditoria, anexos de código ou ações técnicas em projetos com pasta vinculada;
+ * - Mantém Normal em conversa geral, dúvidas conceituais, escrita e planejamento.
+ */
+export function resolveAutoResponseMode(input: {
+  prompt: string;
+  hasLinkedFolder?: boolean;
+  attachments?: ChatAttachment[];
+}): ResponseMode {
+  const prompt = (input.prompt ?? "").trim();
+  if (!prompt) return "normal";
+
+  if (prompt.includes("```")) {
+    return "prompt_markdown";
+  }
+
+  const hasCodeAttachment = (input.attachments ?? []).some(
+    (att) => att.kind !== "image" && att.kind !== "pdf" && CODE_ATTACHMENT_EXT_RE.test(att.name || "")
+  );
+  if (hasCodeAttachment) {
+    return "prompt_markdown";
+  }
+
+  if (TECHNICAL_PROMPT_MD_REGEX.test(prompt)) {
+    return "prompt_markdown";
+  }
+
+  if (input.hasLinkedFolder) {
+    const probe = classifyBuilderIntent({
+      prompt,
+      hasLinkedFolder: true,
+      isLocalPc: true,
+      folderPolicy: "auto",
+      interactionMode: "direct",
+      participantCount: 1
+    });
+    if (probe.level === "write_explicit") {
+      return "prompt_markdown";
+    }
+  }
+
+  return "normal";
+}
+
 export interface AutoRouteInput {
   prompt: string;
   responseMode: ResponseMode;
