@@ -1210,15 +1210,10 @@ function createInitialParticipantStates(
   return states;
 }
 
-function pickRelator(participants: AIPlatform[]): AIPlatform {
-  // Gemini lidera a síntese pela janela longa e código limpo (sem queimar tokens em reasoning oculto);
-  // OpenRouter e NVIDIA NIM entram como reserva automática quando Gemini não participa.
-  if (participants.includes("gemini")) return "gemini";
-  if (participants.includes("openrouter")) return "openrouter";
-  if (participants.includes("nvidia")) return "nvidia";
-
-  const firstAuto = participants.find((p) => isAutoPlatform(p));
-  return firstAuto ?? participants[0] ?? "gemini";
+export function pickRelator(_participants?: AIPlatform[]): AIPlatform {
+  // O Relator e responsável pela Síntese Final é SEMPRE o Gemini (janela longa e código limpo).
+  // Failover de emergência para OpenRouter/NVIDIA ocorre apenas no runner se o Google cair ou sem cota.
+  return "gemini";
 }
 
 function buildTask(
@@ -1292,13 +1287,20 @@ function createTasksForStage(
   userMemory?: UserMemoryState
 ): DebateTask[] {
   if (stage === "synthesis") {
+    const relator = pickRelator(turn.participants);
+    if (!session.participantStates[relator]) {
+      session.participantStates[relator] = {
+        platform: relator,
+        availability: "unknown"
+      };
+    }
     return [
       buildTask(
         session,
         turn,
         round,
         "synthesis",
-        pickRelator(turn.participants),
+        relator,
         resolvedProjectContext,
         userMemory
       )
@@ -2069,6 +2071,122 @@ export async function submitDebateTaskResponse(
           activeTurn.currentStage = "completed";
           activeTurn.status = "completed";
           activeTurn.conclusion = content;
+          activeTurn.completedAt = now;
+        }
+      } else if (session.currentRound < session.totalRounds) {
+        session.currentRound += 1;
+        session.currentStage = "critique";
+        const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;
+        turnForStage.currentRound = session.currentRound;
+        turnForStage.currentStage = "critique";
+        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
+        session.tasks.push(
+          ...createTasksForStage(
+            session,
+            turnForStage,
+            session.currentRound,
+            "critique",
+            projInstr
+          )
+        );
+      } else {
+        session.currentStage = "synthesis";
+        const turnForStage = activeTurn ?? ensureSessionTurns(session).at(-1)!;
+        turnForStage.currentStage = "synthesis";
+        const projInstr = await resolveProjectInstructionsOnly(session.projectId);
+        session.tasks.push(
+          ...createTasksForStage(
+            session,
+            turnForStage,
+            session.currentRound,
+            "synthesis",
+            projInstr
+          )
+        );
+      }
+    }
+
+    await writeDebateSessionAtomically(session);
+    emitDebateUpdated(session);
+    return session;
+  });
+}
+
+/**
+ * Dispensa uma tarefa retardatária da rodada atual após o quórum já ter respondido,
+ * avançando imediatamente para a próxima etapa (ex.: Síntese do Gemini) sem esperar
+ * modelos lentos travarem a fila por minutos.
+ */
+export async function skipStragglerTaskAndAdvanceStage(
+  debateId: string,
+  taskId: string,
+  reason = "Dispensada por prazo da rodada para acelerar a síntese."
+): Promise<DebateSession | null> {
+  return withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+    if (!session || session.status !== "running") {
+      return null;
+    }
+
+    const task = session.tasks.find((t) => t.id === taskId);
+    if (!task || task.status === "completed") {
+      return session;
+    }
+
+    const activeTurn = task.turnId
+      ? session.turns?.find((t) => t.id === task.turnId)
+      : session.turns?.at(-1);
+
+    // Segurança: só dispensa se já existe ao menos 1 resposta válida na etapa atual
+    const stageResponsesCount = session.responses.filter(
+      (r) =>
+        (!task.turnId || r.turnId === task.turnId) &&
+        r.round === task.round &&
+        r.stage === task.stage
+    ).length;
+    if (stageResponsesCount < 1) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    task.status = "completed";
+    task.completedAt = now;
+    task.interrupted = true;
+    task.lastError = reason.slice(0, 240);
+    delete task.userPrompt;
+    delete task.systemPrompt;
+    task.prompt = "";
+    session.updatedAt = now;
+
+    if (session.participantStates[task.platform]) {
+      session.participantStates[task.platform] = {
+        ...session.participantStates[task.platform],
+        availability: "warning",
+        lastSignalAt: now,
+        lastLimitMessage: reason.slice(0, 140)
+      };
+    }
+
+    const pendingInCurrentStage = session.tasks.some(
+      (t) =>
+        (!task.turnId || t.turnId === task.turnId) &&
+        t.round === session.currentRound &&
+        t.stage === session.currentStage &&
+        t.status === "pending"
+    );
+
+    if (!pendingInCurrentStage) {
+      const activeInteractionMode =
+        activeTurn?.interactionMode ?? session.interactionMode ?? "debate";
+
+      if (activeInteractionMode === "direct") {
+        session.currentStage = "completed";
+        session.status = "completed";
+        session.completedAt = now;
+        delete session.pauseInfo;
+        if (activeTurn) {
+          activeTurn.currentStage = "completed";
+          activeTurn.status = "completed";
           activeTurn.completedAt = now;
         }
       } else if (session.currentRound < session.totalRounds) {

@@ -541,4 +541,36 @@ describe("auto-router (Modo Auto 0ms)", () => {
     );
     assert.deepEqual(outageDebate.participants, ["groq", "openrouter", "nvidia"]);
   });
+
+  it("edição simples em pasta já existente vai direto para 1 IA (Gemini) mesmo em chat novo", () => {
+    const existingFolderEdit = resolveAutoComposerStrategy(
+      {
+        prompt: "Mude a cor do botão de salvar para verde no cabeçalho",
+        isContinuation: false,
+        hasLinkedFolder: true,
+        hasExistingWorkspaceFiles: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      allHealthy()
+    );
+    assert.equal(existingFolderEdit.interactionMode, "direct");
+    assert.deepEqual(existingFolderEdit.autoRoute.participants, ["gemini"]);
+
+    // Se o usuário pedir explicitamente "crie do zero / app completo", ainda ativa Debate mesmo em pasta com arquivos
+    const explicitRebuild = resolveAutoComposerStrategy(
+      {
+        prompt: "Crie do zero um app completo de gestão financeira",
+        isContinuation: false,
+        hasLinkedFolder: true,
+        hasExistingWorkspaceFiles: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      allHealthy()
+    );
+    assert.equal(explicitRebuild.interactionMode, "debate");
+  });
 });

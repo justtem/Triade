@@ -43,6 +43,97 @@ import {
 } from "./grill-wizard.js";
 
 let bypassBriefingOnce = false;
+const dismissedMentionProjectIds = new Set();
+
+function findMentionedProjectInText(rawText) {
+  const projects = Array.isArray(state.userProjects) ? state.userProjects : [];
+  if (projects.length === 0) return null;
+  const normText = String(rawText || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (normText.trim().length < 4) return null;
+
+  // Ordena nomes maiores primeiro para evitar falso match com prefixos curtos
+  const sorted = [...projects]
+    .filter((p) => p?.id && typeof p.name === "string" && p.name.trim().length >= 3 && !dismissedMentionProjectIds.has(p.id))
+    .sort((a, b) => b.name.length - a.name.length);
+
+  for (const proj of sorted) {
+    const normName = proj.name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+    if (normName.length < 3) continue;
+    const escaped = normName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, "i");
+    if (re.test(normText)) {
+      return proj;
+    }
+  }
+  return null;
+}
+
+function syncProjectMentionSuggestionUi(typedText, isContinuing, linkedProj) {
+  const bar = $("#composer-project-suggest");
+  if (!bar) return;
+
+  if (isContinuing || linkedProj) {
+    bar.hidden = true;
+    bar.replaceChildren();
+    bar.dataset.suggestedProjectId = "";
+    return;
+  }
+
+  const mentioned = findMentionedProjectInText(typedText);
+  if (!mentioned) {
+    bar.hidden = true;
+    bar.replaceChildren();
+    bar.dataset.suggestedProjectId = "";
+    return;
+  }
+
+  if (bar.dataset.suggestedProjectId === mentioned.id && !bar.hidden) {
+    return;
+  }
+
+  bar.dataset.suggestedProjectId = mentioned.id;
+  bar.replaceChildren();
+
+  const textSpan = document.createElement("span");
+  textSpan.className = "project-suggest-text";
+  textSpan.textContent = `Vincular ao projeto "${mentioned.name}"${mentioned.linkedFolderPath ? " (com pasta local)" : ""}?`;
+
+  const linkBtn = document.createElement("button");
+  linkBtn.type = "button";
+  linkBtn.className = "project-suggest-accept";
+  linkBtn.textContent = "Vincular";
+  linkBtn.addEventListener("click", () => {
+    state.activeNewChatProjectId = mentioned.id;
+    bar.hidden = true;
+    bar.replaceChildren();
+    bar.dataset.suggestedProjectId = "";
+    uiHooks.syncComposerProjectPill?.();
+    syncComposerModeUi();
+    $("#debate-topic")?.focus();
+  });
+
+  const dismissBtn = document.createElement("button");
+  dismissBtn.type = "button";
+  dismissBtn.className = "project-suggest-dismiss";
+  dismissBtn.setAttribute("aria-label", "Ignorar sugestão");
+  dismissBtn.textContent = "×";
+  dismissBtn.addEventListener("click", () => {
+    dismissedMentionProjectIds.add(mentioned.id);
+    bar.hidden = true;
+    bar.replaceChildren();
+    bar.dataset.suggestedProjectId = "";
+  });
+
+  bar.append(textSpan, linkBtn, dismissBtn);
+  bar.hidden = false;
+}
 
 export function getSelectedParticipants() {
   return $$('input[name="participants"]:checked').map((cb) => cb.value);
@@ -249,6 +340,7 @@ export function syncComposerSubmitIntentUi() {
   if (clearBtn) {
     clearBtn.hidden = typedText.length === 0;
   }
+  syncProjectMentionSuggestionUi(typedText, isContinuing, linkedProj);
 
   if (willAutoBuild) {
     submitBtn.title = `Construtor automático: vai gerar arquivos, gravar em "${linkedProj.name}" (com backup) e rodar build/test`;

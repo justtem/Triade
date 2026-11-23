@@ -281,6 +281,8 @@ export interface BuilderTurnState {
   checks?: BuilderCommandRun[];
   fixAttempt?: number;
   maxFixAttempts?: number;
+  autoStartedUrl?: string;
+  autoRolledBack?: boolean;
   lastError?: string;
   updatedAt: string;
 }

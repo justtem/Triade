@@ -38,6 +38,7 @@ import {
   classifyBuilderIntent,
   normalizeFolderPolicy
 } from "../projects/builder-intent.js";
+import { listWorkspaceSourceFiles } from "../projects/workspace-writer.js";
 import { gatherProjectContext } from "../projects/project-rag.js";
 import { readPrivacySettings } from "../security/data-protection.js";
 import {
@@ -517,10 +518,15 @@ export async function handleDebateRoutes(
         let autoRoute;
 
         if (useAutoRoute && autoSelectInteraction) {
+          const linkedFolderPath = linkedProjectObj?.linkedFolderPath?.trim();
+          const hasExistingWorkspaceFiles = linkedFolderPath
+            ? (await listWorkspaceSourceFiles(linkedFolderPath, 4).catch(() => [])).length > 0
+            : false;
           const strategy = await routeAutoComposerStrategy({
             prompt: topicStr,
             isContinuation: false,
             hasLinkedFolder,
+            hasExistingWorkspaceFiles,
             isLocalPc: isLocalPcReq,
             folderPolicy,
             responseMode,

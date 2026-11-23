@@ -374,6 +374,7 @@ export interface AutoComposerStrategyInput {
   prompt: string;
   isContinuation: boolean;
   hasLinkedFolder: boolean;
+  hasExistingWorkspaceFiles?: boolean;
   isLocalPc: boolean;
   folderPolicy: BuilderFolderPolicy;
   responseMode: ResponseMode;
@@ -417,11 +418,11 @@ export function resolveAutoComposerStrategy(
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase();
-    // Em projeto já existente (isContinuation=true), NUNCA dispara Debate só por texto longo (>=220 chars):
-    // mantém edição direta focada nos arquivos reais da pasta (preservando contrato frontend/backend),
-    // salvo quando o usuário pedir explicitamente "crie do zero / projeto completo".
+    // Em projeto já existente (conversa contínua OU pasta já com arquivos de código no PC),
+    // NUNCA dispara Debate completo de 3 IAs para uma modificação simples:
+    // vai direto para 1 IA forte de código (Gemini), salvo se o usuário pedir "crie do zero / projeto completo".
     const isMajorBuild =
-      !input.isContinuation ||
+      (!input.isContinuation && !input.hasExistingWorkspaceFiles) ||
       FULL_PROJECT_BUILD_RE.test(normPrompt);
 
     if (isMajorBuild) {

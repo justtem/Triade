@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { inspectLinkedFolder } from "../src/projects/project-rag.js";
 import {
   extractWorkspaceContractSummary,
+  partitionBuilderFileWaves,
   readRelevantFilesForFix,
   resolveBuilderProviderOrder
 } from "../src/projects/builder-orchestrator.js";
@@ -502,5 +503,19 @@ describe("Modo Construtor (Fase 3) — Sandbox, Diff, Backup/Undo, Verifier & Re
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("partitionBuilderFileWaves separa arquivos base/HTML (onda 1) de CSS/JS/testes dependentes de contrato (onda 2)", () => {
+    const [wave1, wave2] = partitionBuilderFileWaves([
+      "package.json",
+      "public/style.css",
+      "src/server.ts",
+      "public/index.html",
+      "public/app.js",
+      "tests/app.test.ts"
+    ]);
+
+    assert.deepEqual(wave1, ["package.json", "src/server.ts", "public/index.html"]);
+    assert.deepEqual(wave2, ["public/style.css", "public/app.js", "tests/app.test.ts"]);
   });
 });

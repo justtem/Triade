@@ -15,6 +15,8 @@ const {
   togglePinDebateSession,
   searchDebateSessions,
   stopDebateGeneration,
+  skipStragglerTaskAndAdvanceStage,
+  pickRelator,
   deleteDebateSession,
   listDebateSummaries,
   getDebateSessionById,
@@ -190,6 +192,47 @@ describe("debate-engine — Fluxo Completo, Anexos, Busca & Pin", () => {
     });
     assert.equal(nextTurn.status, "running");
     assert.equal(nextTurn.turns?.length, 2);
+  });
+
+  it("pickRelator sempre escolhe Gemini e skipStragglerTaskAndAdvanceStage libera síntese no Gemini sem esperar IA lenta", async () => {
+    assert.equal(pickRelator(["groq", "openrouter"]), "gemini");
+    assert.equal(pickRelator(["groq", "nvidia"]), "gemini");
+
+    const session = await createDebateSession({
+      title: "Teste Quórum + Relator Gemini",
+      topic: "Crie um módulo de cache LRU",
+      participants: ["groq", "openrouter", "nvidia"],
+      interactionMode: "debate",
+      totalRounds: 1,
+      responseMode: "prompt_markdown"
+    });
+
+    const groqTask = session.tasks.find((t) => t.platform === "groq")!;
+    const openRouterTask = session.tasks.find((t) => t.platform === "openrouter")!;
+    const slowNvidiaTask = session.tasks.find((t) => t.platform === "nvidia")!;
+
+    await submitDebateTaskResponse(session.id, {
+      taskId: groqTask.id,
+      content: "Proposta Groq: Map nativo com O(1) para get/set."
+    });
+    await submitDebateTaskResponse(session.id, {
+      taskId: openRouterTask.id,
+      content: "Proposta OpenRouter: LRU com limite máximo e evicção segura."
+    });
+
+    // Dispensa a 3ª IA lenta após quórum -> deve avançar imediatamente para síntese no Gemini!
+    const advanced = await skipStragglerTaskAndAdvanceStage(
+      session.id,
+      slowNvidiaTask.id,
+      "Dispensada por prazo da rodada."
+    );
+    assert.ok(advanced);
+    assert.equal(advanced.currentStage, "synthesis");
+    const synthTask = advanced.tasks.find(
+      (t) => t.stage === "synthesis" && t.status === "pending"
+    );
+    assert.ok(synthTask);
+    assert.equal(synthTask.platform, "gemini");
   });
 });
 

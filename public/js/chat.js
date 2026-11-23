@@ -2085,11 +2085,20 @@ function isSafeLoopbackPreviewUrl(rawUrl) {
   return /^http:\/\/(?:127\.0\.0\.1|localhost):\d{4,5}\/?$/i.test(String(rawUrl || "").trim());
 }
 
-function buildDevServerPreviewBar(project) {
+function buildDevServerPreviewBar(project, autoStartedUrl) {
   if (!project?.id || !project?.linkedFolderPath || !isLocalPcClient()) return null;
 
   const projectId = project.id;
-  const cached = devServerStatusByProjectId.get(projectId);
+  let cached = devServerStatusByProjectId.get(projectId);
+  if (autoStartedUrl && isSafeLoopbackPreviewUrl(autoStartedUrl) && !cached?.running) {
+    cached = {
+      projectId,
+      running: true,
+      canRun: true,
+      url: autoStartedUrl
+    };
+    devServerStatusByProjectId.set(projectId, cached);
+  }
 
   if (!cached && !devServerStatusFetchingIds.has(projectId)) {
     devServerStatusFetchingIds.add(projectId);
@@ -2765,7 +2774,7 @@ function buildBuilderPanelForTurn(debate, turn, turnResponses) {
     }
 
     if (stKey === "completed" && linkedProject?.linkedFolderPath) {
-      const previewBar = buildDevServerPreviewBar(linkedProject);
+      const previewBar = buildDevServerPreviewBar(linkedProject, bState?.autoStartedUrl);
       if (previewBar) {
         panel.appendChild(previewBar);
       }

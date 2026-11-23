@@ -10,6 +10,7 @@ import {
   recordTaskFailure,
   RECENT_FULL_TURNS,
   saveSessionSharedMemory,
+  skipStragglerTaskAndAdvanceStage,
   submitDebateTaskResponse,
   type PendingMemoryCompaction
 } from "./debate-engine.js";
@@ -58,8 +59,14 @@ const MAX_TASK_ATTEMPTS = 1;
 const RETRY_BASE_DELAY_MS = 8_000;
 const MEMORY_RETRY_COOLDOWN_MS = 120_000;
 const MAX_CHAINED_PASSES = 12;
+// Quórum de rodada: assim que 2+ IAs já responderam em uma rodada de 3 IAs,
+// dá no máximo 22s para a 3ª IA lenta concluir antes de liberar o Gemini Relator.
+const ROUND_STRAGGLER_GRACE_MS = 22_000;
+const PAIR_STRAGGLER_GRACE_MS = 45_000;
+const PAIR_GEMINI_GRACE_MS = 60_000;
 
 const inFlight = new Set<string>();
+const stragglerAborted = new Set<string>();
 const activeControllers = new Map<
   string,
   { debateId: string; controller: AbortController; partialText: string }
@@ -107,9 +114,14 @@ async function pickHealthyFailoverProvider(
   const promptSize =
     (task.systemPrompt?.length ?? 0) + (task.userPrompt?.length ?? task.prompt.length);
   const allowGroq = task.stage !== "synthesis" && promptSize <= 14_000;
-  const order: AutoPlatform[] = allowGroq
-    ? ["nvidia", "openrouter", "gemini", "groq"]
-    : ["nvidia", "openrouter", "gemini"];
+  // Na síntese, Gemini é sempre o titular; se o Google cair (failover de emergência),
+  // OpenRouter entra antes de NVIDIA NIM por ser mais rápido em resposta direta.
+  const order: AutoPlatform[] =
+    task.stage === "synthesis"
+      ? ["gemini", "openrouter", "nvidia"]
+      : allowGroq
+        ? ["gemini", "openrouter", "nvidia", "groq"]
+        : ["gemini", "openrouter", "nvidia"];
 
   for (const candidate of order) {
     if (busyInSameStage.has(candidate)) continue;
@@ -208,12 +220,19 @@ function extractTaskMedia(session: DebateSession | null, task: DebateTask): Prov
     }));
 }
 
+interface StageBatchContext {
+  hasQuorum: () => boolean;
+  onTaskFinished: (taskId: string, succeeded: boolean) => void;
+}
+
 async function runTask(
   debateId: string,
   task: DebateTask,
-  session: DebateSession | null = null
+  session: DebateSession | null = null,
+  batchContext?: StageBatchContext
 ): Promise<boolean> {
   inFlight.add(task.id);
+  let taskSucceeded = false;
 
   try {
     if (!isAutoPlatform(task.platform)) {
@@ -226,6 +245,24 @@ async function runTask(
 
     if (!provider) {
       const reason = getProviderIssue(platform) ?? "provedor não configurado.";
+      // Na síntese (onde Gemini é sempre titular), tenta failover de emergência antes de pausar.
+      if (task.stage === "synthesis") {
+        const backup = await pickHealthyFailoverProvider(session, task, platform);
+        if (backup) {
+          const reassigned = await failoverTaskToBackupProvider(
+            debateId,
+            task.id,
+            backup,
+            reason
+          );
+          if (reassigned) {
+            console.warn(
+              `[AI Council] Failover de emergência na síntese: ${label} indisponível → ${PLATFORM_NAMES[backup]}.`
+            );
+            return true;
+          }
+        }
+      }
       await recordTaskFailure(
         debateId,
         task.id,
@@ -293,11 +330,40 @@ async function runTask(
       emitProvidersUpdated();
       const failure = classifyError(error);
 
+      if (stragglerAborted.has(task.id)) {
+        stragglerAborted.delete(task.id);
+        const skipped = await skipStragglerTaskAndAdvanceStage(
+          debateId,
+          task.id,
+          `${label} excedeu o prazo da rodada após quórum — dispensada para acelerar a síntese.`
+        );
+        console.log(
+          `[AI Council] ${label} dispensada por prazo da rodada (quórum já concluído — avançando etapa).`
+        );
+        return Boolean(skipped);
+      }
+
       if (controller.signal.aborted || failure.kind === "aborted") {
         console.log(
           `[AI Council] ${label} interrompido manualmente pelo usuário (${controllerEntry.partialText.length} chars parciais).`
         );
         return false;
+      }
+
+      // Se a rodada já atingiu quórum (>= 2 respostas prontas em debate de 3 IAs),
+      // não dispara failover cascateado para um 4º modelo lento — avança direto para a síntese do Gemini!
+      if (batchContext?.hasQuorum() && task.stage !== "synthesis") {
+        const skipped = await skipStragglerTaskAndAdvanceStage(
+          debateId,
+          task.id,
+          `${label} falhou após quórum (${failure.kind}) — avançando para a síntese.`
+        );
+        if (skipped) {
+          console.warn(
+            `[AI Council] ${label} falhou (${failure.kind}) após quórum da rodada — dispensando sem failover lento.`
+          );
+          return true;
+        }
       }
 
       if (failure.kind === "rate_limit" || failure.kind === "quota_exhausted") {
@@ -380,6 +446,15 @@ async function runTask(
       if (streamStarted) {
         endTaskStream(debateId, task.id);
       }
+      if (stragglerAborted.has(task.id)) {
+        stragglerAborted.delete(task.id);
+        const skipped = await skipStragglerTaskAndAdvanceStage(
+          debateId,
+          task.id,
+          `${label} excedeu o prazo da rodada após quórum — dispensada para acelerar a síntese.`
+        );
+        return Boolean(skipped);
+      }
       return false;
     }
 
@@ -414,10 +489,13 @@ async function runTask(
       `[AI Council] ${label} respondeu (${result.model}, ${result.totalTokens ?? "?"} tokens) — rodada ${task.round}/${task.stage}`
     );
 
+    taskSucceeded = true;
     return true;
   } finally {
+    stragglerAborted.delete(task.id);
     activeControllers.delete(task.id);
     inFlight.delete(task.id);
+    batchContext?.onTaskFinished(task.id, taskSucceeded);
   }
 }
 
@@ -563,9 +641,71 @@ async function processOnce(): Promise<boolean> {
     if (pending.length === 0) continue;
 
     // Provedores diferentes em paralelo; cada um respeita o próprio UsageGate.
-    const outcomes = await Promise.all(
-      pending.map((task) => runTask(session.id, task, session))
-    );
+    // Em rodadas multi-IA (não síntese), aplica quórum com prazo curto para que
+    // uma IA lenta não trave a síntese do Gemini por minutos.
+    let outcomes: boolean[];
+    if (pending.length >= 2 && session.currentStage !== "synthesis") {
+      const quorumSize = pending.length >= 3 ? 2 : 1;
+      const finishedIds = new Set<string>();
+      let succeededCount = 0;
+      let graceTimer: NodeJS.Timeout | undefined;
+
+      const batchContext: StageBatchContext = {
+        hasQuorum: () => succeededCount >= quorumSize,
+        onTaskFinished: (finishedTaskId, succeeded) => {
+          finishedIds.add(finishedTaskId);
+          if (succeeded) succeededCount += 1;
+
+          const remaining = pending.filter((t) => !finishedIds.has(t.id));
+          if (remaining.length === 0) {
+            if (graceTimer) {
+              clearTimeout(graceTimer);
+              graceTimer = undefined;
+            }
+            return;
+          }
+
+          if (succeededCount >= quorumSize && !graceTimer) {
+            const graceMs =
+              pending.length >= 3
+                ? ROUND_STRAGGLER_GRACE_MS
+                : remaining.some((t) => t.platform === "gemini")
+                  ? PAIR_GEMINI_GRACE_MS
+                  : PAIR_STRAGGLER_GRACE_MS;
+
+            graceTimer = setTimeout(() => {
+              graceTimer = undefined;
+              for (const slowTask of pending) {
+                if (finishedIds.has(slowTask.id)) continue;
+                const ctrlEntry = activeControllers.get(slowTask.id);
+                if (!ctrlEntry) continue;
+                stragglerAborted.add(slowTask.id);
+                try {
+                  ctrlEntry.controller.abort();
+                } catch {
+                  // Ignora erro de aborto duplicado
+                }
+              }
+            }, graceMs);
+          }
+        }
+      };
+
+      try {
+        outcomes = await Promise.all(
+          pending.map((task) => runTask(session.id, task, session, batchContext))
+        );
+      } finally {
+        if (graceTimer) {
+          clearTimeout(graceTimer);
+          graceTimer = undefined;
+        }
+      }
+    } else {
+      outcomes = await Promise.all(
+        pending.map((task) => runTask(session.id, task, session))
+      );
+    }
 
     if (outcomes.some(Boolean)) {
       didWork = true;

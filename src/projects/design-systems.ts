@@ -700,6 +700,55 @@ export function selectDesignSystem(
     }
   }
 
+  // 3b. Modo "auto" por domínio do app (Onda 2): quando não houve cor explícita no pedido,
+  //     casa automaticamente o domínio do app com os .md ideais + anti-repetição entre projetos!
+  if (modeOrId !== "random" && options.queryText) {
+    const queryNorm = normalizeText(options.queryText);
+    const domainRules: Array<{ re: RegExp; preferredIds: string[]; label: string }> = [
+      {
+        re: /\b(financ\w*|gasto\w*|despesa\w*|fatura\w*|orcamento\w*|investiment\w*|bolsa|acoes|cripto|carteira|caixa|banco|pix|pagamento\w*|cobranca\w*)\b/,
+        preferredIds: ["fey-bloomberg-terminal", "dovetail-dark-command-center"],
+        label: "financeiro"
+      },
+      {
+        re: /\b(tarefa\w*|kanban|produtividade|pomodoro|crm|estoque|pdv|painel|dashboard|metrica\w*|monitor\w*|admin|api|dev|developer|banco\s+de\s+dados|sql)\b/,
+        preferredIds: ["dovetail-dark-command-center", "supabase-midnight"],
+        label: "produtividade"
+      },
+      {
+        re: /\b(portfolio|portifolio|landing|agencia|estudio|criativ\w*|galeria|filme\w*|serie\w*|cinema|musica|jogo\w*|game|animac\w*)\b/,
+        preferredIds: ["gsap-dark-canvas", "index-violet-dark"],
+        label: "criativo"
+      },
+      {
+        re: /\b(livro\w*|leitura\w*|biblioteca|habito\w*|saude|clinica|paciente\w*|agenda\w*|receita\w*|diario|nota\w*|jardin\w*|planta\w*|botanic\w*|editorial)\b/,
+        preferredIds: ["angellist-midnight-violet", "tomorro-lush-greenhouse"],
+        label: "editorial"
+      }
+    ];
+
+    const avoidId = options.excludeId ?? lastRandomPickedId;
+    for (const rule of domainRules) {
+      if (!rule.re.test(queryNorm)) continue;
+      const domainMatches = rule.preferredIds
+        .map((id) => pool.find((e) => e.id === id))
+        .filter((e): e is DesignSystemEntry => Boolean(e));
+      if (domainMatches.length > 0) {
+        const nonRepeat =
+          domainMatches.length > 1 && avoidId
+            ? domainMatches.filter((e) => e.id !== avoidId)
+            : domainMatches;
+        const chosen = nonRepeat[0] ?? domainMatches[0]!;
+        lastRandomPickedId = chosen.id;
+        return {
+          entry: chosen,
+          reason: "matched",
+          matchedKeywords: [rule.label]
+        };
+      }
+    }
+  }
+
   // 4. Seleção aleatória anti-repetição (garante que cada projeto novo tenha uma cara diferente!)
   const avoidId = options.excludeId ?? lastRandomPickedId;
   const nonRepeat = pool.length > 1 && avoidId

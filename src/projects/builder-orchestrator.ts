@@ -23,6 +23,10 @@ import type {
   ChatTurn,
   DebateSession
 } from "../shared/debate-types.js";
+import {
+  startProjectDevServer,
+  stopProjectDevServer
+} from "./dev-server-manager.js";
 import { verifyWorkspaceProject } from "./workspace-verifier.js";
 import {
   applyWorkspaceChanges,
@@ -348,6 +352,32 @@ function isLightweightConfigOrDocFile(relPath: string): boolean {
   );
 }
 
+/**
+ * Divide os arquivos faltantes em 2 ondas paralelas respeitando dependências de contrato:
+ * - Onda 1 (paralela): configs, backend/source e HTML base (fornecem rotas, exports e IDs DOM);
+ * - Onda 2 (paralela): CSS/JS do frontend e testes (recebem o contrato exato gerado na Onda 1).
+ */
+export function partitionBuilderFileWaves(queue: string[]): [string[], string[]] {
+  const wave1: string[] = [];
+  const wave2: string[] = [];
+
+  for (const relPath of queue) {
+    const norm = relPath.replace(/\\/g, "/").toLowerCase();
+    const isFrontendAsset = /^public\/.+\.(?:css|js|mjs)$/i.test(norm) || norm.endsWith(".css");
+    const isTestFile =
+      /(?:^|\/)(?:tests?|__tests__|spec)\//i.test(norm) ||
+      /\.(?:test|spec)\.[a-z0-9]+$/i.test(norm);
+
+    if (isFrontendAsset || isTestFile) {
+      wave2.push(relPath);
+    } else {
+      wave1.push(relPath);
+    }
+  }
+
+  return [wave1, wave2];
+}
+
 async function callBuilderModel(params: {
   systemPrompt: string;
   userPrompt: string;
@@ -628,32 +658,20 @@ export async function generateRemainingBuilderFiles(
     let workingFiles: BuilderFileEntry[] = [...currentFiles];
     let remainingMissing = [...missingPaths];
 
-    for (let i = 0; i < queue.length; i++) {
-      const targetPath = queue[i]!;
-      if (signal.aborted) {
-        await patchTurnBuilderState(debateId, turn.id, (prev) => ({
-          ...(prev ?? { enabled: true, autoApply: false, files: workingFiles, status: "stopped", updatedAt: "" }),
-          status: "stopped",
-          summary: "Geração interrompida pelo usuário.",
-          files: workingFiles,
-          missingPaths: remainingMissing,
-          updatedAt: new Date().toISOString()
-        }));
-        break;
-      }
+    const [wave1, wave2] = partitionBuilderFileWaves(queue);
+    const waves = [wave1, wave2].filter((w) => w.length > 0);
 
-      await patchTurnBuilderState(debateId, turn.id, (prev) => ({
-        ...(prev ?? { enabled: true, autoApply: false, files: workingFiles, status: "generating", updatedAt: "" }),
-        status: "generating",
-        summary: `Gerando arquivo ${i + 1}/${queue.length}: ${targetPath}...`,
-        files: workingFiles,
-        missingPaths: remainingMissing,
-        updatedAt: new Date().toISOString()
-      }));
+    const generateSingleTargetFile = async (
+      targetPath: string,
+      snapshotFiles: BuilderFileEntry[],
+      contractSummary: string
+    ): Promise<ExtractedWorkspaceFile | null> => {
+      if (signal.aborted) return null;
 
-      const contractSummary = extractWorkspaceContractSummary(workingFiles);
-      const isFrontendTarget = /\.(?:css|html|js|mjs)$/i.test(targetPath) && targetPath.toLowerCase().startsWith("public/");
-      const knownSummary = workingFiles
+      const isFrontendTarget =
+        /\.(?:css|html|js|mjs)$/i.test(targetPath) &&
+        targetPath.toLowerCase().startsWith("public/");
+      const knownSummary = snapshotFiles
         .filter((f) => !f.incomplete && f.path !== targetPath)
         .slice(0, 8)
         .map((f) => {
@@ -718,12 +736,57 @@ export async function generateRemainingBuilderFiles(
         }
       }
 
-      if (generatedContent) {
-        const merged = mergeExtractedFiles(workingFiles, [
-          { path: targetPath, content: generatedContent, incomplete: false }
-        ]);
+      return generatedContent
+        ? { path: targetPath, content: generatedContent, incomplete: false }
+        : null;
+    };
+
+    for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
+      const wave = waves[waveIdx]!;
+      if (signal.aborted) {
+        await patchTurnBuilderState(debateId, turn.id, (prev) => ({
+          ...(prev ?? { enabled: true, autoApply: false, files: workingFiles, status: "stopped", updatedAt: "" }),
+          status: "stopped",
+          summary: "Geração interrompida pelo usuário.",
+          files: workingFiles,
+          missingPaths: remainingMissing,
+          updatedAt: new Date().toISOString()
+        }));
+        break;
+      }
+
+      const waveLabel =
+        waves.length > 1 ? `onda ${waveIdx + 1}/${waves.length} em paralelo` : "em paralelo";
+      await patchTurnBuilderState(debateId, turn.id, (prev) => ({
+        ...(prev ?? { enabled: true, autoApply: false, files: workingFiles, status: "generating", updatedAt: "" }),
+        status: "generating",
+        summary:
+          wave.length > 1
+            ? `Gerando ${wave.length} arquivos (${waveLabel}): ${wave.join(", ")}...`
+            : `Gerando arquivo ${wave[0]}...`,
+        files: workingFiles,
+        missingPaths: remainingMissing,
+        updatedAt: new Date().toISOString()
+      }));
+
+      const snapshotFiles = [...workingFiles];
+      const contractSummary = extractWorkspaceContractSummary(snapshotFiles);
+
+      // Dispara todos os arquivos da onda simultaneamente (Onda 1: base/HTML/API; Onda 2: CSS/JS/testes com contrato real)
+      const generatedResults = await Promise.all(
+        wave.map((targetPath) =>
+          generateSingleTargetFile(targetPath, snapshotFiles, contractSummary)
+        )
+      );
+
+      const produced = generatedResults.filter(
+        (item): item is ExtractedWorkspaceFile => item !== null
+      );
+      if (produced.length > 0) {
+        const merged = mergeExtractedFiles(workingFiles, produced);
         workingFiles = await previewWorkspaceChanges(proj.folderPath, merged);
-        remainingMissing = remainingMissing.filter((p) => p !== targetPath);
+        const producedSet = new Set(produced.map((p) => p.path));
+        remainingMissing = remainingMissing.filter((p) => !producedSet.has(p));
       }
     }
 
@@ -850,9 +913,17 @@ export async function readRelevantFilesForFix(
   return loaded;
 }
 
+function isRunningUnderTest(): boolean {
+  return (
+    process.env.NODE_ENV === "test" ||
+    process.argv.some((arg) => arg === "--test" || arg.includes(".test."))
+  );
+}
+
 async function runVerificationAndAutoFixLoop(params: {
   debateId: string;
   turnId: string;
+  projectId?: string;
   folderPath: string;
   projectInstructions: string;
   userGoal: string;
@@ -864,6 +935,7 @@ async function runVerificationAndAutoFixLoop(params: {
   const {
     debateId,
     turnId,
+    projectId,
     folderPath,
     projectInstructions,
     userGoal,
@@ -920,17 +992,36 @@ async function runVerificationAndAutoFixLoop(params: {
     packageJsonChanged = false;
 
     if (verification.allPassed) {
+      // Onda 2: Auto-Start automático do servidor local assim que build/test/smoke-test passarem 100%!
+      let autoStartedUrl: string | undefined;
+      if (projectId && !isRunningUnderTest() && !signal.aborted) {
+        try {
+          await stopProjectDevServer(projectId).catch(() => {});
+          const devStatus = await startProjectDevServer(projectId, folderPath);
+          if (devStatus.running && devStatus.url) {
+            autoStartedUrl = devStatus.url;
+          }
+        } catch {
+          // Projeto sem script dev/start (ex.: biblioteca pura) — ignora silenciosamente
+        }
+      }
+
+      const baseDoneSummary =
+        fixAttempt > 0
+          ? `${verification.summary} (corrigido automaticamente em ${fixAttempt} tentativa${fixAttempt > 1 ? "s" : ""})`
+          : verification.summary;
       const done = await patchTurnBuilderState(debateId, turnId, (prev) => ({
         ...(prev ?? { enabled: true, autoApply: false, files: [], status: "completed", updatedAt: "" }),
         status: "completed",
-        summary:
-          fixAttempt > 0
-            ? `${verification.summary} (corrigido automaticamente em ${fixAttempt} tentativa${fixAttempt > 1 ? "s" : ""})`
-            : verification.summary,
+        summary: autoStartedUrl
+          ? `${baseDoneSummary} · App rodando em ${autoStartedUrl}`
+          : baseDoneSummary,
         lastBackup: latestBackup ?? prev?.lastBackup,
         checks: lastChecks,
         fixAttempt,
         maxFixAttempts: MAX_FIX_ATTEMPTS,
+        autoStartedUrl,
+        autoRolledBack: false,
         lastError: undefined,
         updatedAt: new Date().toISOString()
       }));
@@ -939,17 +1030,40 @@ async function runVerificationAndAutoFixLoop(params: {
     }
 
     if (!autoFix || fixAttempt >= MAX_FIX_ATTEMPTS) {
+      // Onda 2: Rollback automático seguro em edição de projeto existente após 3ª falha do Auto-Fix
+      // (só restaura quando havia arquivos existentes sobrescritos; preserva pasta nova do zero).
+      let autoRolledBack = false;
+      let restoredBackup = latestBackup;
+      const rollbackCandidate = params.initialBackup;
+      if (
+        autoFix &&
+        fixAttempt >= MAX_FIX_ATTEMPTS &&
+        rollbackCandidate &&
+        !rollbackCandidate.undone &&
+        (rollbackCandidate.filesOverwritten?.length ?? 0) > 0
+      ) {
+        try {
+          const undone = await undoWorkspaceBackup(folderPath, rollbackCandidate.batchId);
+          autoRolledBack = true;
+          restoredBackup = undone.backup;
+        } catch {
+          // Se backup falhar, mantém estado normal de falha
+        }
+      }
+
       const failed = await patchTurnBuilderState(debateId, turnId, (prev) => ({
         ...(prev ?? { enabled: true, autoApply: false, files: [], status: "failed", updatedAt: "" }),
         status: "failed",
-        summary:
-          fixAttempt > 0
+        summary: autoRolledBack
+          ? `Auto-Fix falhou após ${fixAttempt} tentativas — a versão anterior que funcionava foi restaurada automaticamente pelo backup.`
+          : fixAttempt > 0
             ? `${verification.summary} Após ${fixAttempt} tentativa(s) de autocorreção.`
             : verification.summary,
-        lastBackup: latestBackup ?? prev?.lastBackup,
+        lastBackup: restoredBackup ?? prev?.lastBackup,
         checks: lastChecks,
         fixAttempt,
         maxFixAttempts: MAX_FIX_ATTEMPTS,
+        autoRolledBack,
         lastError: verification.summary,
         updatedAt: new Date().toISOString()
       }));
@@ -1224,6 +1338,7 @@ export async function applyBuilderTurnToDisk(
     return await runVerificationAndAutoFixLoop({
       debateId,
       turnId: turn.id,
+      projectId: proj.projectId,
       folderPath: proj.folderPath,
       projectInstructions: proj.instructions,
       userGoal: turn.prompt,
@@ -1276,6 +1391,7 @@ export async function verifyAndAutoFixBuilderTurn(
     return await runVerificationAndAutoFixLoop({
       debateId,
       turnId: turn.id,
+      projectId: proj.projectId,
       folderPath: proj.folderPath,
       projectInstructions: proj.instructions,
       userGoal: turn.prompt,

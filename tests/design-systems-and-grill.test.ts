@@ -162,6 +162,18 @@ describe("Design Systems (.md) + Grill-me Adaptativo", () => {
       assert.equal(assetCheck.ok, false);
       assert.match(assetCheck.output, /public\/app\.js/);
 
+      // Agora cria public/app.js com SyntaxError -> deve reprovar via node --check!
+      await writeFile(
+        join(tmpProj, "public", "app.js"),
+        "function broken( { console.log('oops'); }\n",
+        "utf8"
+      );
+      const syntaxFailed = await verifyWorkspaceProject(tmpProj);
+      assert.equal(syntaxFailed.allPassed, false);
+      const syntaxCheck = syntaxFailed.checks.find((c) => c.command === "frontend-assets-check");
+      assert.ok(syntaxCheck && !syntaxCheck.ok);
+      assert.match(syntaxCheck.output, /sintaxe JavaScript|node --check/i);
+
       // Agora cria public/app.js válido -> deve aprovar!
       await writeFile(
         join(tmpProj, "public", "app.js"),
@@ -173,6 +185,113 @@ describe("Design Systems (.md) + Grill-me Adaptativo", () => {
     } finally {
       await rm(tmpProj, { recursive: true, force: true });
     }
+  });
+
+  it("Onda 2: Smoke-Test HTTP real reprova asset 404 em runtime e aprova quando /, /style.css e /app.js retornam 200", async () => {
+    const tmpProj = await mkdtemp(join(tmpdir(), "aic-smoke-http-"));
+    try {
+      await mkdir(join(tmpProj, "public"), { recursive: true });
+      await writeFile(
+        join(tmpProj, "public", "index.html"),
+        "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"/style.css\"></head><body><h1>Ok</h1><script type=\"module\" src=\"/app.js\"></script></body></html>",
+        "utf8"
+      );
+      await writeFile(join(tmpProj, "public", "style.css"), "body { background: #181818; }\n", "utf8");
+      await writeFile(join(tmpProj, "public", "app.js"), "console.info('smoke ok');\n", "utf8");
+
+      // Servidor bugado que retorna 404 para /app.js
+      await writeFile(
+        join(tmpProj, "package.json"),
+        JSON.stringify({
+          name: "smoke-demo",
+          version: "1.0.0",
+          type: "module",
+          scripts: {
+            test: "node -e \"process.exit(0)\"",
+            dev: "node server.mjs"
+          }
+        }),
+        "utf8"
+      );
+      await writeFile(
+        join(tmpProj, "server.mjs"),
+        [
+          "import http from 'node:http';",
+          "const port = Number(process.env.PORT || 4299);",
+          "http.createServer((req, res) => {",
+          "  if (req.url === '/') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<!DOCTYPE html><html><body><h1>Smoke OK</h1></body></html>'); return; }",
+          "  if (req.url === '/style.css') { res.writeHead(200, { 'Content-Type': 'text/css' }); res.end('body { color: #fff; }'); return; }",
+          "  res.writeHead(404); res.end('not found');",
+          "}).listen(port, '127.0.0.1', () => console.log(`Listening on http://127.0.0.1:${port}`));"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const smokeFail = await verifyWorkspaceProject(tmpProj);
+      assert.equal(smokeFail.allPassed, false);
+      const smokeRunFail = smokeFail.checks.find((c) => c.command === "runtime-http-smoke");
+      assert.ok(smokeRunFail && !smokeRunFail.ok, "Smoke-test deve reprovar /app.js 404");
+      assert.match(smokeRunFail.output, /\/app\.js.*404/);
+
+      // Corrige server.mjs para servir /app.js com 200
+      await writeFile(
+        join(tmpProj, "server.mjs"),
+        [
+          "import http from 'node:http';",
+          "const port = Number(process.env.PORT || 4299);",
+          "http.createServer((req, res) => {",
+          "  if (req.url === '/') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<!DOCTYPE html><html><body><h1>Smoke OK</h1></body></html>'); return; }",
+          "  if (req.url === '/style.css') { res.writeHead(200, { 'Content-Type': 'text/css' }); res.end('body { color: #fff; }'); return; }",
+          "  if (req.url === '/app.js') { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end('console.info(\"ok\");'); return; }",
+          "  res.writeHead(404); res.end('not found');",
+          "}).listen(port, '127.0.0.1', () => console.log(`Listening on http://127.0.0.1:${port}`));"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const smokePass = await verifyWorkspaceProject(tmpProj);
+      assert.equal(smokePass.allPassed, true);
+      const smokeRunPass = smokePass.checks.find((c) => c.command === "runtime-http-smoke");
+      assert.ok(smokeRunPass?.ok);
+    } finally {
+      await rm(tmpProj, { recursive: true, force: true });
+    }
+  });
+
+  it("Onda 2: selectDesignSystem casa automaticamente por domínio do app com anti-repetição", async () => {
+    resetDesignSystemsCacheForTests();
+    const catalog = await listDesignSystems();
+
+    const finPick = selectDesignSystem(catalog, {
+      modeOrId: "auto",
+      theme: "dark",
+      queryText: "Cria um app de controle de gastos e faturas do mês"
+    });
+    assert.equal(finPick.reason, "matched");
+    assert.equal(finPick.entry?.id, "fey-bloomberg-terminal");
+
+    const kanbanPick = selectDesignSystem(catalog, {
+      modeOrId: "auto",
+      theme: "dark",
+      queryText: "Cria um kanban de tarefas e produtividade"
+    });
+    assert.equal(kanbanPick.reason, "matched");
+    assert.equal(kanbanPick.entry?.id, "dovetail-dark-command-center");
+
+    // Dois apps editoriais consecutivos devem rotacionar (anti-repetição!)
+    resetDesignSystemsCacheForTests();
+    const ed1 = selectDesignSystem(catalog, {
+      modeOrId: "auto",
+      theme: "dark",
+      queryText: "Cria um app de controle de leitura de livros"
+    });
+    const ed2 = selectDesignSystem(catalog, {
+      modeOrId: "auto",
+      theme: "dark",
+      queryText: "Cria um diário de hábitos e saúde"
+    });
+    assert.equal(ed1.entry?.id, "angellist-midnight-violet");
+    assert.equal(ed2.entry?.id, "tomorro-lush-greenhouse");
   });
 
   it("seleciona Design System por ID explícito, matching de cor/vibe, anti-repetição e light_fallback honesto", async () => {

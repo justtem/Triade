@@ -1,14 +1,17 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { access, readFile, realpath } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 
 import type { BuilderCommandRun } from "../shared/debate-types.js";
+import { extractLoopbackPortFromText } from "./dev-server-manager.js";
 import { inspectLinkedFolder } from "./project-rag.js";
 import { auditWorkspaceSecurity } from "./workspace-security-audit.js";
 
 const INSTALL_TIMEOUT_MS = 120_000;
 const CHECK_TIMEOUT_MS = 60_000;
 const DIAGNOSTIC_TIMEOUT_MS = 15_000;
+const SMOKE_TEST_TIMEOUT_MS = 8_500;
 const MAX_OUTPUT_CHARS = 12_000;
 
 export type AllowedVerificationAction =
@@ -359,9 +362,63 @@ async function runNodeTestTimeoutDiagnostic(
   return out;
 }
 
+function checkJsFileSyntax(absPath: string, timeoutMs = 6_000): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolveCheck) => {
+    execFile(
+      process.execPath,
+      ["--check", absPath],
+      { windowsHide: true, shell: false, timeout: timeoutMs, maxBuffer: 512 * 1024 },
+      (error, stdout, stderr) => {
+        if (!error) {
+          resolveCheck({ ok: true });
+          return;
+        }
+        const detail = [stderr, stdout, error.message].filter(Boolean).join("\n").trim();
+        resolveCheck({ ok: false, error: detail.slice(0, 600) });
+      }
+    );
+  });
+}
+
+function allocateFreeLoopbackPort(): Promise<number> {
+  return new Promise((resolvePort, rejectPort) => {
+    const srv = createNetServer();
+    srv.unref();
+    srv.on("error", rejectPort);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => {
+        if (port > 0) resolvePort(port);
+        else rejectPort(new Error("Não foi possível alocar porta loopback livre."));
+      });
+    });
+  });
+}
+
+async function fetchWithShortTimeout(
+  url: string,
+  timeoutMs = 1_500
+): Promise<{ ok: boolean; status: number; contentType: string; bodyLen: number }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method: "GET", signal: ctrl.signal });
+    const text = await res.text();
+    return {
+      ok: res.ok,
+      status: res.status,
+      contentType: res.headers.get("content-type") || "",
+      bodyLen: text.length
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function auditFrontendLocalAssets(
   rootReal: string
-): Promise<BuilderCommandRun | null> {
+): Promise<{ checkRun: BuilderCommandRun; assetPaths: string[] } | null> {
   const startedAt = Date.now();
   const htmlPath = join(rootReal, "public", "index.html");
   if (!(await pathExists(htmlPath))) {
@@ -375,7 +432,7 @@ async function auditFrontendLocalAssets(
     return null;
   }
 
-  const assetRefs: string[] = [];
+  const assetRefs: Array<{ relPath: string; urlPath: string }> = [];
   const patterns = [
     /<link\b[^>]*\bhref=["']([^"']+\.css)(?:\?[^"']*)?["'][^>]*>/gi,
     /<script\b[^>]*\bsrc=["']([^"']+\.(?:js|mjs))(?:\?[^"']*)?["'][^>]*>/gi
@@ -388,14 +445,18 @@ async function auditFrontendLocalAssets(
       const cleanHref = rawHref.replace(/^\/+/, "").replace(/^\.\//, "");
       if (!cleanHref || cleanHref.includes("..")) continue;
       const relPath = cleanHref.startsWith("public/") ? cleanHref : `public/${cleanHref}`;
-      if (!assetRefs.includes(relPath)) assetRefs.push(relPath);
+      const urlPath = `/${cleanHref.replace(/^public\//, "")}`;
+      if (!assetRefs.some((a) => a.relPath === relPath)) {
+        assetRefs.push({ relPath, urlPath });
+      }
     }
   }
 
   if (assetRefs.length === 0) return null;
 
   const issues: string[] = [];
-  for (const relPath of assetRefs) {
+  for (const asset of assetRefs) {
+    const relPath = asset.relPath;
     const absPath = join(rootReal, ...relPath.split("/"));
     if (!(await pathExists(absPath))) {
       issues.push(
@@ -421,6 +482,13 @@ async function auditFrontendLocalAssets(
             `CSS inválido ou truncado em \`${relPath}\` (chaves {=${openBraces}, }=${closeBraces}). Entregue \`${relPath}\` completo e válido.`
           );
         }
+      } else if (/\.(?:js|mjs)$/i.test(relPath)) {
+        const syntax = await checkJsFileSyntax(absPath);
+        if (!syntax.ok) {
+          issues.push(
+            `Erro de sintaxe JavaScript em \`${relPath}\` (node --check falhou): ${syntax.error || "SyntaxError"}. Corrija \`${relPath}\` completamente.`
+          );
+        }
       }
     } catch {
       issues.push(`Não foi possível ler \`${relPath}\`.`);
@@ -428,30 +496,235 @@ async function auditFrontendLocalAssets(
   }
 
   const durationMs = Math.max(1, Date.now() - startedAt);
+  const urlPaths = assetRefs.map((a) => a.urlPath);
   if (issues.length === 0) {
     return {
-      label: "Assets Frontend",
-      command: "frontend-assets-check",
-      exitCode: 0,
-      ok: true,
-      durationMs,
-      output: `OK: ${assetRefs.length} asset(s) verificado(s) (${assetRefs.join(", ")}).`
+      assetPaths: urlPaths,
+      checkRun: {
+        label: "Assets Frontend",
+        command: "frontend-assets-check",
+        exitCode: 0,
+        ok: true,
+        durationMs,
+        output: `OK: ${assetRefs.length} asset(s) + sintaxe JS validados (${assetRefs.map((a) => a.relPath).join(", ")}).`
+      }
     };
   }
 
   return {
-    label: "Assets Frontend",
-    command: "frontend-assets-check",
-    exitCode: 1,
-    ok: false,
-    durationMs,
-    output: [
-      `Falha na integridade de assets frontend (${issues.length} problema(s)):`,
-      ...issues.map((i) => `- ${i}`),
-      "",
-      "Referências relevantes: public/index.html, src/server.ts"
-    ].join("\n")
+    assetPaths: urlPaths,
+    checkRun: {
+      label: "Assets Frontend",
+      command: "frontend-assets-check",
+      exitCode: 1,
+      ok: false,
+      durationMs,
+      output: [
+        `Falha na integridade de assets frontend (${issues.length} problema(s)):`,
+        ...issues.map((i) => `- ${i}`),
+        "",
+        "Referências relevantes: public/index.html, src/server.ts"
+      ].join("\n")
+    }
   };
+}
+
+/**
+ * Smoke-Test HTTP real (Onda 2): sobe o app temporariamente em porta loopback livre,
+ * verifica GET / (200 text/html) e todos os assets locais (/style.css, /app.js = 200 OK),
+ * encerrando a árvore de processos imediatamente ao finalizar.
+ */
+async function runRuntimeHttpSmokeTest(
+  rootReal: string,
+  assetUrlPaths: string[],
+  signal?: AbortSignal
+): Promise<BuilderCommandRun | null> {
+  const pkgPath = join(rootReal, "package.json");
+  if (!(await pathExists(pkgPath))) return null;
+
+  let pkg: { scripts?: Record<string, unknown> } = {};
+  try {
+    pkg = JSON.parse(await readFile(pkgPath, "utf8")) as typeof pkg;
+  } catch {
+    return null;
+  }
+
+  const scripts = pkg.scripts ?? {};
+  const scriptName =
+    typeof scripts.dev === "string" && scripts.dev.trim()
+      ? "dev"
+      : typeof scripts.start === "string" && scripts.start.trim()
+        ? "start"
+        : null;
+  if (!scriptName) return null;
+
+  const startedAt = Date.now();
+  let freePort: number;
+  try {
+    freePort = await allocateFreeLoopbackPort();
+  } catch {
+    return null;
+  }
+
+  const npmBin = npmExecutable();
+  const isWin = process.platform === "win32";
+  const execBin = isWin ? process.env.ComSpec || "cmd.exe" : npmBin;
+  const execArgs = isWin
+    ? ["/d", "/s", "/c", npmBin, "run", scriptName]
+    : ["run", scriptName];
+
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOST: "127.0.0.1",
+    PORT: String(freePort),
+    NO_COLOR: "1"
+  };
+  delete childEnv.NODE_TEST_CONTEXT;
+
+  const child = spawn(execBin, execArgs, {
+    cwd: rootReal,
+    shell: false,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: childEnv
+  });
+
+  const logs: string[] = [];
+  let detectedPort: number | null = null;
+  let exitedEarly = false;
+  let earlyExitCode: number | null = null;
+
+  const collect = (buf: Buffer) => {
+    const clean = stripAnsi(buf.toString("utf8"));
+    for (const line of clean.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      logs.push(t);
+      if (logs.length > 30) logs.shift();
+      if (!detectedPort) {
+        const found = extractLoopbackPortFromText(t);
+        if (found) detectedPort = found;
+      }
+    }
+  };
+  child.stdout?.on("data", collect);
+  child.stderr?.on("data", collect);
+  child.once("exit", (code) => {
+    exitedEarly = true;
+    earlyExitCode = code;
+  });
+
+  const onAbort = () => {
+    void killChildProcessTree(child.pid);
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    const deadline = Date.now() + SMOKE_TEST_TIMEOUT_MS;
+    let activePort: number | null = null;
+    let rootRes: { ok: boolean; status: number; contentType: string; bodyLen: number } | null = null;
+
+    while (Date.now() < deadline && !signal?.aborted && !exitedEarly) {
+      const portsToTry = Array.from(
+        new Set([detectedPort, freePort].filter((p): p is number => Boolean(p)))
+      );
+      for (const p of portsToTry) {
+        try {
+          rootRes = await fetchWithShortTimeout(`http://127.0.0.1:${p}/`, 800);
+          activePort = p;
+          break;
+        } catch {
+          // Servidor ainda iniciando
+        }
+      }
+      if (activePort && rootRes) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    if (signal?.aborted) {
+      throw new Error("Verificação interrompida pelo usuário.");
+    }
+
+    const durationMs = Math.max(1, Date.now() - startedAt);
+    if (!activePort || !rootRes) {
+      const reason = exitedEarly
+        ? `O servidor encerrou inesperadamente ao iniciar (exit ${earlyExitCode ?? 1}).`
+        : `O servidor não respondeu em 127.0.0.1:${freePort} dentro de ${(SMOKE_TEST_TIMEOUT_MS / 1000).toFixed(1)}s.`;
+      return {
+        label: "Smoke-Test HTTP",
+        command: "runtime-http-smoke",
+        exitCode: 1,
+        ok: false,
+        durationMs,
+        output: trimCommandOutput(
+          [
+            reason,
+            "Verifique src/index.ts e src/server.ts (use process.env.PORT e bind em 127.0.0.1).",
+            logs.length > 0 ? `\nLogs do servidor:\n${logs.join("\n")}` : ""
+          ]
+            .filter(Boolean)
+            .join("\n")
+        )
+      };
+    }
+
+    const failures: string[] = [];
+    if (rootRes.status !== 200 || !/text\/html/i.test(rootRes.contentType) || rootRes.bodyLen < 30) {
+      failures.push(
+        `GET / retornou HTTP ${rootRes.status} (${rootRes.contentType || "sem content-type"}, ${rootRes.bodyLen} bytes) — esperado HTTP 200 text/html servindo public/index.html via resolve(process.cwd(), "public").`
+      );
+    }
+
+    const checkedPaths: string[] = ["/"];
+    for (const urlPath of assetUrlPaths.slice(0, 8)) {
+      checkedPaths.push(urlPath);
+      try {
+        const assetRes = await fetchWithShortTimeout(`http://127.0.0.1:${activePort}${urlPath}`, 1_500);
+        if (assetRes.status !== 200 || assetRes.bodyLen < 10) {
+          failures.push(
+            `GET ${urlPath} retornou HTTP ${assetRes.status} (${assetRes.bodyLen} bytes) — esperado HTTP 200 com conteúdo válido.`
+          );
+        }
+      } catch (err) {
+        failures.push(
+          `GET ${urlPath} falhou: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      return {
+        label: "Smoke-Test HTTP",
+        command: "runtime-http-smoke",
+        exitCode: 1,
+        ok: false,
+        durationMs,
+        output: trimCommandOutput(
+          [
+            `Smoke-Test HTTP em 127.0.0.1:${activePort} encontrou ${failures.length} falha(s):`,
+            ...failures.map((f) => `- ${f}`),
+            "",
+            "Referências relevantes: src/server.ts, public/index.html",
+            logs.length > 0 ? `\nLogs:\n${logs.slice(-10).join("\n")}` : ""
+          ]
+            .filter(Boolean)
+            .join("\n")
+        )
+      };
+    }
+
+    return {
+      label: "Smoke-Test HTTP",
+      command: "runtime-http-smoke",
+      exitCode: 0,
+      ok: true,
+      durationMs,
+      output: `OK: ${checkedPaths.join(", ")} responderam HTTP 200 em 127.0.0.1:${activePort}.`
+    };
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    await killChildProcessTree(child.pid);
+  }
 }
 
 export async function verifyWorkspaceProject(
@@ -514,18 +787,36 @@ export async function verifyWorkspaceProject(
     }
   }
 
-  // Checa integridade de assets locais citados em public/index.html (ex.: /app.js, /style.css):
-  // impede "falso verde" quando o app compila mas public/app.js está faltando ou style.css foi truncado!
+  // Checa integridade de assets locais citados em public/index.html (ex.: /app.js, /style.css) + sintaxe JS (`node --check`):
+  // impede "falso verde" quando o app compila mas public/app.js está faltando, tem SyntaxError ou style.css foi truncado!
   const frontendAudit = await auditFrontendLocalAssets(rootReal);
   if (frontendAudit) {
-    checks.push(frontendAudit);
-    if (!frontendAudit.ok) {
+    checks.push(frontendAudit.checkRun);
+    if (!frontendAudit.checkRun.ok) {
       return {
         allPassed: false,
         ranAny: true,
         checks,
         summary: `Assets frontend ausentes ou quebrados (verifique public/app.js / public/style.css).`
       };
+    }
+
+    // Smoke-Test HTTP real em porta isolada (GET /, /style.css, /app.js = HTTP 200)
+    const smokeRun = await runRuntimeHttpSmokeTest(
+      rootReal,
+      frontendAudit.assetPaths,
+      options.signal
+    );
+    if (smokeRun) {
+      checks.push(smokeRun);
+      if (!smokeRun.ok) {
+        return {
+          allPassed: false,
+          ranAny: true,
+          checks,
+          summary: `Smoke-Test HTTP falhou (${smokeRun.output.split("\n")[0] || "verifique src/server.ts"}).`
+        };
+      }
     }
   }
 
