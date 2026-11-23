@@ -10,6 +10,7 @@ import { getProvider } from "../providers/registry.js";
 import { emitDebateUpdated } from "../debate/stream-hub.js";
 import { ANTI_INJECTION_SYSTEM_RULE } from "../security/prompt-defense.js";
 import type {
+  AIPlatform,
   AutoPlatform,
   BuilderBackupInfo,
   BuilderCommandRun,
@@ -22,6 +23,7 @@ import { verifyWorkspaceProject } from "./workspace-verifier.js";
 import {
   applyWorkspaceChanges,
   extractWorkspaceFilesFromMarkdown,
+  listWorkspaceSourceFiles,
   previewWorkspaceChanges,
   resolveSafeWorkspacePath,
   undoWorkspaceBackup,
@@ -30,7 +32,7 @@ import {
 
 const MAX_GENERATE_FILES_PER_RUN = 6;
 const MAX_FIX_ATTEMPTS = 3;
-const MAX_FIX_CONTEXT_CHARS = 24_000;
+const MAX_FIX_CONTEXT_CHARS = 32_000;
 
 const activeBuilderControllers = new Map<string, AbortController>();
 const autoBuilderAttempted = new Set<string>();
@@ -88,11 +90,23 @@ async function resolveProjectFolderForSession(
 
 function collectTurnMarkdownSources(
   session: DebateSession,
-  turn: ChatTurn
-): { primaryMarkdown: string; allMarkdown: string } {
+  turn: ChatTurn,
+  sourcePlatform?: AIPlatform
+): { primaryMarkdown: string; allMarkdown: string; sourceLabel?: string } {
   const turnResponses = (session.responses ?? []).filter(
     (r) => r.turnId === turn.id || (turn.index === 1 && !r.turnId)
   );
+
+  if (sourcePlatform) {
+    const specific = turnResponses.filter((r) => r.platform === sourcePlatform).at(-1);
+    const content = specific?.content?.trim() || "";
+    return {
+      primaryMarkdown: content,
+      allMarkdown: content,
+      sourceLabel: sourcePlatform
+    };
+  }
+
   const synth = turnResponses.find((r) => r.stage === "synthesis");
   const winnerPlat = turn.verdict?.winner && turn.verdict.winner !== "tie"
     ? turn.verdict.winner
@@ -235,7 +249,8 @@ function mergeExtractedFiles(
  */
 export async function extractBuilderFilesForTurn(
   debateId: string,
-  turnId?: string
+  turnId?: string,
+  options: { sourcePlatform?: AIPlatform } = {}
 ): Promise<DebateSession> {
   const session = await readDebateSessionById(debateId);
   if (!session) throw new Error("Conversa não encontrada.");
@@ -243,10 +258,14 @@ export async function extractBuilderFilesForTurn(
   if (!turn) throw new Error("Turno não encontrado.");
 
   const proj = await resolveProjectFolderForSession(session);
-  const { primaryMarkdown, allMarkdown } = collectTurnMarkdownSources(session, turn);
+  const { primaryMarkdown, allMarkdown, sourceLabel } = collectTurnMarkdownSources(
+    session,
+    turn,
+    options.sourcePlatform
+  );
 
   let extraction = extractWorkspaceFilesFromMarkdown(primaryMarkdown);
-  if (extraction.files.length === 0 && allMarkdown !== primaryMarkdown) {
+  if (!options.sourcePlatform && extraction.files.length === 0 && allMarkdown !== primaryMarkdown) {
     extraction = extractWorkspaceFilesFromMarkdown(allMarkdown);
   }
 
@@ -255,13 +274,14 @@ export async function extractBuilderFilesForTurn(
     (f) => f.action === "create" || f.action === "overwrite"
   ).length;
   const incompleteCount = preview.filter((f) => f.incomplete).length;
+  const sourceSuffix = sourceLabel ? ` (fonte: ${sourceLabel})` : "";
 
   const summary =
     preview.length === 0
       ? extraction.missingPaths.length > 0
         ? `Plano cita ${extraction.missingPaths.length} arquivo(s) ainda sem código completo. Clique em "Gerar arquivos restantes".`
-        : "Nenhum bloco de arquivo com caminho relativo foi detectado nesta resposta."
-      : `${preview.length} arquivo(s) detectado(s) (${actionableCount} pronto(s) para gravar${
+        : `Nenhum bloco de arquivo com caminho relativo foi detectado nesta resposta${sourceSuffix}.`
+      : `${preview.length} arquivo(s) detectado(s)${sourceSuffix} (${actionableCount} pronto(s) para gravar${
           incompleteCount > 0 ? `, ${incompleteCount} resumido(s)` : ""
         }${
           extraction.missingPaths.length > 0
@@ -426,35 +446,69 @@ export async function generateRemainingBuilderFiles(
   }
 }
 
+function isPrioritizedSourceFile(relPath: string): boolean {
+  const lower = relPath.toLowerCase();
+  return (
+    /\.(?:ts|tsx|js|jsx|mjs|cjs|json|css|html|py|go|rs|sql|yml|yaml)$/.test(lower) &&
+    !lower.endsWith(".d.ts")
+  );
+}
+
 async function readRelevantFilesForFix(
   folderPath: string,
   errorOutput: string,
-  fallbackPaths: string[]
+  fallbackPaths: string[],
+  workspaceTree: string[]
 ): Promise<Array<{ path: string; content: string }>> {
-  const cited = new Set<string>();
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const addCandidate = (p: string) => {
+    const clean = p.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    if (!clean || clean.startsWith("node_modules/") || seen.has(clean)) return;
+    seen.add(clean);
+    ordered.push(clean);
+  };
+
+  // 1. Arquivos citados diretamente no erro/stack trace (inclusive caminhos Windows ou file:///)
+  const normalizedErr = errorOutput.replace(/\\/g, "/");
+  for (const treePath of workspaceTree) {
+    if (normalizedErr.includes(treePath)) {
+      addCandidate(treePath);
+    }
+  }
   for (const m of errorOutput.matchAll(
     /([a-zA-Z0-9._-]+(?:[\\/][a-zA-Z0-9._-]+)+\.(?:ts|tsx|js|jsx|mjs|cjs|json|css|html))/g
   )) {
-    const normalized = (m[1] ?? "").replace(/\\/g, "/");
-    if (normalized && !normalized.startsWith("node_modules/")) {
-      cited.add(normalized);
-    }
+    addCandidate(m[1] ?? "");
   }
+
+  // 2. Arquivos de configuração e recém-alterados
+  addCandidate("package.json");
+  addCandidate("tsconfig.json");
   for (const p of fallbackPaths) {
-    cited.add(p);
+    addCandidate(p);
   }
-  cited.add("package.json");
-  cited.add("tsconfig.json");
+
+  // 3. Demais arquivos de teste e código do projeto (para a IA nunca corrigir "no escuro")
+  const extraTestFiles = workspaceTree.filter(
+    (p) => isPrioritizedSourceFile(p) && /(?:^|\/)(?:tests?|__tests__|spec)\//i.test(p)
+  );
+  const extraSrcFiles = workspaceTree.filter(
+    (p) => isPrioritizedSourceFile(p) && !extraTestFiles.includes(p)
+  );
+  for (const p of [...extraTestFiles, ...extraSrcFiles]) {
+    addCandidate(p);
+  }
 
   const loaded: Array<{ path: string; content: string }> = [];
   let totalChars = 0;
 
-  for (const relPath of Array.from(cited).slice(0, 10)) {
+  for (const relPath of ordered.slice(0, 18)) {
     if (totalChars >= MAX_FIX_CONTEXT_CHARS) break;
     try {
       const safe = await resolveSafeWorkspacePath(folderPath, relPath);
       const raw = await readFile(safe.absPath, "utf8");
-      const trimmed = raw.slice(0, Math.min(5_000, MAX_FIX_CONTEXT_CHARS - totalChars));
+      const trimmed = raw.slice(0, Math.min(5_500, MAX_FIX_CONTEXT_CHARS - totalChars));
       totalChars += trimmed.length;
       loaded.push({ path: safe.relPath, content: trimmed });
     } catch {
@@ -493,6 +547,8 @@ async function runVerificationAndAutoFixLoop(params: {
   );
   let lastChecks: BuilderCommandRun[] = [];
   let fixAttempt = 0;
+  const attemptHistory: string[] = [];
+  const deletedPathsRun = new Set<string>();
 
   while (true) {
     if (signal.aborted) {
@@ -573,7 +629,7 @@ async function runVerificationAndAutoFixLoop(params: {
     fixAttempt++;
     const failedCheck = lastChecks.find((c) => !c.ok) ?? lastChecks.at(-1);
     const errorLog = failedCheck
-      ? `Comando: ${failedCheck.command} (exit ${failedCheck.exitCode})\n\n${failedCheck.output}`
+      ? `Comando: ${failedCheck.command} (exit ${failedCheck.exitCode}${failedCheck.timedOut ? " — TIMEOUT" : ""})\n\n${failedCheck.output}`
       : verification.summary;
 
     await patchTurnBuilderState(debateId, turnId, (prev) => ({
@@ -587,30 +643,48 @@ async function runVerificationAndAutoFixLoop(params: {
       updatedAt: new Date().toISOString()
     }));
 
+    const workspaceTree = await listWorkspaceSourceFiles(folderPath, 120);
     const relevantFiles = await readRelevantFilesForFix(
       folderPath,
       errorLog,
-      currentWrittenPaths
+      currentWrittenPaths,
+      workspaceTree
     );
 
     const fixSystemPrompt = [
       "Você é o engenheiro de autocorreção do AI Council.",
-      "Analise o erro real de compilação/teste abaixo e corrija APENAS os arquivos necessários.",
-      "Para cada arquivo corrigido, entregue o caminho relativo exato (### `caminho/do/arquivo`) seguido do arquivo 100% COMPLETO em um bloco Markdown (sem abreviações).",
-      "Não invente comandos de shell; corrija apenas o código/configuração.",
+      "Analise o erro real de compilação/teste, o diagnóstico de timeout (se houver) e a árvore real de arquivos da pasta; corrija APENAS os arquivos necessários.",
+      "Para criar ou alterar um arquivo, entregue o caminho relativo exato (### `caminho/do/arquivo`) seguido do arquivo 100% COMPLETO em um bloco Markdown (sem abreviações).",
+      "Se encontrar arquivo compilado antigo/duplicado/obsoleto atrapalhando os testes (ex.: `tests/foo.test.js` sobrando ao lado de `tests/foo.test.ts`), você pode removê-lo com segurança escrevendo uma linha fora de blocos de código no formato: DELETE: `caminho/do/arquivo`.",
+      "Em projetos Node.js com testes HTTP (`node --test` + `fetch`), sempre encerre o servidor no `finally` com `server.closeAllConnections?.()` e `server.close()` (ou aguarde fechar) para evitar travamento por keep-alive/handles abertos, e prefira glob explícito no script `test` (ex.: `tests/*.test.ts`) quando houver TypeScript.",
+      "Não invente comandos de shell; corrija apenas o código/configuração ou use `DELETE:` para limpar arquivos duplicados.",
       projectInstructions ? `Instruções do Projeto: ${projectInstructions.slice(0, 1000)}` : "",
       ANTI_INJECTION_SYSTEM_RULE
     ]
       .filter(Boolean)
       .join(" ");
 
+    const historySection =
+      attemptHistory.length > 0
+        ? `\nHistórico de tentativas anteriores nesta execução (NÃO repita a mesma alteração que já falhou; investigue outra causa raiz):\n${attemptHistory.map((h) => `- ${h}`).join("\n")}`
+        : "";
+
+    const treeSection =
+      workspaceTree.length > 0
+        ? `\nÁrvore real de arquivos na pasta (${workspaceTree.length} arquivo(s)):\n\`\`\`\n${workspaceTree.join("\n")}\n\`\`\``
+        : "";
+
     const fixUserPrompt = [
       `Objetivo original:\n${userGoal.slice(0, 2000)}`,
-      `\nErro do terminal (tentativa ${fixAttempt}/${MAX_FIX_ATTEMPTS}):\n\`\`\`\n${errorLog.slice(0, 7000)}\n\`\`\``,
+      treeSection,
+      historySection,
+      `\nErro do terminal (tentativa ${fixAttempt}/${MAX_FIX_ATTEMPTS}):\n\`\`\`\n${errorLog.slice(0, 9000)}\n\`\`\``,
       `\nArquivos atuais da pasta:\n${relevantFiles
         .map((f) => `### \`${f.path}\`\n\`\`\`\n${f.content}\n\`\`\``)
         .join("\n\n")}`
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     const fixRes = await callBuilderModel({
       systemPrompt: fixSystemPrompt,
@@ -620,7 +694,7 @@ async function runVerificationAndAutoFixLoop(params: {
     });
 
     const patchExtraction = extractWorkspaceFilesFromMarkdown(fixRes.content);
-    if (patchExtraction.files.length === 0) {
+    if (patchExtraction.files.length === 0 && patchExtraction.deletes.length === 0) {
       const noPatch = await patchTurnBuilderState(debateId, turnId, (prev) => ({
         ...(prev ?? { enabled: true, autoApply: false, files: [], status: "failed", updatedAt: "" }),
         status: "failed",
@@ -636,31 +710,74 @@ async function runVerificationAndAutoFixLoop(params: {
       return noPatch;
     }
 
-    const applyPatch = await applyWorkspaceChanges(folderPath, patchExtraction.files);
+    const applyPatch = await applyWorkspaceChanges(folderPath, patchExtraction.files, {
+      deletePaths: patchExtraction.deletes
+    });
+
+    const writtenList = applyPatch.backup?.filesWritten ?? [];
+    const deletedList = applyPatch.backup?.filesDeleted ?? [];
     if (applyPatch.backup) {
       latestBackup = applyPatch.backup;
       currentWrittenPaths = Array.from(
-        new Set([...currentWrittenPaths, ...applyPatch.backup.filesWritten])
+        new Set([
+          ...currentWrittenPaths.filter((p) => !deletedList.includes(p)),
+          ...writtenList
+        ])
       );
-      if (applyPatch.backup.filesWritten.some((p) => p.toLowerCase() === "package.json")) {
+      for (const delPath of deletedList) {
+        deletedPathsRun.add(delPath);
+      }
+      if (writtenList.some((p) => p.toLowerCase() === "package.json")) {
         packageJsonChanged = true;
       }
     }
 
-    await patchTurnBuilderState(debateId, turnId, (prev) => {
-      const merged = mergeExtractedFiles(prev?.files ?? [], patchExtraction.files);
-      return {
-        ...(prev ?? { enabled: true, autoApply: false, files: [], status: "verifying", updatedAt: "" }),
-        status: "verifying",
-        summary: `Correção ${fixAttempt}/${MAX_FIX_ATTEMPTS} aplicada (${applyPatch.backup?.filesWritten.length ?? 0} arquivo(s)). Re-testando...`,
-        files: applyPatch.applied.length > 0 ? applyPatch.applied : merged.map((m) => ({ ...m, action: "overwrite" })),
-        lastBackup: latestBackup ?? prev?.lastBackup,
-        checks: lastChecks,
-        fixAttempt,
-        maxFixAttempts: MAX_FIX_ATTEMPTS,
-        updatedAt: new Date().toISOString()
-      };
-    });
+    const compactErrHint = (failedCheck?.output || verification.summary)
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => /timeout|assertionerror|error|✖|fail|ts\d{4}/i.test(l))
+      .slice(0, 3)
+      .join(" | ")
+      .slice(0, 260);
+    attemptHistory.push(
+      `Tentativa ${fixAttempt}: erro "${failedCheck?.command || "check"}" (${compactErrHint || verification.summary}) → gravou [${writtenList.join(", ") || "nenhum"}]${deletedList.length > 0 ? `, removeu [${deletedList.join(", ")}]` : ""}.`
+    );
+
+    // Recalcula preview consolidado contra o disco para preservar todos os arquivos do turno
+    // sem deixar arquivos já gravados marcados erroneamente como pendentes.
+    const latestSession = await readDebateSessionById(debateId);
+    const prevTurnFiles = latestSession
+      ? (resolveTurn(latestSession, turnId)?.builderState?.files ?? [])
+      : [];
+    const nonDeletedPrev = prevTurnFiles.filter(
+      (f) => f.action !== "delete" && !deletedPathsRun.has(f.path)
+    );
+    const mergedForPreview = mergeExtractedFiles(nonDeletedPrev, patchExtraction.files).filter(
+      (f) => !deletedPathsRun.has(f.path)
+    );
+    const refreshedPreview = await previewWorkspaceChanges(folderPath, mergedForPreview);
+    const deletedEntries: BuilderFileEntry[] = Array.from(deletedPathsRun).map((delPath) => ({
+      path: delPath,
+      content: "",
+      action: "delete"
+    }));
+    const consolidatedFiles = [...refreshedPreview, ...deletedEntries];
+
+    const changedParts: string[] = [];
+    if (writtenList.length > 0) changedParts.push(`${writtenList.length} gravado(s)`);
+    if (deletedList.length > 0) changedParts.push(`${deletedList.length} removido(s)`);
+
+    await patchTurnBuilderState(debateId, turnId, (prev) => ({
+      ...(prev ?? { enabled: true, autoApply: false, files: [], status: "verifying", updatedAt: "" }),
+      status: "verifying",
+      summary: `Correção ${fixAttempt}/${MAX_FIX_ATTEMPTS} aplicada (${changedParts.join(", ") || "sem alterações"}). Re-testando...`,
+      files: consolidatedFiles,
+      lastBackup: latestBackup ?? prev?.lastBackup,
+      checks: lastChecks,
+      fixAttempt,
+      maxFixAttempts: MAX_FIX_ATTEMPTS,
+      updatedAt: new Date().toISOString()
+    }));
   }
 }
 

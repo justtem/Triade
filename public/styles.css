@@ -7515,6 +7515,11 @@ a {
   font-weight: 600;
 }
 
+.composer-mode-btn[data-composer-mode="auto"].is-active {
+  border-color: var(--color-sky-pulse);
+  color: var(--color-sky-pulse);
+}
+
 .composer-mode-btn[data-composer-mode="builder"].is-active {
   border-color: var(--color-sky-pulse);
   color: var(--color-sky-pulse);
@@ -7868,9 +7873,15 @@ a {
   color: var(--color-graphite);
 }
 
-.builder-file-badge.is-blocked {
+.builder-file-badge.is-blocked,
+.builder-file-badge.is-delete {
   border-color: var(--color-rose-quartz);
   color: var(--color-rose-quartz);
+}
+
+.builder-file-item.is-delete .builder-file-path {
+  text-decoration: line-through;
+  color: var(--color-graphite);
 }
 
 .builder-file-badge.is-warn {
@@ -8039,6 +8050,600 @@ a {
   word-break: break-word;
   max-height: 240px;
   overflow-y: auto;
+}
+
+/* ==========================================================================
+   CONSTRUTOR AUTOMÁTICO — DICA "!" ESTILO JOGO, BOTÃO REATIVO & FONTE CONSELHO
+   ========================================================================== */
+
+.folder-info-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.project-folder-info-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--color-sky-pulse);
+  background: var(--color-ink-black);
+  color: var(--color-sky-pulse);
+  font-family: var(--font-jetbrains-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.project-folder-info-btn:hover,
+.project-folder-info-btn[aria-expanded="true"] {
+  background: var(--color-sky-pulse);
+  color: var(--color-ink-black);
+}
+
+.project-folder-info-btn.is-unread {
+  border-color: var(--color-saffron-whisper);
+  background: var(--color-saffron-whisper);
+  color: var(--color-ink-black);
+}
+
+.folder-info-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  width: min(440px, 88vw);
+  padding: 14px 16px;
+  background: var(--color-obsidian);
+  border: 1.5px solid var(--color-sky-pulse);
+  border-radius: var(--radius-cards);
+  box-shadow: var(--shadow-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 60;
+}
+
+.folder-info-popover[hidden] {
+  display: none;
+}
+
+.folder-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.folder-info-path {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 11px;
+  color: var(--color-graphite);
+}
+
+.folder-info-rules {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.48;
+  color: var(--color-bone);
+}
+
+.folder-info-rules li {
+  padding-left: 12px;
+  border-left: 2px solid var(--color-charcoal);
+}
+
+.folder-info-rules strong {
+  color: var(--color-pure-white);
+}
+
+.folder-info-rules em {
+  font-style: normal;
+  color: var(--color-sky-pulse);
+}
+
+.folder-info-rules code {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--color-ink-black);
+  color: var(--color-pale-lavender);
+}
+
+/* ==========================================================================
+   TELA INICIAL GUIADA POR OBJETIVO (3 CARTÕES DIRETOS)
+   ========================================================================== */
+
+.zero-goals-grid {
+  width: 100%;
+  max-width: 780px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.zero-goal-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 15px;
+  text-align: left;
+  background: var(--color-obsidian);
+  border: 1px solid var(--color-charcoal);
+  border-radius: var(--radius-cards);
+  color: var(--color-pure-white);
+  transition: border-color 0.16s ease, transform 0.16s ease, background-color 0.16s ease;
+}
+
+button.zero-goal-card {
+  cursor: pointer;
+}
+
+button.zero-goal-card:hover {
+  transform: translateY(-2px);
+  background: var(--color-slate);
+}
+
+.zero-goal-card.is-accent-sky:hover {
+  border-color: var(--color-sky-pulse);
+}
+
+.zero-goal-card.is-accent-iris:hover {
+  border-color: var(--color-iris-glow);
+}
+
+.zero-goal-card.is-accent-saffron:hover {
+  border-color: var(--color-saffron-whisper);
+}
+
+.zero-goal-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.zero-goal-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-buttons);
+  border: 1px solid var(--color-charcoal);
+  background: var(--color-ink-black);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.zero-goal-card.is-accent-sky .zero-goal-icon {
+  color: var(--color-sky-pulse);
+  border-color: var(--color-sky-pulse);
+}
+
+.zero-goal-card.is-accent-iris .zero-goal-icon {
+  color: var(--color-iris-glow);
+  border-color: var(--color-iris-glow);
+}
+
+.zero-goal-card.is-accent-saffron .zero-goal-icon {
+  color: var(--color-saffron-whisper);
+  border-color: var(--color-saffron-whisper);
+}
+
+.zero-goal-eyebrow {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-graphite);
+}
+
+.zero-goal-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-pure-white);
+  line-height: 1.3;
+}
+
+.zero-goal-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-graphite);
+  margin: 0;
+}
+
+.zero-goal-projects {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.zero-goal-proj-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: var(--radius-pills);
+  border: 1px solid var(--color-charcoal);
+  background: var(--color-ink-black);
+  color: var(--color-bone);
+  font-size: 11.5px;
+  font-weight: 500;
+  max-width: 100%;
+  cursor: pointer;
+  transition: border-color 0.14s ease, color 0.14s ease;
+}
+
+.zero-goal-proj-chip:hover,
+.zero-goal-proj-chip.is-active {
+  border-color: var(--color-saffron-whisper);
+  color: var(--color-pure-white);
+}
+
+.zero-goal-proj-chip span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 780px) {
+  .zero-goals-grid {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+  }
+}
+
+/* ==========================================================================
+   ETAPA 2 — MINI-CARD DE BRIEFING RÁPIDO (1 FRASE + OWASP / LGPD)
+   ========================================================================== */
+
+.composer-briefing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: var(--color-ink-black);
+  border: 1.5px solid var(--color-sky-pulse);
+  border-radius: var(--radius-cards);
+}
+
+.composer-briefing-card[hidden] {
+  display: none;
+}
+
+.briefing-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.briefing-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.briefing-subtitle {
+  font-size: 12px;
+  color: var(--color-graphite);
+}
+
+.briefing-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.briefing-plain-btn {
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+.briefing-folder-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.briefing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.briefing-field label,
+.briefing-field-label {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-graphite);
+}
+
+.briefing-field input {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-buttons);
+  border: 1px solid var(--color-charcoal);
+  background: var(--color-obsidian);
+  color: var(--color-pure-white);
+  font-size: 13px;
+}
+
+.briefing-field input:focus {
+  outline: none;
+  border-color: var(--color-sky-pulse);
+}
+
+.briefing-path-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  border-radius: var(--radius-buttons);
+  border: 1px solid var(--color-charcoal);
+  background: var(--color-obsidian);
+}
+
+.briefing-path-code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-jetbrains-mono);
+  font-size: 11.5px;
+  color: var(--color-bone);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.briefing-pick-btn {
+  padding: 5px 10px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.briefing-options-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.briefing-chip-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.briefing-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.briefing-chip,
+.briefing-sec-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-pills);
+  border: 1px solid var(--color-charcoal);
+  background: var(--color-obsidian);
+  color: var(--color-graphite);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.briefing-chip:hover,
+button.briefing-sec-pill:hover {
+  color: var(--color-pure-white);
+  border-color: var(--color-bone);
+}
+
+.briefing-chip.is-active {
+  border-color: var(--color-sky-pulse);
+  color: var(--color-pure-white);
+  background: var(--color-slate);
+}
+
+.briefing-sec-pill.is-locked {
+  border-color: var(--color-sky-pulse);
+  color: var(--color-sky-pulse);
+  font-family: var(--font-jetbrains-mono);
+  font-size: 11px;
+}
+
+.briefing-sec-pill.is-financial.is-active {
+  border-color: var(--color-saffron-whisper);
+  color: var(--color-saffron-whisper);
+  background: var(--color-slate);
+}
+
+.briefing-sec-pill.is-lgpd.is-active {
+  border-color: var(--color-iris-glow);
+  color: var(--color-pale-lavender);
+  background: var(--color-slate);
+}
+
+.briefing-security-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-slate);
+}
+
+.briefing-security-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.briefing-security-hint {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 10.5px;
+  color: var(--color-graphite);
+}
+
+.briefing-security-note {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--color-graphite);
+  margin: 0;
+}
+
+.briefing-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-slate);
+}
+
+.briefing-confirm-btn {
+  padding: 8px 14px;
+  font-size: 12.5px;
+}
+
+@media (max-width: 680px) {
+  .briefing-folder-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   ETAPA 3 — BARRA DE PREVIEW AO VIVO (▶ RODAR & ABRIR APP) NO CONSTRUTOR
+   ========================================================================== */
+
+.builder-preview-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--color-ink-black);
+  border: 1px solid var(--color-charcoal);
+  border-radius: var(--radius-lg);
+}
+
+.builder-preview-bar.is-running {
+  border-color: var(--color-sky-pulse);
+}
+
+.builder-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.builder-preview-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.builder-preview-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--color-graphite);
+  flex-shrink: 0;
+}
+
+.builder-preview-dot.is-live {
+  background: var(--color-sky-pulse);
+}
+
+.builder-preview-label {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 11.5px;
+  color: var(--color-bone);
+}
+
+.builder-preview-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.builder-open-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.builder-preview-feedback {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 10.5px;
+  color: var(--color-graphite);
+}
+
+.folder-info-policy-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-slate);
+}
+
+.folder-info-policy-label {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--color-graphite);
+}
+
+.composer-send-btn.is-builder-intent {
+  background: var(--color-sky-pulse);
+  color: var(--color-ink-black);
+  border-color: var(--color-sky-pulse);
+}
+
+.builder-source-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-charcoal);
+  border-radius: var(--radius-lg);
+  background: var(--color-ink-black);
+}
+
+.builder-source-label {
+  font-size: 11.5px;
+  color: var(--color-graphite);
+  margin-right: 4px;
 }
 
 /* Acessibilidade: respeitar redução de movimento (Eraser §13) */

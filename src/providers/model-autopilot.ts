@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { writeTextAtomically } from "../shared/atomic-fs.js";
 import type { AutoPlatform } from "../shared/debate-types.js";
 import type { ProviderError, ProviderErrorKind } from "./types.js";
 
@@ -159,20 +160,12 @@ async function ensureHealthLoaded(): Promise<void> {
 }
 
 function scheduleHealthPersist(): void {
-  const targetDir = getDataDir();
   const targetFile = getHealthFilePath();
   const snapshot = Object.fromEntries(healthMap.entries());
 
   persistQueue = persistQueue
     .then(async () => {
-      await mkdir(targetDir, { recursive: true });
-      const tmp = `${targetFile}.${process.pid}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(tmp, JSON.stringify(snapshot, null, 2), "utf8");
-        await rename(tmp, targetFile);
-      } finally {
-        await rm(tmp, { force: true }).catch(() => {});
-      }
+      await writeTextAtomically(targetFile, JSON.stringify(snapshot, null, 2));
     })
     .catch(() => {});
 }

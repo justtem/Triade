@@ -13,9 +13,9 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
     <title>AI Council — Intelligence Hub</title>
-    <link rel="stylesheet" href="/fonts/fonts.css?v=20261121k">
-    <link rel="stylesheet" href="styles.css?v=20261121k">
-    <script type="module" src="dashboard.js?v=20261121k"></script>
+    <link rel="stylesheet" href="/fonts/fonts.css?v=20261122h">
+    <link rel="stylesheet" href="styles.css?v=20261122h">
+    <script type="module" src="dashboard.js?v=20261122h"></script>
 </head>
 <body>
 
@@ -390,7 +390,6 @@
                             <option value="quick">Chat Rápido (1 IA direta)</option>
                             <option value="council">Conselho (Trio em paralelo)</option>
                             <option value="debate" selected>Debate (Crítica cruzada + síntese)</option>
-                            <option value="builder">Construtor (Arquitetura / Código na pasta)</option>
                         </select>
                     </div>
 
@@ -871,6 +870,8 @@
                                 <span class="word-rose parallax-word" data-parallax-depth="-0.9">HOJE?</span>
                             </h3>
 
+                            <div class="zero-goals-grid" id="zero-goals-grid" role="list" aria-label="Começar por objetivo"></div>
+
                             <div class="zero-templates-strip" id="zero-horizontal-showcase">
                                 <div class="zero-pills-row" id="zero-h-track" role="list" aria-label="Templates rápidos"></div>
                                 <button type="button" class="zero-manage-tpl-link" id="zero-manage-templates-btn" title="Gerenciar biblioteca de templates">
@@ -964,6 +965,9 @@
                 <div class="composer-dock" id="composer-dock">
                     <form id="create-debate-form" class="composer-card" novalidate>
 
+                        <!-- MINI-CARD DE BRIEFING RÁPIDO (1 FRASE -> PASTA + EXPANSOR OWASP/LGPD) -->
+                        <div class="composer-briefing-card" id="composer-briefing-card" hidden role="region" aria-label="Briefing rápido de novo projeto"></div>
+
                         <!-- PÍLULA DO PROJETO ATIVO (CÉREBRO LOCAL) -->
                         <div class="composer-project-bar" id="composer-project-bar" hidden></div>
 
@@ -1005,20 +1009,20 @@
                             ></textarea>
                         </div>
 
-                        <!-- BARRA FIXA DE 4 MODOS EM 1 CLIQUE + SELETOR RÁPIDO DE 1 IA -->
+                        <!-- BARRA FIXA DE 4 MODOS EM 1 CLIQUE (AUTO PADRÃO + OVERRIDES MANUAIS) -->
                         <div class="composer-modes-strip" id="composer-modes-strip">
                             <div class="composer-mode-pills" id="composer-mode-pills" role="group" aria-label="Modo de atuação das IAs">
-                                <button type="button" class="composer-mode-btn" data-composer-mode="quick" aria-pressed="false" title="1 IA rápida em resposta direta">
+                                <button type="button" class="composer-mode-btn is-active" data-composer-mode="auto" aria-pressed="true" title="Modo Automático: escolhe sozinho 1 IA rápida para perguntas simples, Conselho para comparações e Debate + Construtor para criar ou editar apps na pasta">
+                                    <span>Auto</span>
+                                </button>
+                                <button type="button" class="composer-mode-btn" data-composer-mode="quick" aria-pressed="false" title="1 IA rápida em resposta direta (em projetos com pasta, escreve e testa automaticamente quando você pedir código)">
                                     <span>Chat Rápido</span>
                                 </button>
-                                <button type="button" class="composer-mode-btn is-active" data-composer-mode="council" aria-pressed="true" title="Trio em paralelo (Gemini + Groq + OpenRouter) sem gastar cota de veredito automático">
+                                <button type="button" class="composer-mode-btn" data-composer-mode="council" aria-pressed="false" title="Trio em paralelo para comparar opiniões sem sobrescrever arquivos automaticamente">
                                     <span>Conselho</span>
                                 </button>
-                                <button type="button" class="composer-mode-btn" data-composer-mode="debate" aria-pressed="false" title="Trio debate entre si com crítica cruzada e síntese final">
+                                <button type="button" class="composer-mode-btn" data-composer-mode="debate" aria-pressed="false" title="Trio debate entre si e fecha uma síntese única (em projetos com pasta, constrói e testa automaticamente quando você pedir código)">
                                     <span>Debate</span>
-                                </button>
-                                <button type="button" class="composer-mode-btn" data-composer-mode="builder" aria-pressed="false" title="Planeja arquitetura e arquivos na pasta vinculada do Projeto">
-                                    <span>Construtor</span>
                                 </button>
                             </div>
 
@@ -1028,16 +1032,6 @@
                                 <button type="button" class="quick-ai-chip" data-quick-ai="groq" aria-pressed="false">Groq</button>
                                 <button type="button" class="quick-ai-chip" data-quick-ai="openrouter" aria-pressed="false">OpenRouter</button>
                             </div>
-                        </div>
-
-                        <!-- FAIXA CONTEXTUAL DO MODO CONSTRUTOR -->
-                        <div class="composer-builder-banner" id="composer-builder-banner" hidden role="status">
-                            <span class="composer-builder-text" id="composer-builder-text"></span>
-                            <label class="builder-auto-toggle" id="composer-builder-auto-wrap" title="Ao concluir o debate, gera arquivos restantes, grava na pasta com backup (.ai-council-backup/) e roda build/test + autocorreção automaticamente" hidden>
-                                <input type="checkbox" id="composer-builder-auto-toggle" checked>
-                                <span>Auto-aplicar &amp; testar</span>
-                            </label>
-                            <button type="button" class="btn-secondary composer-builder-action" id="composer-builder-link-btn" hidden>Vincular pasta...</button>
                         </div>
 
                         <!-- POPOVER AVANÇADO DO COMPOSER (AJUSTES FINOS SOB DEMANDA) -->

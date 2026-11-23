@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveAutoRoute } from "../src/debate/auto-router.js";
+import {
+  resolveAutoComposerStrategy,
+  resolveAutoRoute
+} from "../src/debate/auto-router.js";
 import type { ProviderStatus } from "../src/providers/registry.js";
 import type { AutoPlatform } from "../src/shared/debate-types.js";
 
@@ -270,5 +273,74 @@ describe("auto-router (Modo Auto 0ms)", () => {
 
     assert.equal(decision.participants.length, 1);
     assert.equal(decision.participants[0], "groq");
+  });
+
+  it("resolveAutoComposerStrategy ativa Debate (1 rodada + Síntese) para criação de app em pasta vinculada", () => {
+    const res = resolveAutoComposerStrategy(
+      {
+        prompt: "Crie na pasta um app completo de controle de tarefas com testes",
+        isContinuation: false,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      allHealthy()
+    );
+
+    assert.equal(res.interactionMode, "debate");
+    assert.equal(res.totalRounds, 1);
+    assert.deepEqual(res.autoRoute.participants, ["gemini", "groq", "openrouter"]);
+  });
+
+  it("resolveAutoComposerStrategy usa 1 IA forte de código para edição pontual em continuação de projeto", () => {
+    const res = resolveAutoComposerStrategy(
+      {
+        prompt: "Adicione um botão Exportar JSON no cabeçalho da página",
+        isContinuation: true,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      allHealthy()
+    );
+
+    assert.equal(res.interactionMode, "direct");
+    assert.deepEqual(res.autoRoute.participants, ["gemini"]);
+  });
+
+  it("resolveAutoComposerStrategy mantém pergunta simples em 1 IA rápida mesmo dentro de projeto com pasta", () => {
+    const res = resolveAutoComposerStrategy(
+      {
+        prompt: "Explique como o arquivo store.ts salva os dados",
+        isContinuation: true,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      allHealthy()
+    );
+
+    assert.equal(res.interactionMode, "direct");
+    assert.deepEqual(res.autoRoute.participants, ["groq"]);
+  });
+
+  it("resolveAutoComposerStrategy usa Conselho (Trio direto) para comparações arquiteturais", () => {
+    const res = resolveAutoComposerStrategy(
+      {
+        prompt: "Compare SQLite vs PostgreSQL e os trade-offs de arquitetura",
+        isContinuation: false,
+        hasLinkedFolder: false,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      allHealthy()
+    );
+
+    assert.equal(res.interactionMode, "direct");
+    assert.deepEqual(res.autoRoute.participants, ["gemini", "groq", "openrouter"]);
   });
 });

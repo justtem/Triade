@@ -27,20 +27,199 @@ import { escapeHtml, handleExportConversationMarkdown } from "./markdown.js";
 import { setUnreadScrollPillVisible } from "./motion.js";
 import { updateRightAiPanel, updateDashboardDebatesSummary } from "./telemetry.js";
 import {
+  getEffectiveProjectForComposer,
   getProjectByIdClient,
   getProjectColorHex,
   handleAssignDebateProject,
   openProjectModal,
+  selectProjectFilter,
   syncComposerProjectPill
 } from "./projects.js";
 import {
+  applyComposerMode,
   syncComposerWithDebate,
   syncComposerModeUi,
   openMemoryModal,
   applyPromptTemplate
 } from "./composer.js";
 
+const ZERO_GOAL_ICONS = {
+  build: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+  council: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>`,
+  folder: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`
+};
+
+export function renderZeroStateGoalCards() {
+  const grid = $("#zero-goals-grid");
+  if (!grid) return;
+
+  const projectsList = Array.isArray(state.userProjects) ? state.userProjects : [];
+  const activeProj = getEffectiveProjectForComposer();
+  const sig = JSON.stringify({
+    activeId: activeProj?.id || null,
+    projects: projectsList.slice(0, 4).map((p) => ({
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      hasFolder: Boolean(p.linkedFolderPath)
+    }))
+  });
+
+  if (sig === state.lastZeroGoalsSignature && grid.children.length > 0) {
+    return;
+  }
+  state.lastZeroGoalsSignature = sig;
+  grid.replaceChildren();
+
+  const focusTopicWithHint = (hintPlaceholder) => {
+    const input = $("#debate-topic");
+    if (!input) return;
+    if (hintPlaceholder) {
+      input.placeholder = hintPlaceholder;
+    }
+    input.focus();
+  };
+
+  // Cartão 1: Criar um App / Site na Pasta (Modo Auto)
+  const buildCard = document.createElement("button");
+  buildCard.type = "button";
+  buildCard.className = "zero-goal-card is-accent-sky";
+  buildCard.setAttribute("role", "listitem");
+
+  const buildHead = document.createElement("div");
+  buildHead.className = "zero-goal-head";
+  const buildIcon = document.createElement("span");
+  buildIcon.className = "zero-goal-icon";
+  buildIcon.innerHTML = ZERO_GOAL_ICONS.build;
+  const buildTag = document.createElement("span");
+  buildTag.className = "zero-goal-eyebrow";
+  buildTag.textContent = "AUTO + PASTA";
+  buildHead.append(buildIcon, buildTag);
+
+  const buildTitle = document.createElement("strong");
+  buildTitle.className = "zero-goal-title";
+  buildTitle.textContent = "Criar App ou Site na Pasta";
+
+  const buildDesc = document.createElement("p");
+  buildDesc.className = "zero-goal-desc";
+  buildDesc.textContent = activeProj?.linkedFolderPath
+    ? `Descreva sua ideia para construir, testar e corrigir automaticamente em ${activeProj.name}.`
+    : "Descreva o que deseja criar — o Auto escolhe as IAs, gera na pasta e valida os testes.";
+
+  buildCard.append(buildHead, buildTitle, buildDesc);
+  buildCard.addEventListener("click", () => {
+    applyComposerMode("auto");
+    const effProj = getEffectiveProjectForComposer();
+    if (effProj?.linkedFolderPath) {
+      focusTopicWithHint(
+        `Ex.: Crie ou melhore algo em ${effProj.name} pronto para rodar com npm run dev...`
+      );
+    } else {
+      focusTopicWithHint(
+        "Descreva em 1 frase o app que quer criar (ex.: Cria um app de controle de gastos pessoais)..."
+      );
+    }
+  });
+
+  // Cartão 2: Consultar o Conselho (3 IAs em paralelo)
+  const councilCard = document.createElement("button");
+  councilCard.type = "button";
+  councilCard.className = "zero-goal-card is-accent-iris";
+  councilCard.setAttribute("role", "listitem");
+
+  const councilHead = document.createElement("div");
+  councilHead.className = "zero-goal-head";
+  const councilIcon = document.createElement("span");
+  councilIcon.className = "zero-goal-icon";
+  councilIcon.innerHTML = ZERO_GOAL_ICONS.council;
+  const councilTag = document.createElement("span");
+  councilTag.className = "zero-goal-eyebrow";
+  councilTag.textContent = "3 IAS + VEREDITO";
+  councilHead.append(councilIcon, councilTag);
+
+  const councilTitle = document.createElement("strong");
+  councilTitle.className = "zero-goal-title";
+  councilTitle.textContent = "Consultar o Conselho";
+
+  const councilDesc = document.createElement("p");
+  councilDesc.className = "zero-goal-desc";
+  councilDesc.textContent =
+    "Compare Gemini, Groq e OpenRouter lado a lado para decisões técnicas, arquitetura ou revisões.";
+
+  councilCard.append(councilHead, councilTitle, councilDesc);
+  councilCard.addEventListener("click", () => {
+    applyComposerMode("council");
+    focusTopicWithHint(
+      "Compare opções, peça revisão de código ou pergunte ao Trio em paralelo... (Enter envia)"
+    );
+  });
+
+  // Cartão 3: Continuar um Projeto existente
+  const continueCard = document.createElement("div");
+  continueCard.className = "zero-goal-card is-accent-saffron is-interactive-box";
+  continueCard.setAttribute("role", "listitem");
+
+  const contHead = document.createElement("div");
+  contHead.className = "zero-goal-head";
+  const contIcon = document.createElement("span");
+  contIcon.className = "zero-goal-icon";
+  contIcon.innerHTML = ZERO_GOAL_ICONS.folder;
+  const contTag = document.createElement("span");
+  contTag.className = "zero-goal-eyebrow";
+  contTag.textContent =
+    projectsList.length > 0 ? `${projectsList.length} PROJETO${projectsList.length > 1 ? "S" : ""}` : "CÉREBRO LOCAL";
+  contHead.append(contIcon, contTag);
+
+  const contTitle = document.createElement("strong");
+  contTitle.className = "zero-goal-title";
+  contTitle.textContent = "Continuar um Projeto";
+
+  const contBody = document.createElement("div");
+  contBody.className = "zero-goal-projects";
+
+  if (projectsList.length === 0) {
+    const emptyDesc = document.createElement("p");
+    emptyDesc.className = "zero-goal-desc";
+    emptyDesc.textContent = "Vincule uma pasta do PC para ler código e construir direto nela.";
+    const createBtn = document.createElement("button");
+    createBtn.type = "button";
+    createBtn.className = "zero-goal-proj-chip";
+    createBtn.textContent = "+ Novo Projeto";
+    createBtn.addEventListener("click", () => openProjectModal(null));
+    contBody.append(emptyDesc, createBtn);
+  } else {
+    for (const proj of projectsList.slice(0, 3)) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = `zero-goal-proj-chip${activeProj?.id === proj.id ? " is-active" : ""}`;
+      chip.title = proj.linkedFolderPath || proj.name;
+
+      const dot = document.createElement("span");
+      dot.className = "project-dot";
+      dot.style.background = getProjectColorHex(proj.color);
+      dot.setAttribute("aria-hidden", "true");
+
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = proj.name;
+
+      chip.append(dot, nameSpan);
+      chip.addEventListener("click", () => {
+        selectProjectFilter(proj.id);
+        applyComposerMode("auto");
+        focusTopicWithHint(
+          `Peça uma melhoria, correção ou dúvida em ${proj.name} — o Auto cuida do resto...`
+        );
+      });
+      contBody.appendChild(chip);
+    }
+  }
+
+  continueCard.append(contHead, contTitle, contBody);
+  grid.append(buildCard, councilCard, continueCard);
+}
+
 export function renderZeroStateHorizontalShowcase() {
+  renderZeroStateGoalCards();
   const track = $("#zero-h-track");
   if (!track) return;
 

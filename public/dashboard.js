@@ -5,7 +5,6 @@ import {
   WEB_SEARCH_STORAGE_KEY,
   AUTO_VERDICT_STORAGE_KEY,
   AUTO_ROUTE_STORAGE_KEY,
-  BUILDER_AUTO_APPLY_STORAGE_KEY,
   $,
   $$,
   saveStoredOption,
@@ -64,12 +63,16 @@ import {
   handleComposerSlashKeydown
 } from "./js/shortcuts.js";
 import {
+  closeAppBriefingCard
+} from "./js/briefing.js";
+import {
   syncAiSelectionUi,
   applyComposerMode,
   setAutoRouteMode,
   setSelectedParticipants,
   syncComposerWithDebate,
   syncComposerModeUi,
+  syncComposerSubmitIntentUi,
   handleCreateDebate,
   addComposerFiles,
   closeMemoryModal,
@@ -652,7 +655,7 @@ function initializeUiBindings() {
   document.addEventListener("click", () => {
     closeComposerPopover();
     closeSlashMenu(false);
-    for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
+    for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu, .folder-info-popover")) {
       openMenu.hidden = true;
     }
   });
@@ -671,6 +674,7 @@ function initializeUiBindings() {
       closeSetupWizard();
       closePrivacyShieldModal();
       closeImageRedactModal();
+      closeAppBriefingCard();
       if (state.editingTurnKey) {
         state.editingTurnKey = null;
         state.lastRenderedChatSignature = "";
@@ -680,7 +684,7 @@ function initializeUiBindings() {
         state.confirmDeleteDebateId = null;
         renderSidebarDebatesList();
       }
-      for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
+      for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu, .folder-info-popover")) {
         openMenu.hidden = true;
       }
     }
@@ -706,6 +710,7 @@ function initializeUiBindings() {
     topicTextarea.addEventListener("input", () => {
       topicTextarea.style.height = "auto";
       topicTextarea.style.height = `${Math.min(180, topicTextarea.scrollHeight)}px`;
+      syncComposerSubmitIntentUi();
     });
 
     // Colar prints/imagens direto com Ctrl + V no campo do composer
@@ -769,20 +774,6 @@ function initializeUiBindings() {
     });
   }
 
-  // Botão contextual do Modo Construtor para vincular pasta do Projeto
-  $("#composer-builder-link-btn")?.addEventListener("click", () => {
-    const linkedProj = getEffectiveProjectForComposer();
-    openProjectModal(linkedProj?.id || null);
-  });
-
-  // Toggle Auto-aplicar na pasta (Modo Construtor)
-  $("#composer-builder-auto-toggle")?.addEventListener("change", (e) => {
-    const checked = Boolean(e.target?.checked);
-    state.builderAutoApplyPref = checked;
-    saveStoredOption(BUILDER_AUTO_APPLY_STORAGE_KEY, checked ? "on" : "off");
-    syncComposerModeUi();
-  });
-
   for (const checkbox of $$('input[name="participants"]')) {
     checkbox.addEventListener("change", () => {
       if (state.isAutoRouteMode) {
@@ -836,8 +827,8 @@ function initializeUiBindings() {
     syncComposerModeUi();
   });
 
-  // Inicializa o compositor no modo salvo (padrão: Conselho)
-  applyComposerMode(state.activeComposerMode || "council");
+  // Inicializa o compositor no modo salvo (padrão: Auto)
+  applyComposerMode(state.activeComposerMode || "auto");
 
   const advBtn = $("#toggle-advanced-btn");
   const advPanel = $("#composer-advanced");

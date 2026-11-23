@@ -10,6 +10,7 @@ import {
   undoBuilderTurnBackup,
   verifyAndAutoFixBuilderTurn
 } from "../projects/builder-orchestrator.js";
+import { ALL_PLATFORMS, type AIPlatform } from "../shared/debate-types.js";
 import type { AuthManager } from "./auth.js";
 import { isRecord, readRequestBody, sendJson } from "./http-utils.js";
 import { slimDebateForDashboard } from "./routes-debates.js";
@@ -81,7 +82,14 @@ export async function handleBuilderRoutes(
 
   if (action === "extract") {
     try {
-      const debate = await extractBuilderFilesForTurn(debateId, turnId);
+      const rawSource =
+        typeof payload.sourcePlatform === "string" ? payload.sourcePlatform.trim() : "";
+      const sourcePlatform = (ALL_PLATFORMS as readonly string[]).includes(rawSource)
+        ? (rawSource as AIPlatform)
+        : undefined;
+      const debate = await extractBuilderFilesForTurn(debateId, turnId, {
+        sourcePlatform
+      });
       sendJson(
         response,
         200,

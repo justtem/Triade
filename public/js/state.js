@@ -143,13 +143,14 @@ export const INTERACTION_MODE_STORAGE_KEY = "ai-council-interaction-mode";
 export const WEB_SEARCH_STORAGE_KEY = "ai-council-web-search-mode";
 export const AUTO_VERDICT_STORAGE_KEY = "ai-council-auto-verdict";
 export const COMPOSER_MODE_STORAGE_KEY = "ai-council-composer-mode";
-export const BUILDER_AUTO_APPLY_STORAGE_KEY = "ai-council-builder-auto-apply";
+export const FOLDER_POLICY_STORAGE_KEY = "ai-council-folder-policy";
+export const FOLDER_INFO_SEEN_KEY = "ai-council-folder-info-seen";
 
 export const COMPOSER_MODE_LABELS = {
+  auto: "Auto",
   quick: "Chat Rápido",
   council: "Conselho",
-  debate: "Debate",
-  builder: "Construtor"
+  debate: "Debate"
 };
 
 export const RESPONSE_MODE_LABELS = {
@@ -188,8 +189,9 @@ export const activeStreamsByTaskId = new Map();
 export const pendingStreamPaintIds = new Set();
 
 export const state = {
-  activeComposerMode: loadStoredOption(COMPOSER_MODE_STORAGE_KEY, "council", ["quick", "council", "debate", "builder"]),
-  builderAutoApplyPref: loadStoredOption(BUILDER_AUTO_APPLY_STORAGE_KEY, "on", ["on", "off"]) === "on",
+  activeComposerMode: loadStoredOption(COMPOSER_MODE_STORAGE_KEY, "auto", ["auto", "quick", "council", "debate"]),
+  folderPolicy: loadStoredOption(FOLDER_POLICY_STORAGE_KEY, "auto", ["auto", "confirm", "readonly"]),
+  folderInfoSeen: loadStoredOption(FOLDER_INFO_SEEN_KEY, "no", ["yes", "no"]) === "yes",
   selectedResponseMode: loadStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal", ["normal", "prompt_markdown"]),
   selectedInteractionMode: loadStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct", ["direct", "debate"]),
   selectedWebSearchMode: loadStoredOption(WEB_SEARCH_STORAGE_KEY, "auto", ["auto", "off"]),
@@ -209,6 +211,7 @@ export const state = {
   lastDebatesSignature: "",
   lastRenderedChatSignature: "",
   lastZeroShowcaseSignature: "",
+  lastZeroGoalsSignature: "",
   scrollFocusedPlatform: null,
   optimisticSubmission: null,
   refreshTimerId: null,
@@ -234,7 +237,7 @@ export const state = {
   lastAutoScrollContentKey: "",
   hasUnreadBelow: false,
   isSingleAiMode: false,
-  isAutoRouteMode: loadStoredOption(AUTO_ROUTE_STORAGE_KEY, "off", ["on", "off"]) === "on",
+  isAutoRouteMode: loadStoredOption(AUTO_ROUTE_STORAGE_KEY, "on", ["on", "off"]) === "on",
   preferredSingleAi: loadStoredOption(SINGLE_AI_STORAGE_KEY, "gemini", ALL_PLATFORM_IDS),
   lastSyncedComposerDebateId: null,
   memoryModalDebateId: null,
@@ -434,12 +437,15 @@ export function initScrollTriggerObserver() {
       for (const entry of entries) {
         if (entry.isIntersecting) {
           entry.target.classList.add("is-revealed");
+          state.scrollRevealObserver?.unobserve(entry.target);
         }
       }
     },
     {
-      threshold: 0.08,
-      rootMargin: "0px 0px -16px 0px"
+      // threshold: 0 garante que cards muito altos (> viewport, ex. respostas longas de código)
+      // revelem imediatamente ao aparecer qualquer pixel, sem nunca ficarem presos em opacity: 0.
+      threshold: 0,
+      rootMargin: "120px 0px 120px 0px"
     }
   );
 
@@ -449,11 +455,17 @@ export function initScrollTriggerObserver() {
 export function observeScrollRevealElements(root = document) {
   const elements = Array.from(root.querySelectorAll("[data-scroll-reveal]"));
   elements.forEach((el, idx) => {
+    if (el.classList.contains("is-revealed")) return;
     if (!el.style.getPropertyValue("--reveal-delay")) {
-      el.style.setProperty("--reveal-delay", `${Math.min(idx * 45, 240)}ms`);
+      el.style.setProperty("--reveal-delay", `${Math.min(idx * 45, 180)}ms`);
     }
+    // Se já está no chat ou intersectando a tela, revela com garantia contra trava de opacidade
     if (state.scrollRevealObserver) {
       state.scrollRevealObserver.observe(el);
+      const rect = el.getBoundingClientRect();
+      if (rect.height > 0 && rect.top < window.innerHeight + 120 && rect.bottom > -120) {
+        requestAnimationFrame(() => el.classList.add("is-revealed"));
+      }
     } else {
       el.classList.add("is-revealed");
     }

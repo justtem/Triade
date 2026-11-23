@@ -30,6 +30,7 @@ import { inspectLinkedFolder } from "./project-rag.js";
 export const BACKUP_ROOT_DIR_NAME = ".ai-council-backup";
 const MAX_BACKUPS_KEPT = 15;
 const MAX_FILES_PER_BATCH = 40;
+const MAX_DELETES_PER_BATCH = 10;
 const MAX_FILE_WRITE_BYTES = 512 * 1024; // 512 KB por arquivo
 const MAX_DIFF_PREVIEW_LINES = 80;
 
@@ -103,6 +104,7 @@ export interface ExtractedWorkspaceFile {
 export interface MarkdownExtractionResult {
   files: ExtractedWorkspaceFile[];
   missingPaths: string[];
+  deletes: string[];
 }
 
 interface BackupManifest {
@@ -111,6 +113,7 @@ interface BackupManifest {
   filesWritten: string[];
   filesCreated: string[];
   filesOverwritten: string[];
+  filesDeleted?: string[];
   undone?: boolean;
   undoneAt?: string;
 }
@@ -372,6 +375,118 @@ function extractReferencedPlanPaths(markdown: string, extractedSet: Set<string>)
   });
 }
 
+const DUMMY_ROOT_FILENAMES = new Set([
+  "example.ts",
+  "example.js",
+  "exemplo.ts",
+  "exemplo.js",
+  "foo.ts",
+  "foo.js",
+  "bar.ts",
+  "bar.js",
+  "baz.ts",
+  "baz.js"
+]);
+
+function isDummyRootExamplePath(relPath: string): boolean {
+  if (relPath.includes("/")) return false;
+  return DUMMY_ROOT_FILENAMES.has(relPath.toLowerCase());
+}
+
+function extractDeleteDirectivesOutsideFences(
+  markdown: string,
+  extractedSet: Set<string>
+): string[] {
+  // Remove blocos de código cercados para evitar que comentários/exemplos disparem remoções
+  const withoutFences = markdown.replace(/```[^\n`]*\r?\n[\s\S]*?```/g, "\n");
+  const deletes = new Set<string>();
+
+  for (const rawLine of withoutFences.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.length > 260) continue;
+    const m = line.match(
+      /^(?:[-*]\s+)?(?:#{1,6}\s+)?(?:\*\*)?(?:DELETE|REMOVE|REMOVER|APAGAR|DELETAR)(?:\*\*)?\s*[:\-]\s*(.+)$/i
+    );
+    if (!m?.[1]) continue;
+
+    const rest = m[1].trim();
+    const backtick = rest.match(/`([^`\n]+)`/);
+    const rawCandidate = (backtick?.[1] ?? rest.split(/\s+/)[0] ?? "").trim();
+    if (!rawCandidate || !isLikelyFilePath(rawCandidate)) continue;
+
+    const check = validateRelativeWorkspacePath(rawCandidate);
+    if (!check.valid || !check.relPath) continue;
+    if (extractedSet.has(check.relPath)) continue;
+    if (isDummyRootExamplePath(check.relPath)) continue;
+    deletes.add(check.relPath);
+  }
+
+  return Array.from(deletes).slice(0, MAX_DELETES_PER_BATCH);
+}
+
+/**
+ * Lista arquivos reais do projeto para dar visibilidade completa ao Auto-Fix
+ * (ignorando diretórios pesados/protegidos e symlinks).
+ */
+export async function listWorkspaceSourceFiles(
+  rootDir: string,
+  maxFiles = 120
+): Promise<string[]> {
+  const rootReal = await resolveTrustedRoot(rootDir);
+  const skipDirs = new Set([
+    ...BLOCKED_WRITE_DIRS,
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    "coverage",
+    ".cache",
+    ".turbo",
+    "out",
+    "target",
+    "__pycache__",
+    ".venv",
+    "venv"
+  ]);
+
+  const found: string[] = [];
+
+  async function walk(absDir: string, relPrefix: string, depth: number): Promise<void> {
+    if (found.length >= maxFiles || depth > 6) return;
+    let entries;
+    try {
+      entries = await readdir(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (found.length >= maxFiles) break;
+      if (entry.isSymbolicLink()) continue;
+
+      const name = entry.name;
+      const lower = name.toLowerCase();
+      const rel = relPrefix ? `${relPrefix}/${name}` : name;
+
+      if (entry.isDirectory()) {
+        if (skipDirs.has(lower)) continue;
+        await walk(join(absDir, name), rel, depth + 1);
+      } else if (entry.isFile()) {
+        if (lower === "package-lock.json" || lower === "yarn.lock" || lower === "pnpm-lock.yaml") {
+          continue;
+        }
+        const check = validateRelativeWorkspacePath(rel);
+        if (!check.valid || !check.relPath) continue;
+        found.push(check.relPath);
+      }
+    }
+  }
+
+  await walk(rootReal, "", 0);
+  return found;
+}
+
 /**
  * Extrai blocos de código com caminho de arquivo a partir de respostas em Markdown
  * (síntese do Conselho ou respostas do Gemini/OpenRouter).
@@ -442,7 +557,7 @@ export function extractWorkspaceFilesFromMarkdown(
       }
     }
 
-    if (!candidatePath) continue;
+    if (!candidatePath || isDummyRootExamplePath(candidatePath)) continue;
 
     const cleanBody = bodyRaw.replace(/\r\n/g, "\n");
     const incomplete = detectIncompleteCode(cleanBody);
@@ -459,9 +574,13 @@ export function extractWorkspaceFilesFromMarkdown(
 
   const files = Array.from(filesMap.values()).slice(0, MAX_FILES_PER_BATCH);
   const extractedSet = new Set(files.map((f) => f.path));
-  const missingPaths = extractReferencedPlanPaths(text, extractedSet).slice(0, 20);
+  const deletes = extractDeleteDirectivesOutsideFences(text, extractedSet);
+  const deletedSet = new Set(deletes);
+  const missingPaths = extractReferencedPlanPaths(text, extractedSet)
+    .filter((p) => !deletedSet.has(p))
+    .slice(0, 20);
 
-  return { files, missingPaths };
+  return { files, missingPaths, deletes };
 }
 
 export function buildCompactDiffPreview(
@@ -638,26 +757,76 @@ async function pruneOldBackups(backupRoot: string): Promise<void> {
 
 export async function applyWorkspaceChanges(
   rootDir: string,
-  files: Array<{ path: string; content: string }>
+  files: Array<{ path: string; content: string }>,
+  options: { deletePaths?: string[] } = {}
 ): Promise<{
   applied: BuilderFileEntry[];
   backup: BuilderBackupInfo | null;
 }> {
-  if (!Array.isArray(files) || files.length === 0) {
+  const safeFiles = Array.isArray(files) ? files : [];
+  const rawDeletes = Array.isArray(options.deletePaths)
+    ? options.deletePaths.slice(0, MAX_DELETES_PER_BATCH)
+    : [];
+
+  if (safeFiles.length === 0 && rawDeletes.length === 0) {
     return { applied: [], backup: null };
   }
 
   const rootReal = await resolveTrustedRoot(rootDir);
-  const preview = await previewWorkspaceChanges(
-    rootReal,
-    files.map((f) => ({ path: f.path, content: f.content, incomplete: false }))
-  );
+  const preview =
+    safeFiles.length > 0
+      ? await previewWorkspaceChanges(
+          rootReal,
+          safeFiles.map((f) => ({ path: f.path, content: f.content, incomplete: false }))
+        )
+      : [];
 
   const writable = preview.filter(
     (entry) => entry.action === "create" || entry.action === "overwrite"
   );
-  if (writable.length === 0) {
-    return { applied: preview, backup: null };
+
+  // Valida remoções (apenas arquivos regulares existentes dentro do sandbox)
+  const deletable: Array<{ relPath: string; absPath: string; sizeLines: number }> = [];
+  const deletePreviewEntries: BuilderFileEntry[] = [];
+  const writtenPathSet = new Set(writable.map((w) => w.path));
+
+  for (const rawDel of rawDeletes) {
+    let safe;
+    try {
+      safe = await resolveSafeWorkspacePath(rootReal, rawDel);
+    } catch (err) {
+      deletePreviewEntries.push({
+        path: rawDel,
+        content: "",
+        action: "blocked",
+        blockReason: err instanceof Error ? err.message : "Remoção bloqueada pelo sandbox."
+      });
+      continue;
+    }
+
+    if (writtenPathSet.has(safe.relPath)) continue;
+    if (deletable.some((d) => d.relPath === safe.relPath)) continue;
+
+    try {
+      const st = await stat(safe.absPath);
+      if (!st.isFile()) continue;
+      const oldText = await readFile(safe.absPath, "utf8").catch(() => "");
+      const sizeLines = oldText ? oldText.replace(/\r\n/g, "\n").split("\n").length : 0;
+      deletable.push({ relPath: safe.relPath, absPath: safe.absPath, sizeLines });
+      deletePreviewEntries.push({
+        path: safe.relPath,
+        content: "",
+        action: "delete",
+        removedLines: sizeLines
+      });
+    } catch {
+      // Arquivo já não existe — ignora silenciosamente
+    }
+  }
+
+  const combinedApplied = [...preview, ...deletePreviewEntries];
+  if (writable.length === 0 && deletable.length === 0) {
+    return { applied: combinedApplied, backup: null };
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -670,6 +839,7 @@ export async function applyWorkspaceChanges(
 
   const filesCreated: string[] = [];
   const filesOverwritten: string[] = [];
+  const filesDeleted: string[] = [];
   const filesWritten: string[] = [];
 
   for (const entry of writable) {
@@ -692,6 +862,16 @@ export async function applyWorkspaceChanges(
     filesWritten.push(safe.relPath);
   }
 
+  for (const del of deletable) {
+    const safe = await resolveSafeWorkspacePath(rootReal, del.relPath);
+    const backupFilePath = resolve(backupFilesDir, ...safe.relPath.split("/"));
+    await mkdir(dirname(backupFilePath), { recursive: true });
+    const prevBytes = await readFile(safe.absPath);
+    await writeFile(backupFilePath, prevBytes);
+    await unlink(safe.absPath);
+    filesDeleted.push(safe.relPath);
+  }
+
   const createdAt = new Date().toISOString();
   const manifest: BackupManifest = {
     batchId,
@@ -699,6 +879,7 @@ export async function applyWorkspaceChanges(
     filesWritten,
     filesCreated,
     filesOverwritten,
+    filesDeleted: filesDeleted.length > 0 ? filesDeleted : undefined,
     undone: false
   };
   await writeFile(
@@ -710,7 +891,7 @@ export async function applyWorkspaceChanges(
   await pruneOldBackups(backupRoot);
 
   return {
-    applied: preview,
+    applied: combinedApplied,
     backup: {
       batchId,
       backupRelDir: `${BACKUP_ROOT_DIR_NAME}/${batchId}`,
@@ -718,6 +899,7 @@ export async function applyWorkspaceChanges(
       filesWritten,
       filesCreated,
       filesOverwritten,
+      filesDeleted: filesDeleted.length > 0 ? filesDeleted : undefined,
       undone: false
     }
   };
@@ -787,6 +969,15 @@ export async function undoWorkspaceBackup(
     restoredCount++;
   }
 
+  for (const relPath of manifest.filesDeleted || []) {
+    const safe = await resolveSafeWorkspacePath(rootReal, relPath);
+    const savedCopy = resolve(batchDir, "files", ...safe.relPath.split("/"));
+    const prevBytes = await readFile(savedCopy);
+    await mkdir(dirname(safe.absPath), { recursive: true });
+    await writeFile(safe.absPath, prevBytes);
+    restoredCount++;
+  }
+
   for (const relPath of manifest.filesCreated || []) {
     const safe = await resolveSafeWorkspacePath(rootReal, relPath);
     try {
@@ -813,6 +1004,7 @@ export async function undoWorkspaceBackup(
       filesWritten: manifest.filesWritten,
       filesCreated: manifest.filesCreated,
       filesOverwritten: manifest.filesOverwritten,
+      filesDeleted: manifest.filesDeleted,
       undone: true
     }
   };

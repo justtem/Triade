@@ -4,9 +4,11 @@ import { join } from "node:path";
 
 import type { BuilderCommandRun } from "../shared/debate-types.js";
 import { inspectLinkedFolder } from "./project-rag.js";
+import { auditWorkspaceSecurity } from "./workspace-security-audit.js";
 
 const INSTALL_TIMEOUT_MS = 120_000;
 const CHECK_TIMEOUT_MS = 60_000;
+const DIAGNOSTIC_TIMEOUT_MS = 15_000;
 const MAX_OUTPUT_CHARS = 12_000;
 
 export type AllowedVerificationAction =
@@ -22,6 +24,7 @@ interface PlannedCheck {
   bin: string;
   args: string[];
   timeoutMs: number;
+  nodeTestScript?: string;
 }
 
 export interface WorkspaceVerificationResult {
@@ -69,13 +72,58 @@ function isPlaceholderTestScript(script: string): boolean {
   return !s || s.includes("no test specified");
 }
 
+function isNodeTestScript(script: string): boolean {
+  const s = script.trim().toLowerCase();
+  return /^node\s+/.test(s) && /(?:^|\s)--test(?:\s|$|=)/.test(s);
+}
+
+/**
+ * Monta argumentos seguros (sem shell) para re-executar um script `node --test ...`
+ * inserindo `--test-force-exit` logo após `node` (antes de eventuais arquivos posicionais).
+ * Rejeita qualquer metacaractere de shell por segurança.
+ */
+function buildSafeNodeTestForceExitArgs(script: string): string[] | null {
+  const trimmed = script.trim();
+  if (!trimmed || /[&|;<>`$\r\n]/.test(trimmed)) return null;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || tokens[0]?.toLowerCase() !== "node") return null;
+  const rest = tokens.slice(1).map((t) => t.replace(/^["']|["']$/g, ""));
+  if (!rest.some((t) => t === "--test" || t.startsWith("--test="))) return null;
+  if (rest.some((t) => t === "--test-force-exit")) return rest;
+  return ["--test-force-exit", ...rest];
+}
+
+function killChildProcessTree(pid: number | undefined): Promise<void> {
+  if (!pid || !Number.isInteger(pid) || pid <= 0) return Promise.resolve();
+  if (process.platform === "win32") {
+    return new Promise((resolveKill) => {
+      try {
+        execFile(
+          "taskkill.exe",
+          ["/PID", String(pid), "/T", "/F"],
+          { windowsHide: true, shell: false, timeout: 4_000 },
+          () => resolveKill()
+        );
+      } catch {
+        resolveKill();
+      }
+    });
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Ignora
+  }
+  return Promise.resolve();
+}
+
 /**
  * Monta a fila estritamente allowlisted de verificação para a pasta do projeto.
  * NUNCA aceita comandos arbitrários vindos de prompts ou respostas da IA.
  */
 export async function planWorkspaceVerification(
   rootDir: string,
-  options: { packageJsonChanged?: boolean } = {}
+  options: { packageJsonChanged?: boolean; checkTimeoutMs?: number } = {}
 ): Promise<PlannedCheck[]> {
   const inspection = await inspectLinkedFolder(rootDir);
   if (!inspection.valid) {
@@ -101,6 +149,11 @@ export async function planWorkspaceVerification(
   } catch {
     throw new Error("O arquivo package.json do projeto contém JSON inválido.");
   }
+
+  const effectiveCheckTimeout =
+    typeof options.checkTimeoutMs === "number" && Number.isFinite(options.checkTimeoutMs)
+      ? Math.min(120_000, Math.max(2_000, Math.floor(options.checkTimeoutMs)))
+      : CHECK_TIMEOUT_MS;
 
   const checks: PlannedCheck[] = [];
   const hasDeps =
@@ -131,7 +184,7 @@ export async function planWorkspaceVerification(
       displayCommand: "npm run build",
       bin: npmExecutable(),
       args: ["run", "build"],
-      timeoutMs: CHECK_TIMEOUT_MS
+      timeoutMs: effectiveCheckTimeout
     });
   } else if (hasTsConfig) {
     checks.push({
@@ -140,7 +193,7 @@ export async function planWorkspaceVerification(
       displayCommand: "npx tsc --noEmit",
       bin: npxExecutable(),
       args: ["tsc", "--noEmit"],
-      timeoutMs: CHECK_TIMEOUT_MS
+      timeoutMs: effectiveCheckTimeout
     });
   }
 
@@ -152,7 +205,8 @@ export async function planWorkspaceVerification(
       displayCommand: "npm test",
       bin: npmExecutable(),
       args: ["test"],
-      timeoutMs: CHECK_TIMEOUT_MS
+      timeoutMs: effectiveCheckTimeout,
+      nodeTestScript: isNodeTestScript(testScript) ? testScript.trim() : undefined
     });
   }
 
@@ -172,58 +226,151 @@ function runSinglePlannedCheck(
       ? ["/d", "/s", "/c", check.bin, ...check.args]
       : check.args;
 
+    let settled = false;
+    let manualTimedOut = false;
+
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: "true",
+      NO_COLOR: "1"
+    };
+    // Evita que testes aninhados herdem o contexto do runner pai (ex.: `node --test`)
+    delete childEnv.NODE_TEST_CONTEXT;
+
     const child = execFile(
       execBin,
       execArgs,
       {
         cwd,
-        timeout: check.timeoutMs,
+        timeout: check.timeoutMs + 3_000,
         maxBuffer: 2 * 1024 * 1024,
         windowsHide: true,
         shell: false,
         signal,
-        env: {
-          ...process.env,
-          CI: "true",
-          NO_COLOR: "1"
-        }
+        env: childEnv
       },
-      (error, stdout, stderr) => {
+      async (error, stdout, stderr) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(treeKillTimer);
+
         const durationMs = Math.max(1, Date.now() - startedAt);
         const combined = [stdout, stderr].filter(Boolean).join("\n");
+        const errObj = error as { code?: unknown; killed?: boolean; signal?: string } | null;
+        const timedOut =
+          !signal?.aborted &&
+          Boolean(
+            manualTimedOut ||
+              (errObj &&
+                (errObj.killed ||
+                  errObj.signal === "SIGTERM" ||
+                  errObj.signal === "SIGKILL" ||
+                  durationMs >= check.timeoutMs - 300))
+          );
+
+        if (timedOut || signal?.aborted) {
+          await killChildProcessTree(child.pid);
+        }
+
         const exitCode =
-          error && typeof (error as { code?: unknown }).code === "number"
-            ? Number((error as { code: number }).code)
+          errObj && typeof errObj.code === "number"
+            ? Number(errObj.code)
             : error
-              ? 1
+              ? timedOut
+                ? 124
+                : 1
               : 0;
-        const ok = !error;
+        const ok = !error && !timedOut;
         const extraErr =
           !ok && !combined.trim() && error instanceof Error ? error.message : "";
+
+        let outputText = combined || extraErr || (ok ? "OK" : "Falha na execução.");
+        if (timedOut) {
+          const secs = (check.timeoutMs / 1000).toFixed(0);
+          outputText = [
+            outputText,
+            "",
+            `[TIMEOUT após ${secs}s] O comando "${check.displayCommand}" não finalizou no limite de tempo e foi encerrado.`,
+            "Causa comum: servidor HTTP sem server.close()/server.closeAllConnections(), sockets keep-alive, timers abertos ou arquivo de teste antigo (.js compilado) rodando junto com .ts."
+          ]
+            .filter(Boolean)
+            .join("\n");
+        }
+
         resolveRun({
           label: check.label,
           command: check.displayCommand,
           exitCode,
           ok,
+          timedOut: timedOut || undefined,
           durationMs,
-          output: trimCommandOutput(combined || extraErr || (ok ? "OK" : "Falha na execução."))
+          output: trimCommandOutput(outputText)
         });
       }
     );
 
-    if (signal?.aborted) {
-      child.kill();
+    const treeKillTimer = setTimeout(() => {
+      if (settled) return;
+      manualTimedOut = true;
+      void killChildProcessTree(child.pid);
+    }, check.timeoutMs);
+    treeKillTimer.unref?.();
+
+    const onAbort = () => {
+      void killChildProcessTree(child.pid);
+    };
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
     }
   });
 }
 
+async function runNodeTestTimeoutDiagnostic(
+  cwd: string,
+  nodeTestScript: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  if (signal?.aborted) return null;
+  const directArgs = buildSafeNodeTestForceExitArgs(nodeTestScript);
+  const diagCheck: PlannedCheck = directArgs
+    ? {
+        action: "npm_test",
+        label: "Diagnóstico force-exit",
+        displayCommand: `node ${directArgs.join(" ")}`,
+        bin: process.execPath,
+        args: directArgs,
+        timeoutMs: DIAGNOSTIC_TIMEOUT_MS
+      }
+    : {
+        action: "npm_test",
+        label: "Diagnóstico force-exit",
+        displayCommand: "npm test -- --test-force-exit",
+        bin: npmExecutable(),
+        args: ["test", "--", "--test-force-exit"],
+        timeoutMs: DIAGNOSTIC_TIMEOUT_MS
+      };
+  const diagRun = await runSinglePlannedCheck(cwd, diagCheck, signal);
+  const out = (diagRun.output || "").trim();
+  if (!out) return null;
+  return out;
+}
+
 export async function verifyWorkspaceProject(
   rootDir: string,
-  options: { packageJsonChanged?: boolean; signal?: AbortSignal } = {}
+  options: {
+    packageJsonChanged?: boolean;
+    signal?: AbortSignal;
+    checkTimeoutMs?: number;
+  } = {}
 ): Promise<WorkspaceVerificationResult> {
   const rootReal = await realpath(rootDir);
   const planned = await planWorkspaceVerification(rootReal, {
-    packageJsonChanged: options.packageJsonChanged
+    packageJsonChanged: options.packageJsonChanged,
+    checkTimeoutMs: options.checkTimeoutMs
   });
 
   if (planned.length === 0) {
@@ -241,6 +388,23 @@ export async function verifyWorkspaceProject(
       throw new Error("Verificação interrompida pelo usuário.");
     }
     const run = await runSinglePlannedCheck(rootReal, step, options.signal);
+
+    // Se `npm test` usando `node --test` travou por timeout (handles abertos),
+    // faz uma passada rápida allowlisted com `--test-force-exit` APENAS para revelar
+    // o stack trace e o caminho exato do arquivo que falhou (mantendo o check como falha!).
+    if (!run.ok && run.timedOut && step.action === "npm_test" && step.nodeTestScript) {
+      const diagOut = await runNodeTestTimeoutDiagnostic(
+        rootReal,
+        step.nodeTestScript,
+        options.signal
+      );
+      if (diagOut) {
+        run.output = trimCommandOutput(
+          `${run.output}\n\n[DIAGNÓSTICO AUTOMÁTICO (--test-force-exit) — stack trace real recuperado]:\n${diagOut}`
+        );
+      }
+    }
+
     checks.push(run);
     // Se install ou build falhar, já interrompe para corrigir antes de rodar testes
     if (!run.ok) {
@@ -248,7 +412,25 @@ export async function verifyWorkspaceProject(
         allPassed: false,
         ranAny: true,
         checks,
-        summary: `Falha em "${run.command}" (exit ${run.exitCode}).`
+        summary: run.timedOut
+          ? `Timeout em "${run.command}" após ${(run.durationMs / 1000).toFixed(1)}s (processo travado — provável servidor/handle aberto).`
+          : `Falha em "${run.command}" (exit ${run.exitCode}).`
+      };
+    }
+  }
+
+  // Após build/test passarem, roda Mini-Auditor estático de segurança (0ms):
+  // falhas críticas (XSS innerHTML, 0.0.0.0, hash fraco de senha, log de PII, eval)
+  // reprovam o check para o Auto-Fix corrigir automaticamente.
+  const secAudit = await auditWorkspaceSecurity(rootReal);
+  if (secAudit.auditedFilesCount > 0) {
+    checks.push(secAudit.checkRun);
+    if (!secAudit.passed) {
+      return {
+        allPassed: false,
+        ranAny: true,
+        checks,
+        summary: `Auditoria de segurança encontrou ${secAudit.criticalCount} falha(s) crítica(s) para corrigir.`
       };
     }
   }

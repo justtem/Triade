@@ -1,5 +1,9 @@
 import { getProvidersStatus, type ProviderStatus } from "../providers/registry.js";
 import {
+  classifyBuilderIntent,
+  type BuilderFolderPolicy
+} from "../projects/builder-intent.js";
+import {
   AUTO_PLATFORMS,
   type AutoPlatform,
   type AutoRouteDecision,
@@ -321,4 +325,147 @@ export async function routeAutoParticipants(
 ): Promise<AutoRouteDecision> {
   const statuses = await getProvidersStatus();
   return resolveAutoRoute(input, statuses);
+}
+
+const FULL_PROJECT_BUILD_RE =
+  /\b(projeto\s+completo|app\s+completo|sistema\s+completo|site\s+completo|do\s+zero|from\s+scratch|crie\s+(?:na\s+pasta\s+)?(?:o|um|uma)\s+(?:projeto|app|sistema|site|api|painel|dashboard)|monte\s+(?:o|um|uma)\s+(?:projeto|app|sistema|site|api)|construa\s+(?:o|um|uma)\s+(?:projeto|app|sistema|site|api)|requisitos\s+obrigatorios)\b/i;
+
+export interface AutoComposerStrategyInput {
+  prompt: string;
+  isContinuation: boolean;
+  hasLinkedFolder: boolean;
+  isLocalPc: boolean;
+  folderPolicy: BuilderFolderPolicy;
+  responseMode: ResponseMode;
+  attachments?: ChatAttachment[];
+  webSources?: WebSource[];
+  resolvedProjectContext?: ResolvedProjectContext | null;
+}
+
+export interface AutoComposerStrategyResult {
+  interactionMode: InteractionMode;
+  totalRounds: number;
+  autoRoute: AutoRouteDecision;
+}
+
+/**
+ * Estratégia completa do botão "Auto" na barra do composer (0ms, custo zero):
+ * - Pedido de criar app/projeto completo em pasta vinculada → Debate (1 rodada + Síntese única) + Construtor auto;
+ * - Edição/correção incremental em projeto existente → 1 IA forte de código (Gemini → OpenRouter) + Construtor auto;
+ * - Perguntas gerais / comparações / anexos → delega para resolveAutoRoute (Groq rápido, Gemini longo ou Trio Conselho).
+ */
+export function resolveAutoComposerStrategy(
+  input: AutoComposerStrategyInput,
+  providerStatuses: ProviderStatus[]
+): AutoComposerStrategyResult {
+  const probeIntent = classifyBuilderIntent({
+    prompt: input.prompt,
+    hasLinkedFolder: input.hasLinkedFolder,
+    isLocalPc: input.isLocalPc,
+    folderPolicy: input.folderPolicy,
+    interactionMode: "debate",
+    participantCount: 3
+  });
+
+  if (
+    probeIntent.level === "write_explicit" &&
+    input.hasLinkedFolder &&
+    input.isLocalPc &&
+    input.folderPolicy !== "readonly"
+  ) {
+    const normPrompt = input.prompt
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    const isMajorBuild =
+      !input.isContinuation ||
+      input.prompt.trim().length >= 220 ||
+      FULL_PROJECT_BUILD_RE.test(normPrompt);
+
+    if (isMajorBuild) {
+      const autoRoute = resolveAutoRoute(
+        {
+          prompt: input.prompt,
+          responseMode: input.responseMode,
+          interactionMode: "debate",
+          attachments: input.attachments,
+          webSources: input.webSources,
+          resolvedProjectContext: input.resolvedProjectContext
+        },
+        providerStatuses
+      );
+      return {
+        interactionMode: "debate",
+        totalRounds: 1,
+        autoRoute: {
+          ...autoRoute,
+          reason:
+            autoRoute.skippedForQuota && autoRoute.skippedForQuota.length > 0
+              ? "construção completa em Debate (cota preservada)"
+              : "construção completa (Debate + Síntese)"
+        }
+      };
+    }
+
+    // Edição pontual em conversa contínua: 1 IA forte de código (rápido e direto na pasta)
+    const healthMap = new Map<AutoPlatform, QuotaHealth>();
+    for (const st of providerStatuses) {
+      healthMap.set(st.id, computeQuotaHealth(st));
+    }
+    for (const p of AUTO_PLATFORMS) {
+      if (!healthMap.has(p)) {
+        healthMap.set(p, {
+          platform: p,
+          ready: true,
+          healthy: true,
+          usable: true,
+          remainingRatio: 1
+        });
+      }
+    }
+    const { chosen, skippedForQuota } = pickFromPriority(
+      ["gemini", "openrouter", "groq"],
+      healthMap,
+      1,
+      1
+    );
+    return {
+      interactionMode: "direct",
+      totalRounds: 1,
+      autoRoute: {
+        participants: chosen,
+        reason:
+          skippedForQuota.length > 0
+            ? "edição rápida na pasta (cota preservada)"
+            : "edição rápida na pasta",
+        category: "quick",
+        ...(skippedForQuota.length > 0 ? { skippedForQuota } : {})
+      }
+    };
+  }
+
+  const autoRoute = resolveAutoRoute(
+    {
+      prompt: input.prompt,
+      responseMode: input.responseMode,
+      interactionMode: "direct",
+      attachments: input.attachments,
+      webSources: input.webSources,
+      resolvedProjectContext: input.resolvedProjectContext
+    },
+    providerStatuses
+  );
+
+  return {
+    interactionMode: "direct",
+    totalRounds: 1,
+    autoRoute
+  };
+}
+
+export async function routeAutoComposerStrategy(
+  input: AutoComposerStrategyInput
+): Promise<AutoComposerStrategyResult> {
+  const statuses = await getProvidersStatus();
+  return resolveAutoComposerStrategy(input, statuses);
 }

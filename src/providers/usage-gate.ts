@@ -1,8 +1,8 @@
-import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { writeTextAtomically } from "../shared/atomic-fs.js";
 import { ProviderError } from "./types.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -72,17 +72,8 @@ async function loadCounters(): Promise<void> {
 function schedulePersist(): void {
   persistQueue = persistQueue
     .then(async () => {
-      await mkdir(DATA_DIR, { recursive: true });
-
       const snapshot = Object.fromEntries(counters.entries());
-      const tmp = `${USAGE_FILE}.${process.pid}.${randomUUID()}.tmp`;
-
-      try {
-        await writeFile(tmp, JSON.stringify(snapshot, null, 2), "utf8");
-        await rename(tmp, USAGE_FILE);
-      } finally {
-        await rm(tmp, { force: true }).catch(() => {});
-      }
+      await writeTextAtomically(USAGE_FILE, JSON.stringify(snapshot, null, 2));
     })
     .catch(() => {});
 }

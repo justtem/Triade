@@ -30,6 +30,13 @@ import {
   promptPrivacyShieldDecision,
   redactImageAttachmentsWithBoxes
 } from "./user-memory.js";
+import {
+  closeAppBriefingCard,
+  looksLikeNewAppIdeaClient,
+  openAppBriefingForPrompt
+} from "./briefing.js";
+
+let bypassBriefingOnce = false;
 
 export function getSelectedParticipants() {
   return $$('input[name="participants"]:checked').map((cb) => cb.value);
@@ -135,28 +142,156 @@ export function syncAiSelectionUi() {
   }
 }
 
+const CLIENT_NEG_GUARD_RE =
+  /\b(nao\s+(?:mexa|altere|modifique|escreva|crie|grave|mude|aplique|edite|faca\s+nada)|so\s+(?:explique|compare|analise|mostre|responda|converse|planeje|diga)|apenas\s+(?:explique|compare|analise|mostre|responda|planeje|diga|ideias?)|somente\s+(?:explique|leitura|compare|analise)|antes\s+de\s+(?:implementar|alterar|mexer|codar|escrever)|sem\s+(?:modificar|alterar|criar\s+arquivos|escrever\s+na\s+pasta|mexer\s+no\s+codigo))\b/;
+
+const CLIENT_EXPLAIN_START_RE =
+  /^(?:me\s+)?(explique|explica|o\s+que\s+e|o\s+que\s+faz|como\s+funciona|por\s+que|porque|qual\s+(?:e\s+)?a\s+diferenca|compare|vale\s+a\s+pena|analise|resuma|me\s+diga|me\s+fale|liste|descreva|quais\s+sao|entenda)\b/;
+
+const CLIENT_ACTION_VERB_RE =
+  /\b(crie|criar|gere|gerar|implemente|implementar|adicione|adicionar|coloque|colocar|ponha|insira|inserir|inclua|incluir|corrija|corrigir|arrume|arrumar|conserte|consertar|refatore|refatorar|monte|montar|construa|construir|configure|configurar|escreva|escrever|atualize|atualizar|altere|alterar|modifique|modificar|mude|mudar|troque|trocar|ajuste|ajustar|melhore|melhorar|remova|remover|exclua|excluir|tire|tirar|deixe|deixar|substitua|substituir|integre|integrar|desenvolva|desenvolver|reescreva|reescrever|instale|estruture|cria|gera|implementa|adiciona|coloca|inclui|corrige|arruma|conserta|refatora|monta|constroi|muda|troca|ajusta|melhora|remove|tira|deixa)\b/;
+
+const CLIENT_CODE_TARGET_RE =
+  /\b(arquivo|arquivos|pasta|pastas|projeto|codigo|api|endpoint|endpoints|rota|rotas|servico|servicos|service|controller|teste|testes|banco|tabela|tabelas|schema|componente|componentes|pagina|paginas|tela|telas|modal|css|html|script|scripts|funcao|funcoes|classe|classes|modulo|modulos|middleware|bug|erro|erros|build|estrutura|backend|frontend|app|sistema|site|web|dashboard|painel|landing|portal|loja|calculadora|rastreador|gerenciador|controlador|agenda|repositorio|interface|ui|ux|layout|visual|estilo|estilos|tema|cor|cores|fonte|icone|icones|animacao|responsivo|botao|botoes|filtro|filtros|busca|pesquisa|campo|campos|input|formulario|form|card|cards|cartao|cartoes|lista|listas|cabecalho|header|rodape|footer|menu|barra|sidebar|aba|abas|badge|alerta|notificacao|toast|popover|tooltip|grafico|graficos|chart|contador|timer|relogio|calendario|kanban|atalho|atalhos|exportacao|exportar|importar|download|upload|backup|login|autenticacao|cadastro|perfil|usuario|usuarios|validacao|paginacao|ordenacao|cache|persistencia|metricas|estatisticas|funcionalidade|funcionalidades|recurso|recursos|feature|features|melhoria|melhorias|package\.json|tsconfig|index\.ts|src\/|tests\/|public\/)\b/;
+
+const CLIENT_DIRECT_BUILD_RE =
+  /\b(corrija\s+(?:esse|o|os)\s+(?:erro|erros|bug|bugs|build|testes?)|arrume\s+(?:o\s+)?(?:build|erro|codigo|testes?)|crie\s+(?:os\s+)?testes|implemente\s+isso|aplique\s+(?:isso|na\s+pasta)|monte\s+a\s+estrutura|gere\s+os\s+arquivos)\b/;
+
+const CLIENT_FOLLOWUP_EDIT_RE =
+  /\b(e\s+(?:crie|implemente|corrija|arrume|adicione|refatore|atualize|altere|gere\s+os\s+arquivos)|ja\s+(?:crie|implemente|corrija|altere|aplique))\b/;
+
+function isDirectLocalBrowser() {
+  const host = window.location?.hostname || "";
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function classifyClientFolderPrompt(rawText) {
+  const norm = String(rawText || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!norm) return "read";
+  if (CLIENT_NEG_GUARD_RE.test(norm)) return "read";
+  if (CLIENT_EXPLAIN_START_RE.test(norm) && !CLIENT_FOLLOWUP_EDIT_RE.test(norm)) {
+    return "read";
+  }
+  if (
+    CLIENT_DIRECT_BUILD_RE.test(norm) ||
+    (CLIENT_ACTION_VERB_RE.test(norm) && CLIENT_CODE_TARGET_RE.test(norm))
+  ) {
+    return "write_explicit";
+  }
+  return "read";
+}
+
+export function syncComposerSubmitIntentUi() {
+  const activeDebate = getActiveOrSelectedDebate();
+  const isContinuing = Boolean(activeDebate);
+  const isRunningActive = Boolean(activeDebate && activeDebate.status === "running");
+  const modeKey = state.activeComposerMode || deriveComposerModeFromState();
+  const submitBtn = $("#composer-submit-btn");
+  const submitSpan = $("#composer-submit-btn span:first-child");
+  const submitArrow = $("#composer-submit-btn .cta-arrow");
+
+  if (!submitBtn) return;
+
+  if (isRunningActive) {
+    submitBtn.classList.add("is-stop-mode");
+    submitBtn.classList.remove("is-builder-intent");
+    submitBtn.title = "Parar geração agora (mantém o texto já escrito)";
+    submitBtn.disabled = false;
+    if (submitSpan) submitSpan.textContent = "Parar";
+    if (submitArrow) submitArrow.textContent = "■";
+    return;
+  }
+
+  submitBtn.classList.remove("is-stop-mode");
+
+  const linkedProj = uiHooks.getEffectiveProjectForComposer();
+  const hasLocalFolder = Boolean(linkedProj?.linkedFolderPath) && isDirectLocalBrowser();
+  const policyVal = state.folderPolicy || "auto";
+  const isAutoComposer = modeKey === "auto" || Boolean(state.isAutoRouteMode);
+  const isCouncilParallel =
+    !isAutoComposer &&
+    state.selectedInteractionMode === "direct" &&
+    !state.isSingleAiMode &&
+    getSelectedParticipants().length > 1;
+  const typedText = $("#debate-topic")?.value || "";
+  const clientIntent =
+    hasLocalFolder && policyVal !== "readonly" && !isCouncilParallel
+      ? classifyClientFolderPrompt(typedText)
+      : "read";
+
+  const willAutoBuild = clientIntent === "write_explicit" && policyVal === "auto";
+  const willConfirmDiff = clientIntent === "write_explicit" && policyVal === "confirm";
+  const willOpenBriefing =
+    !isContinuing &&
+    !hasLocalFolder &&
+    isDirectLocalBrowser() &&
+    (modeKey === "auto" || modeKey === "debate") &&
+    looksLikeNewAppIdeaClient(typedText);
+
+  submitBtn.classList.toggle(
+    "is-builder-intent",
+    willAutoBuild || willConfirmDiff || willOpenBriefing
+  );
+
+  if (willAutoBuild) {
+    submitBtn.title = `Construtor automático: vai gerar arquivos, gravar em "${linkedProj.name}" (com backup) e rodar build/test`;
+    if (submitSpan) submitSpan.textContent = "Construir na Pasta";
+  } else if (willConfirmDiff) {
+    submitBtn.title = `Vai gerar o preview/diff para você confirmar antes de gravar em "${linkedProj.name}"`;
+    if (submitSpan) submitSpan.textContent = "Preparar Diff";
+  } else if (willOpenBriefing) {
+    submitBtn.title = "Abre o briefing rápido para criar a pasta, ativar boas práticas OWASP/LGPD e construir o app";
+    if (submitSpan) submitSpan.textContent = "Preparar Novo App";
+  } else {
+    submitBtn.title = "Enviar mensagem";
+    if (submitSpan) {
+      submitSpan.textContent = isContinuing
+        ? "Enviar"
+        : modeKey === "debate"
+          ? "Debater"
+          : "Enviar";
+    }
+  }
+
+  if (submitArrow) submitArrow.textContent = "→";
+}
+
 export function deriveComposerModeFromState() {
-  if (state.activeComposerMode === "builder") return "builder";
+  if (state.isAutoRouteMode) return "auto";
   if (state.selectedInteractionMode === "debate") return "debate";
-  if (!state.isAutoRouteMode && (state.isSingleAiMode || getSelectedParticipants().length === 1)) {
+  if (state.isSingleAiMode || getSelectedParticipants().length === 1) {
     return "quick";
   }
   return "council";
 }
 
 export function applyComposerMode(modeKey, options = {}) {
-  const validModes = ["quick", "council", "debate", "builder"];
-  const nextMode = validModes.includes(modeKey) ? modeKey : "council";
+  const validModes = ["auto", "quick", "council", "debate"];
+  const nextMode = validModes.includes(modeKey) ? modeKey : "auto";
   state.activeComposerMode = nextMode;
   saveStoredOption(COMPOSER_MODE_STORAGE_KEY, nextMode);
 
-  state.isAutoRouteMode = false;
-  saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
-
   const roundsSelect = $("#debate-rounds");
-  const focusSelect = $("#debate-focus");
 
-  if (nextMode === "quick") {
+  if (nextMode === "auto") {
+    state.isAutoRouteMode = true;
+    saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "on");
+    state.isSingleAiMode = false;
+    state.selectedInteractionMode = "direct";
+    state.selectedResponseMode = "normal";
+    saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
+    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
+    for (const cb of $$('input[name="participants"]')) {
+      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+    }
+  } else if (nextMode === "quick") {
+    state.isAutoRouteMode = false;
+    saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
     const chosenAi =
       options.singleAi && ALL_PLATFORM_IDS.includes(options.singleAi)
         ? options.singleAi
@@ -176,6 +311,8 @@ export function applyComposerMode(modeKey, options = {}) {
       cb.checked = cb.value === chosenAi;
     }
   } else if (nextMode === "council") {
+    state.isAutoRouteMode = false;
+    saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
     state.isSingleAiMode = false;
     state.selectedInteractionMode = "direct";
     state.selectedResponseMode = "normal";
@@ -187,6 +324,8 @@ export function applyComposerMode(modeKey, options = {}) {
       cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
     }
   } else if (nextMode === "debate") {
+    state.isAutoRouteMode = false;
+    saveStoredOption(AUTO_ROUTE_STORAGE_KEY, "off");
     state.isSingleAiMode = false;
     state.selectedInteractionMode = "debate";
     if (options.responseMode === "prompt_markdown" || options.responseMode === "normal") {
@@ -197,19 +336,6 @@ export function applyComposerMode(modeKey, options = {}) {
     if (roundsSelect && Number(roundsSelect.value) < 1) {
       roundsSelect.value = "2";
     }
-    for (const cb of $$('input[name="participants"]')) {
-      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
-    }
-  } else if (nextMode === "builder") {
-    state.isSingleAiMode = false;
-    state.selectedInteractionMode = "debate";
-    state.selectedResponseMode = "prompt_markdown";
-    state.selectedAutoVerdict = "off";
-    saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "debate");
-    saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "prompt_markdown");
-    saveStoredOption(AUTO_VERDICT_STORAGE_KEY, "off");
-    if (roundsSelect) roundsSelect.value = "1";
-    if (focusSelect) focusSelect.value = "backend";
     for (const cb of $$('input[name="participants"]')) {
       cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
     }
@@ -225,13 +351,15 @@ export function setAutoRouteMode(enabled = true) {
   saveStoredOption(AUTO_ROUTE_STORAGE_KEY, next ? "on" : "off");
   if (next) {
     state.isSingleAiMode = false;
-    if (state.activeComposerMode === "quick") {
-      state.activeComposerMode = "council";
-      saveStoredOption(COMPOSER_MODE_STORAGE_KEY, "council");
-    }
+    state.activeComposerMode = "auto";
+    saveStoredOption(COMPOSER_MODE_STORAGE_KEY, "auto");
     for (const cb of $$('input[name="participants"]')) {
       cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
     }
+  } else if (state.activeComposerMode === "auto") {
+    const fallback = state.selectedInteractionMode === "debate" ? "debate" : "council";
+    state.activeComposerMode = fallback;
+    saveStoredOption(COMPOSER_MODE_STORAGE_KEY, fallback);
   }
   syncAiSelectionUi();
   syncComposerModeUi();
@@ -300,7 +428,7 @@ export function syncComposerWithDebate(debate) {
 
   state.lastSyncedComposerDebateId = debate.id;
   if (lastTurn?.autoRoute) {
-    state.activeComposerMode = interMode === "debate" ? "debate" : "council";
+    state.activeComposerMode = "auto";
     setAutoRouteMode(true);
     return;
   }
@@ -331,52 +459,6 @@ export function syncComposerModeUi() {
   const quickPicker = $("#composer-quick-ai-picker");
   if (quickPicker) {
     quickPicker.hidden = modeKey !== "quick" || Boolean(state.isAutoRouteMode);
-  }
-
-  const builderBanner = $("#composer-builder-banner");
-  const builderText = $("#composer-builder-text");
-  const builderLinkBtn = $("#composer-builder-link-btn");
-  const builderAutoWrap = $("#composer-builder-auto-wrap");
-  const builderAutoInput = $("#composer-builder-auto-toggle");
-  if (builderBanner) {
-    const isBuilder = modeKey === "builder";
-    builderBanner.hidden = !isBuilder;
-    if (isBuilder) {
-      const linkedProj = uiHooks.getEffectiveProjectForComposer();
-      const hasFolder = Boolean(linkedProj?.linkedFolderPath);
-      const isLocalHost =
-        window.location?.hostname === "127.0.0.1" ||
-        window.location?.hostname === "localhost" ||
-        window.location?.hostname === "::1";
-      builderBanner.classList.toggle("is-missing-folder", !hasFolder);
-      if (builderText) {
-        if (hasFolder) {
-          const shortFolder = String(linkedProj.linkedFolderPath || "")
-            .split(/[\\/]/)
-            .filter(Boolean)
-            .slice(-2)
-            .join("\\");
-          builderText.textContent = state.builderAutoApplyPref
-            ? `Construtor em ${linkedProj.name} (${shortFolder || linkedProj.linkedFolderPath}) · Debate, grava com backup e testa automaticamente.`
-            : `Construtor em ${linkedProj.name} (${shortFolder || linkedProj.linkedFolderPath}) · Mostra preview/diff antes de aplicar na pasta.`;
-        } else if (linkedProj) {
-          builderText.textContent = `O projeto "${linkedProj.name}" ainda não tem pasta vinculada no PC.`;
-        } else {
-          builderText.textContent =
-            "Modo Construtor exige um Projeto com pasta vinculada no PC.";
-        }
-      }
-      if (builderAutoWrap) {
-        builderAutoWrap.hidden = !hasFolder || !isLocalHost;
-      }
-      if (builderAutoInput) {
-        builderAutoInput.checked = Boolean(state.builderAutoApplyPref);
-      }
-      if (builderLinkBtn) {
-        builderLinkBtn.hidden = hasFolder;
-        builderLinkBtn.textContent = linkedProj ? "Vincular pasta..." : "Criar / vincular projeto...";
-      }
-    }
   }
 
   for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
@@ -417,14 +499,13 @@ export function syncComposerModeUi() {
 
   const activeDebate = getActiveOrSelectedDebate();
   const isContinuing = Boolean(activeDebate);
-  const isRunningActive = Boolean(activeDebate && activeDebate.status === "running");
   const responder = getActiveResponderInfo();
 
   const summaryEl = $("#composer-config-summary");
   if (summaryEl) {
     const extras = [];
     if (state.isAutoRouteMode) extras.push("Auto");
-    if (modeKey !== "builder" && state.selectedResponseMode === "prompt_markdown") {
+    if (state.selectedResponseMode === "prompt_markdown") {
       extras.push("Prompt MD");
     }
     if (state.selectedAutoVerdict === "on") extras.push("Veredito");
@@ -435,49 +516,29 @@ export function syncComposerModeUi() {
     summaryEl.textContent = extras.length > 0 ? `Avançado · ${extras.join(" · ")}` : "Avançado";
   }
 
-  const submitBtn = $("#composer-submit-btn");
-  const submitSpan = $("#composer-submit-btn span:first-child");
-  const submitArrow = $("#composer-submit-btn .cta-arrow");
-
-  if (submitBtn) {
-    submitBtn.classList.toggle("is-stop-mode", isRunningActive);
-    submitBtn.title = isRunningActive
-      ? "Parar geração agora (mantém o texto já escrito)"
-      : "Enviar mensagem";
-    if (isRunningActive) {
-      submitBtn.disabled = false;
-    }
-  }
-  if (submitSpan) {
-    submitSpan.textContent = isRunningActive
-      ? "Parar"
-      : isContinuing
-        ? "Enviar"
-        : modeKey === "builder"
-          ? "Construir"
-          : modeKey === "debate"
-            ? "Debater"
-            : "Enviar";
-  }
-  if (submitArrow) {
-    submitArrow.textContent = isRunningActive ? "■" : "→";
-  }
+  syncComposerSubmitIntentUi();
 
   const topicInput = $("#debate-topic");
   if (topicInput) {
+    const linkedProj = uiHooks.getEffectiveProjectForComposer();
+    const hasFolder = Boolean(linkedProj?.linkedFolderPath) && isDirectLocalBrowser();
     if (isContinuing) {
       topicInput.placeholder = `Continuar (${COMPOSER_MODE_LABELS[modeKey] || responder.shortLabel})... (Enter envia · / templates)`;
-    } else if (modeKey === "builder") {
-      topicInput.placeholder =
-        "Descreva o que construir ou alterar na pasta do projeto... (Enter envia · / templates)";
+    } else if (modeKey === "auto") {
+      topicInput.placeholder = hasFolder
+        ? `Descreva o que criar, corrigir ou perguntar em ${linkedProj.name} — o Auto escolhe tudo... (Enter envia)`
+        : "Pergunte algo, compare ideias ou peça um app — o Auto escolhe o melhor modo... (Enter envia · / templates)";
     } else if (modeKey === "debate") {
-      topicInput.placeholder =
-        "Descreva o problema para as IAs debaterem e fecharem uma síntese... (Enter envia)";
+      topicInput.placeholder = hasFolder
+        ? `Peça para criar/corrigir código em ${linkedProj.name} ou debata uma ideia... (Enter envia)`
+        : "Descreva o problema para as IAs debaterem e fecharem uma síntese... (Enter envia)";
     } else if (modeKey === "quick") {
-      topicInput.placeholder = `Pergunte direto ao ${responder.shortLabel}... (Enter envia · / templates)`;
+      topicInput.placeholder = hasFolder
+        ? `Pergunte ou peça edição rápida em ${linkedProj.name} com ${responder.shortLabel}... (Enter envia)`
+        : `Pergunte direto ao ${responder.shortLabel}... (Enter envia · / templates)`;
     } else {
       topicInput.placeholder =
-        "Pergunte ao Conselho (3 IAs em paralelo) ou digite / para templates... (Enter envia)";
+        "Compare 3 opiniões em paralelo no Conselho ou digite / para templates... (Enter envia)";
     }
   }
 
@@ -537,6 +598,41 @@ export async function handleCreateDebate(event) {
     return;
   }
 
+  // Briefing 1-frase: em conversa nova sem pasta vinculada no PC local,
+  // intercepta ideias de novos apps para oferecer criação de pasta + Expansor OWASP/LGPD
+  const shouldBypassBriefing = bypassBriefingOnce;
+  bypassBriefingOnce = false;
+  const effectiveProjectNow = uiHooks.getEffectiveProjectForComposer();
+  const activeModeNow = state.activeComposerMode || deriveComposerModeFromState();
+  if (
+    !shouldBypassBriefing &&
+    !currentDebate &&
+    !effectiveProjectNow?.linkedFolderPath &&
+    isDirectLocalBrowser() &&
+    (activeModeNow === "auto" || activeModeNow === "debate") &&
+    looksLikeNewAppIdeaClient(topicValue)
+  ) {
+    if (feedback) feedback.textContent = "";
+    await openAppBriefingForPrompt(topicValue, {
+      onBuildReady: ({ expandedPrompt, title }) => {
+        applyComposerMode("auto");
+        if (titleInput && title) titleInput.value = title;
+        if (topicInput && expandedPrompt) {
+          topicInput.value = expandedPrompt;
+        }
+        bypassBriefingOnce = true;
+        $("#create-debate-form")?.requestSubmit();
+      },
+      onSendPlainChat: () => {
+        bypassBriefingOnce = true;
+        $("#create-debate-form")?.requestSubmit();
+      }
+    });
+    return;
+  }
+
+  closeAppBriefingCard();
+
   const checkboxes = $$('input[name="participants"]:checked');
   const participants = state.isAutoRouteMode
     ? [...AUTO_PLATFORM_IDS]
@@ -560,18 +656,6 @@ export async function handleCreateDebate(event) {
     return;
   }
 
-  if (state.activeComposerMode === "builder") {
-    const linkedProj = uiHooks.getEffectiveProjectForComposer();
-    if (!linkedProj || !linkedProj.linkedFolderPath) {
-      if (feedback) {
-        feedback.textContent =
-          "Modo Construtor exige um Projeto com pasta vinculada no PC.";
-      }
-      uiHooks.openProjectModal(linkedProj?.id || null);
-      return;
-    }
-  }
-
   const rawTitle = (titleInput?.value || "").trim();
   const finalTitle = currentDebate
     ? currentDebate.title
@@ -583,12 +667,7 @@ export async function handleCreateDebate(event) {
     state.selectedResponseMode === "prompt_markdown"
       ? focusSelect?.value || "geral"
       : "geral";
-  const rawRules = (rulesInput?.value || "").trim();
-  const builderHint =
-    state.activeComposerMode === "builder"
-      ? "Modo Construtor: entregue estrutura de pastas clara e cada arquivo completo precedido pelo caminho relativo exato (ex.: ### `src/index.ts`)."
-      : "";
-  const rules = [rawRules, builderHint].filter(Boolean).join(" | ");
+  const rules = (rulesInput?.value || "").trim();
 
   const attachmentsSnapshot = state.pendingAttachments.map((f) => ({ ...f }));
 
@@ -629,9 +708,10 @@ export async function handleCreateDebate(event) {
     }
 
     const routingMode = state.isAutoRouteMode ? "auto" : "manual";
+    const autoSelectInteraction =
+      state.activeComposerMode === "auto" && Boolean(state.isAutoRouteMode);
     const autoVerdict = state.selectedAutoVerdict === "on";
-    const isBuilderTurn = state.activeComposerMode === "builder";
-    const autoApplyTurn = isBuilderTurn && Boolean(state.builderAutoApplyPref);
+    const policyToSend = state.folderPolicy || "auto";
 
     let currentAttachments = attachmentsSnapshot;
 
@@ -645,9 +725,9 @@ export async function handleCreateDebate(event) {
               rules: rules || undefined,
               participants,
               routingMode,
+              autoSelectInteraction,
               autoVerdict,
-              builderMode: isBuilderTurn || undefined,
-              builderAutoApply: autoApplyTurn || undefined,
+              folderPolicy: policyToSend,
               totalRounds,
               focus,
               responseMode: state.selectedResponseMode,
@@ -666,9 +746,9 @@ export async function handleCreateDebate(event) {
               rules: rules || undefined,
               participants,
               routingMode,
+              autoSelectInteraction,
               autoVerdict,
-              builderMode: isBuilderTurn || undefined,
-              builderAutoApply: autoApplyTurn || undefined,
+              folderPolicy: policyToSend,
               totalRounds,
               focus,
               responseMode: state.selectedResponseMode,
@@ -1112,11 +1192,7 @@ export async function saveMemoryModal(summaryText) {
 
 function inferTemplatePresetMode(tpl) {
   if (!tpl) return "debate";
-  if (tpl.interactionMode === "debate" && tpl.responseMode === "prompt_markdown" && tpl.focus === "backend") {
-    return "builder";
-  }
   if (tpl.interactionMode === "debate") return "debate";
-  if (tpl.responseMode === "normal") return "council";
   return "council";
 }
 
@@ -1128,14 +1204,9 @@ function formatTemplateModeBadge(tpl) {
 export function syncTemplatePresetFields(presetVal) {
   const respEl = $("#tpl-response-mode");
   const interEl = $("#tpl-interaction-mode");
-  const focusEl = $("#tpl-focus");
   if (presetVal === "quick" || presetVal === "council") {
     if (respEl) respEl.value = "normal";
     if (interEl) interEl.value = "direct";
-  } else if (presetVal === "builder") {
-    if (respEl) respEl.value = "prompt_markdown";
-    if (interEl) interEl.value = "debate";
-    if (focusEl && focusEl.value === "geral") focusEl.value = "backend";
   } else {
     if (respEl) respEl.value = "normal";
     if (interEl) interEl.value = "debate";

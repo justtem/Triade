@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Council — Portfolio Deck 16:9</title>
+  <link rel="stylesheet" href="../../public/fonts/fonts.css" />
+  <style>
+    :root {
+      /* === Tokens Oficiais AI Council (Neon Blueprint sobre Obsidian) === */
+      --project-bg: #181818;
+      --project-surface: #080808;
+      --project-surface-alt: #2a2b2b;
+      --project-border: #4b4b4b;
+      --project-border-strong: #e3e3e3;
+      --project-text: #e3e3e3;
+      --project-title: #ffffff;
+      --project-muted: #878787;
+      --project-primary: #9985ff;
+      --project-lavender: #ddccff;
+      --project-sky: #94dbff;
+      --project-saffron: #d6ca6f;
+      --project-rose: #ffa3c2;
+      --project-shadow: 8px 8px 0px 0px #080808;
+      --project-shadow-brand: 8px 8px 0px 0px #363054;
+
+      /* === Tipografia Técnica 100% Local === */
+      --font-display: 'National 2 Condensed', 'Oswald', 'Segoe UI', sans-serif;
+      --font-label: 'JetBrains Mono', Consolas, monospace;
+      --font-body: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+
+      /* === Escala de Apresentação (1920x1080) === */
+      --text-body: 21px;
+      --text-lead: 25px;
+      --text-card-title: 27px;
+      --text-metric: 104px;
+    }
+
+    @page { size: 1920px 1080px; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #080808;
+      display: flex;
+      flex-direction: column;
+      gap: 40px;
+      padding: 40px;
+      font-family: var(--font-body);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .slide {
+      width: 1920px;
+      height: 1080px;
+      padding: 64px 88px;
+      background: var(--project-bg);
+      color: var(--project-text);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+      page-break-after: always;
+      break-after: page;
+    }
+
+    .slide.light {
+      --project-bg: #f6f6f6;
+      --project-surface: #ffffff;
+      --project-surface-alt: #e3e3e3;
+      --project-border: #4b4b4b;
+      --project-border-strong: #181818;
+      --project-text: #181818;
+      --project-title: #080808;
+      --project-muted: #4b4b4b;
+      --project-primary: #4b36b8;
+      --project-sky: #0b5d8a;
+      --project-saffron: #7d6700;
+      --project-rose: #a32653;
+      --project-shadow: 8px 8px 0px 0px #181818;
+      --project-shadow-brand: 8px 8px 0px 0px #363054;
+    }
+
+    /* === Header & Footer === */
+    .slide-top, .slide-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 3;
+    }
+
+    .eyebrow {
+      font-family: var(--font-label);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--project-primary);
+    }
+
+    .stage-pill {
+      font-family: var(--font-label);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 8px 18px;
+      border-radius: 9999px;
+      border: 1.5px solid var(--project-border-strong);
+      background: var(--project-surface);
+      color: var(--project-title);
+    }
+
+    .slide-footer {
+      font-family: var(--font-label);
+      font-size: 13.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--project-muted);
+      border-top: 1px solid var(--project-border);
+      padding-top: 18px;
+    }
+
+    /* === Tipografia === */
+    h1 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 108px;
+      line-height: 0.96;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      color: var(--project-title);
+    }
+    h2 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 64px;
+      line-height: 1.03;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      color: var(--project-title);
+    }
+    h3 {
+      font-family: var(--font-body);
+      font-size: var(--text-card-title);
+      font-weight: 700;
+      line-height: 1.24;
+      color: var(--project-title);
+    }
+    em {
+      font-style: normal;
+      color: var(--project-primary);
+    }
+    .accent-sky { color: var(--project-sky); }
+    .accent-saffron { color: var(--project-saffron); }
+    .accent-rose { color: var(--project-rose); }
+
+    .lead {
+      font-size: var(--text-lead);
+      line-height: 1.46;
+      color: var(--project-text);
+      max-width: 780px;
+    }
+    .body-text {
+      font-size: var(--text-body);
+      line-height: 1.48;
+      color: var(--project-muted);
+    }
+
+    .tag-list { display: flex; flex-wrap: wrap; gap: 12px; }
+    .tag {
+      font-family: var(--font-label);
+      font-size: 14.5px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--project-border);
+      background: var(--project-surface);
+      color: var(--project-title);
+    }
+    .tag.is-primary { border-color: var(--project-primary); color: var(--project-primary); }
+    .tag.is-sky { border-color: var(--project-sky); color: var(--project-sky); }
+
+    /* === Cards Sólidos (Anti-Vazio, Sombra Rígida Sem Blur) === */
+    .card {
+      background: var(--project-surface);
+      border: 1.5px solid var(--project-border);
+      border-radius: 16px;
+      padding: 34px;
+      box-shadow: var(--project-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .card.highlight {
+      border-color: var(--project-primary);
+      box-shadow: var(--project-shadow-brand);
+    }
+    .card.sky-border {
+      border-color: var(--project-sky);
+    }
+
+    /* === Device Frames === */
+    .browser-frame {
+      background: var(--project-surface);
+      border: 2px solid var(--project-border-strong);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: var(--project-shadow);
+      display: flex;
+      flex-direction: column;
+    }
+    .browser-bar {
+      height: 36px;
+      padding: 0 16px;
+      background: #2a2b2b;
+      border-bottom: 1px solid #4b4b4b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-label);
+      font-size: 13px;
+      color: #e3e3e3;
+      flex-shrink: 0;
+    }
+    .browser-dots { display: flex; gap: 7px; }
+    .dot { width: 10px; height: 10px; border-radius: 9999px; background: #666666; }
+    .browser-viewport {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      background: #181818;
+    }
+    .browser-viewport img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top left;
+      display: block;
+    }
+
+    .phone-frame {
+      width: 268px;
+      height: 556px;
+      background: #080808;
+      border: 4px solid var(--project-border-strong);
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: var(--project-shadow-brand);
+    }
+    .phone-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top;
+      display: block;
+    }
+
+    /* === LAYOUT 1: Cover Editorial === */
+    .layout-cover-editorial .cover-grid {
+      display: grid;
+      grid-template-columns: 0.96fr 1.16fr;
+      gap: 52px;
+      align-items: center;
+      flex: 1;
+      z-index: 2;
+    }
+    .cover-kpis {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      padding-top: 12px;
+    }
+    .cover-kpi {
+      background: var(--project-surface);
+      border: 1px solid var(--project-border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .cover-kpi strong {
+      font-family: var(--font-label);
+      font-size: 24px;
+      color: var(--project-title);
+    }
+    .cover-kpi span {
+      font-family: var(--font-label);
+      font-size: 12px;
+      color: var(--project-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* === LAYOUT 2: Split 50/50 Sangrado === */
+    .layout-split-50 { padding: 0; }
+    .layout-split-50 .split-wrapper {
+      display: grid;
+      grid-template-columns: 0.92fr 1.08fr;
+      width: 100%;
+      height: 100%;
+    }
+    .layout-split-50 .split-media {
+      background: #080808;
+      border-right: 2px solid var(--project-border-strong);
+      overflow: hidden;
+    }
+    .layout-split-50 .split-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      display: block;
+    }
+    .layout-split-50 .split-content {
+      padding: 64px 76px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    /* === LAYOUT 3: Bento Grid Assimétrico === */
+    .bento-grid {
+      display: grid;
+      grid-template-columns: 1.12fr 0.88fr;
+      grid-template-rows: auto auto;
+      gap: 26px;
+      align-content: center;
+      flex: 1;
+      z-index: 2;
+    }
+    .bento-hero { grid-row: span 2; justify-content: center; padding: 40px; }
+    .bento-bullets {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 8px;
+      padding-top: 16px;
+      border-top: 1px solid var(--project-border);
+    }
+    .bento-bullets li {
+      font-size: 20px;
+      line-height: 1.42;
+      color: var(--project-text);
+      padding-left: 18px;
+      position: relative;
+    }
+    .bento-bullets li::before {
+      content: "→";
+      position: absolute;
+      left: 0;
+      color: var(--project-sky);
+      font-family: var(--font-label);
+    }
+
+    /* === LAYOUT 4: Spotlight Overlapping (Desktop + Mobile) === */
+    .spotlight-grid {
+      display: grid;
+      grid-template-columns: 1.38fr 0.62fr;
+      gap: 52px;
+      align-items: center;
+      flex: 1;
+      z-index: 2;
+    }
+    .overlap-stage { position: relative; padding-right: 64px; padding-bottom: 28px; }
+    .overlap-stage .browser-frame { height: 590px; }
+    .overlap-stage .phone-frame { position: absolute; right: 0; bottom: 0; z-index: 4; }
+    .callout-list { display: flex; flex-direction: column; gap: 26px; }
+    .callout-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-left: 20px;
+      border-left: 3px solid var(--project-primary);
+    }
+
+    /* === LAYOUT 5: Dual Asymmetric (60/40) === */
+    .dual-grid {
+      display: grid;
+      grid-template-columns: 1.22fr 0.88fr;
+      gap: 32px;
+      align-items: end;
+      flex: 1;
+      margin: 14px 0;
+      z-index: 2;
+    }
+    .dual-grid .browser-frame.primary { height: 520px; }
+    .dual-grid .browser-frame.secondary { height: 450px; }
+    .insight-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      padding-top: 18px;
+      margin-bottom: 16px;
+      border-top: 1px solid var(--project-border);
+      z-index: 2;
+    }
+    .insight-item { display: flex; flex-direction: column; gap: 6px; }
+    .insight-item strong {
+      font-family: var(--font-label);
+      font-size: 16px;
+      color: var(--project-sky);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .insight-item span { font-size: 20px; color: var(--project-text); line-height: 1.4; }
+
+    /* === LAYOUT 6: Feature Split (Tela + Lista 01/02/03) === */
+    .feature-split-grid {
+      display: grid;
+      grid-template-columns: 1.12fr 0.88fr;
+      gap: 52px;
+      align-items: center;
+      flex: 1;
+      z-index: 2;
+    }
+    .feature-split-grid .browser-frame { height: 590px; }
+    .num-list { display: flex; flex-direction: column; gap: 28px; }
+    .num-item { display: grid; grid-template-columns: 62px 1fr; gap: 16px; align-items: start; }
+    .num-index {
+      font-family: var(--font-label);
+      font-size: 36px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--project-primary);
+    }
+
+    /* === LAYOUT 7: Architecture Diagram === */
+    .arch-layout {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 28px;
+      flex: 1;
+      z-index: 2;
+    }
+    .arch-flow {
+      display: grid;
+      grid-template-columns: 1fr 42px 1fr 42px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+    .arch-arrow {
+      font-family: var(--font-label);
+      font-size: 32px;
+      font-weight: 700;
+      text-align: center;
+      color: var(--project-primary);
+    }
+    .arch-node {
+      background: var(--project-surface);
+      border: 1.5px solid var(--project-border);
+      border-top: 5px solid var(--project-primary);
+      border-radius: 14px;
+      padding: 30px;
+      box-shadow: var(--project-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .arch-node.is-sky { border-top-color: var(--project-sky); }
+    .arch-node.is-saffron { border-top-color: var(--project-saffron); }
+    .arch-meta {
+      font-family: var(--font-label);
+      font-size: 14px;
+      color: var(--project-muted);
+      padding-top: 10px;
+      border-top: 1px solid var(--project-surface-alt);
+    }
+    .tradeoff-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      padding: 22px 28px;
+      background: var(--project-surface);
+      border: 1px solid var(--project-border);
+      border-radius: 14px;
+    }
+    .tradeoff-strip strong {
+      display: block;
+      font-family: var(--font-label);
+      font-size: 14px;
+      color: var(--project-saffron);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .tradeoff-strip p { font-size: 20px; line-height: 1.42; color: var(--project-text); }
+
+    /* === LAYOUT 8: Metrics Hero === */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 30px;
+      align-content: center;
+      flex: 1;
+      z-index: 2;
+    }
+    .metric-card { padding: 38px; justify-content: center; }
+    .metric-val {
+      font-family: var(--font-display);
+      font-size: var(--text-metric);
+      font-weight: 700;
+      line-height: 0.94;
+      color: var(--project-primary);
+    }
+    .metric-val.is-sky { color: var(--project-sky); }
+    .metric-val.is-saffron { color: var(--project-saffron); }
+    .metric-bar {
+      width: 100%;
+      height: 5px;
+      background: var(--project-surface-alt);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .metric-bar > span { display: block; height: 100%; background: var(--project-primary); }
+    .metric-bar.is-sky > span { background: var(--project-sky); }
+    .metric-bar.is-saffron > span { background: var(--project-saffron); }
+
+    .stack-strip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      padding: 22px 30px;
+      margin-bottom: 16px;
+      background: var(--project-surface);
+      border: 1.5px solid var(--project-border);
+      border-radius: 14px;
+      z-index: 2;
+    }
+
+    /* === LAYOUT 9: Closing Statement === */
+    .layout-closing-statement .bg-bleed {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: right center;
+      opacity: 0.85;
+      z-index: 0;
+    }
+    .closing-center {
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      justify-content: center;
+      max-width: 980px;
+      flex: 1;
+      z-index: 2;
+    }
+    .closing-roadmap {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      max-width: 900px;
+    }
+    .closing-card {
+      background: #080808;
+      border: 1.5px solid var(--project-border);
+      border-left: 4px solid var(--project-primary);
+      border-radius: 12px;
+      padding: 22px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .closing-card.is-sky { border-left-color: var(--project-sky); }
+    .repo-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      align-self: flex-start;
+      padding: 14px 24px;
+      background: #080808;
+      border: 2px solid var(--project-border-strong);
+      border-radius: 10px;
+      box-shadow: var(--project-shadow-brand);
+      font-family: var(--font-label);
+      font-size: 18px;
+      color: var(--project-title);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===================================================================
+       SLIDE 01: CAPA EDITORIAL (ESCURO)
+  ==================================================================== -->
+  <section class="slide layout-cover-editorial">
+    <div class="slide-top">
+      <span class="eyebrow">AI COUNCIL // PORTFOLIO CASE</span>
+      <span class="stage-pill">Estágio: Produto em Uso Local (v1.0)</span>
+    </div>
+
+    <div class="cover-grid">
+      <div style="display:flex; flex-direction:column; gap:24px;">
+        <h1>AI <em>Council</em></h1>
+        <p class="lead">Orquestrador local-first multi-IA que une Gemini, Groq e OpenRouter em debates estruturados, escrita direta na pasta do projeto e privacidade criptografada.</p>
+        <div class="tag-list">
+          <span class="tag is-primary">4 Modos em 1 Clique</span>
+          <span class="tag is-sky">Modo Construtor</span>
+          <span class="tag">AES-256-GCM + DLP</span>
+          <span class="tag">Custo Zero de API</span>
+        </div>
+        <div class="cover-kpis">
+          <div class="cover-kpi">
+            <strong>104</strong>
+            <span>Testes passando</span>
+          </div>
+          <div class="cover-kpi">
+            <strong>5 / 5</strong>
+            <span>Security Check</span>
+          </div>
+          <div class="cover-kpi">
+            <strong>0 CDN</strong>
+            <span>100% Self-Hosted</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="browser-frame" style="height: 616px;">
+        <div class="browser-bar">
+          <div class="browser-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          <span>127.0.0.1:4317 &bull; Chat Central &amp; 4 Modos</span>
+        </div>
+        <div class="browser-viewport">
+          <img src="assets/screenshots/desktop-chat-zero.png" alt="Tela inicial do AI Council com os 4 modos no compositor" />
+        </div>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>AI Council &bull; Intelligence Hub</span>
+      <span>01 / 09</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 02: CONTEXTO & PROBLEMA (CLARO — SPLIT 50/50 SANGRADO)
+  ==================================================================== -->
+  <section class="slide light layout-split-50">
+    <div class="split-wrapper">
+      <div class="split-media">
+        <img src="assets/generated/context-blueprint.jpg" alt="Ilustração técnica de fluxos fragmentados convergindo em um núcleo arquitetural" />
+      </div>
+      <div class="split-content">
+        <div class="slide-top">
+          <span class="eyebrow">01 &mdash; Contexto &amp; Problema</span>
+          <span class="stage-pill">Diagnóstico Real</span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:24px;">
+          <h2>Abas isoladas e <em>APIs instáveis</em> quebram o fluxo de engenharia</h2>
+          <p class="body-text">Trabalhar com múltiplos modelos hoje exige alternar abas, colar arquivos manualmente, lidar com limites gratuitos imprevisíveis e confiar histórico privado a nuvens de terceiros.</p>
+
+          <div class="callout-list">
+            <div class="callout-item">
+              <h3>Fricção entre Comparação e Código</h3>
+              <p class="body-text">Copiar trechos do chat, criar pastas na mão e descobrir erros de compilação só depois de montar tudo.</p>
+            </div>
+            <div class="callout-item">
+              <h3>Instabilidade e Cortes nos Planos Grátis</h3>
+              <p class="body-text">Modelos entram em 503/429 no meio do dia ou cortam arquivos extensos antes do final.</p>
+            </div>
+            <div class="callout-item">
+              <h3>Privacidade e Vazamento Acidental</h3>
+              <p class="body-text">Chaves, CPFs, prints de tela e código interno acabam enviados sem filtro prévio.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="slide-footer">
+          <span>Motivação do Projeto</span>
+          <span>02 / 09</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 03: SOLUÇÃO & 4 MODOS (ESCURO — BENTO GRID ASSIMÉTRICO)
+  ==================================================================== -->
+  <section class="slide layout-bento">
+    <div class="slide-top">
+      <span class="eyebrow">02 &mdash; Solução &amp; Experiência</span>
+      <span class="stage-pill">UX de 4 Modos</span>
+    </div>
+
+    <h2 style="margin-top:12px;">Um compositor limpo, <em>quatro modos</em> em 1 clique</h2>
+
+    <div class="bento-grid">
+      <div class="card highlight bento-hero">
+        <span class="eyebrow">Destaque // Modo Construtor na Pasta</span>
+        <h3>Do debate técnico ao código compilado e testado</h3>
+        <p class="body-text">Vincula uma pasta local pelo seletor nativo do Windows e fecha o ciclo completo com segurança estrita em <code>localhost</code>:</p>
+        <ul class="bento-bullets">
+          <li>Extrai blocos da síntese e gera arquivos faltantes um a um</li>
+          <li>Exibe lista de alterações + diff colorido antes ou com Auto-aplicar</li>
+          <li>Cria backup reversível em <code>.ai-council-backup/</code> com botão Desfazer</li>
+          <li>Executa <code>npm install</code>, <code>build</code> e <code>test</code> com autocorreção de até 3x</li>
+        </ul>
+      </div>
+
+      <div class="card sky-border">
+        <span class="eyebrow">Chat Rápido &amp; Conselho</span>
+        <h3>1 IA direta ou Trio paralelo sob demanda</h3>
+        <p class="body-text">Alterne entre Gemini, Groq e OpenRouter com 1 clique ou ouça as três IAs lado a lado, acionando o Veredito apenas quando quiser preservar cota.</p>
+      </div>
+
+      <div class="card">
+        <span class="eyebrow">Debate Estruturado</span>
+        <h3>Crítica cruzada com papéis complementares</h3>
+        <p class="body-text">Cada IA atua com foco distinto (Arquiteto, Crítico de Borda e Relator), entregando uma síntese unificada com detecção automática de corte e botão Continuar.</p>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Proposta de Valor</span>
+      <span>03 / 09</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 04: PRODUTO EM TELA — CHAT + PWA (CLARO — SPOTLIGHT OVERLAP)
+  ==================================================================== -->
+  <section class="slide light layout-spotlight-overlap">
+    <div class="slide-top">
+      <span class="eyebrow">03 &mdash; Produto em Tela</span>
+      <span class="stage-pill">Desktop + Mobile PWA</span>
+    </div>
+
+    <h2 style="margin-top:10px;">Conselho ao vivo <em>do desktop ao celular</em></h2>
+
+    <div class="spotlight-grid">
+      <div class="overlap-stage">
+        <div class="browser-frame">
+          <div class="browser-bar">
+            <div class="browser-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <span>127.0.0.1:4317 &bull; Debate &amp; Veredito do Conselho</span>
+          </div>
+          <div class="browser-viewport">
+            <img src="assets/screenshots/desktop-chat-council.png" alt="Tela de debate multi-IA e veredito no desktop" />
+          </div>
+        </div>
+        <div class="phone-frame">
+          <img src="assets/screenshots/mobile-chat.png" alt="Versão Mobile PWA do AI Council" />
+        </div>
+      </div>
+
+      <div class="callout-list">
+        <div class="callout-item">
+          <h3>Streaming Paralelo via SSE</h3>
+          <p class="body-text">Tokens fluem ao vivo sem recarregar a página, com KaTeX e Mermaid carregados localmente sob demanda.</p>
+        </div>
+        <div class="callout-item">
+          <h3>Cérebro Local por Projeto</h3>
+          <p class="body-text">Indexação BM25 sobre arquivos da pasta vinculada + PDFs, bloqueando <code>.env</code>, chaves e <code>.git</code>.</p>
+        </div>
+        <div class="callout-item">
+          <h3>Produtividade &amp; Voz</h3>
+          <p class="body-text">Paleta <code>Ctrl+K</code>, templates com <code>/</code>, voz por Groq Whisper e leitura neural individual por IA.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Interface capturada em ambiente local com dados demonstrativos</span>
+      <span>04 / 09</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 05: CONSTRUTOR + PILOTO AUTOMÁTICO (ESCURO — DUAL ASYMMETRIC)
+  ==================================================================== -->
+  <section class="slide layout-dual-asymmetric">
+    <div class="slide-top">
+      <span class="eyebrow">04 &mdash; Automação &amp; Resiliência</span>
+      <span class="stage-pill">Construtor + Monitor</span>
+    </div>
+
+    <h2 style="margin-top:10px;">Diff na pasta e <em>piloto automático</em> de modelos</h2>
+
+    <div class="dual-grid">
+      <div class="browser-frame primary">
+        <div class="browser-bar">
+          <div class="browser-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          <span>Modo Construtor &bull; Diff, Backup &amp; Build/Test OK</span>
+        </div>
+        <div class="browser-viewport">
+          <img src="assets/screenshots/desktop-builder-panel.png" alt="Painel do Modo Construtor com diff colorido e checks de build e teste" />
+        </div>
+      </div>
+
+      <div class="browser-frame secondary">
+        <div class="browser-bar">
+          <div class="browser-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          <span>Monitor &bull; Cotas &amp; Piloto Automático</span>
+        </div>
+        <div class="browser-viewport">
+          <img src="assets/screenshots/desktop-monitor.png" alt="Painel Monitor mostrando Gemini, Groq e OpenRouter :free" />
+        </div>
+      </div>
+    </div>
+
+    <div class="insight-strip">
+      <div class="insight-item">
+        <strong>Sandbox &amp; Reversão</strong>
+        <span>Proíbe exclusão pela IA, bloqueia symlinks/segredos e restaura qualquer lote em 1 clique.</span>
+      </div>
+      <div class="insight-item">
+        <strong>Hedged Request (5s)</strong>
+        <span>Se o modelo principal travar ou der 503, o reserva rápido assume e pausa o lento (1h→3h→8h).</span>
+      </div>
+      <div class="insight-item">
+        <strong>Descoberta :free (0 tokens)</strong>
+        <span>Catálogo gratuito atualizado sem gastar cota, com UsageGate preventivo em 90%.</span>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Interface capturada em ambiente local com dados demonstrativos</span>
+      <span>05 / 09</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 06: SEGURANÇA & PRIVACIDADE (CLARO — FEATURE SPLIT 01/02/03)
+  ==================================================================== -->
+  <section class="slide light layout-feature-split">
+    <div class="slide-top">
+      <span class="eyebrow">05 &mdash; Security &amp; Privacy by Design</span>
+      <span class="stage-pill">OWASP &amp; LGPD Local</span>
+    </div>
+
+    <h2 style="margin-top:10px;">Defesa em profundidade <em>em cada camada</em></h2>
+
+    <div class="feature-split-grid">
+      <div class="browser-frame">
+        <div class="browser-bar">
+          <div class="browser-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          <span>Monitor &bull; Privacidade, Escudo DLP &amp; Cofre Local</span>
+        </div>
+        <div class="browser-viewport">
+          <img src="assets/screenshots/desktop-privacy.png" alt="Painel de Privacidade, Escudo DLP e Cofre Local" />
+        </div>
+      </div>
+
+      <div class="num-list">
+        <div class="num-item">
+          <span class="num-index">01</span>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <h3>Escudo DLP + OCR Offline</h3>
+            <p class="body-text">Detecta chaves, JWT, CPF/CNPJ e cartões antes do envio, com OCR local em imagens e tarja visual via canvas.</p>
+          </div>
+        </div>
+
+        <div class="num-item">
+          <span class="num-index">02</span>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <h3>Cofre Local AES-256-GCM</h3>
+            <p class="body-text">Criptografia em repouso via Windows DPAPI ou Senha Mestra (<code>scrypt</code> + chave só em RAM + Chave de Recuperação).</p>
+          </div>
+        </div>
+
+        <div class="num-item">
+          <span class="num-index">03</span>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <h3>Isolamento Localhost &amp; CSP Estrita</h3>
+            <p class="body-text">Escrita na pasta, setup e cofre retornam HTTP 403 fora do PC local; CSP 100% self-hosted, anti-SSRF e rate-limit.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Controles verificados continuamente via npm run security:check</span>
+      <span>06 / 09</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 07: ARQUITETURA & TRADE-OFFS (ESCURO — ARCHITECTURE DIAGRAM)
+  ==================================================================== -->
+  <section class="slide layout-architecture">
+    <div class="slide-top">
+      <span class="eyebrow">06 &mdash; Arquitetura do Sistema</span>
+      <span class="stage-pill">Local-First Modular</span>
+    </div>
+
+    <h2 style="margin-top:10px;">Arquitetura <em>enxuta, auditável</em> e sem CDNs</h2>
+
+    <div class="arch-layout">
+      <div class="arch-flow">
+        <div class="arch-node">
+          <span class="eyebrow">Camada 01 // Frontend PWA</span>
+          <h3>Vanilla JS ES Modules</h3>
+          <p class="body-text">14 módulos acíclicos validados por teste automatizado, SSE em tempo real, KaTeX, Mermaid e fontes 100% locais.</p>
+          <div class="arch-meta">public/js/*.js &bull; Zero bundler &bull; Zero framework</div>
+        </div>
+
+        <div class="arch-arrow">⇄</div>
+
+        <div class="arch-node is-sky">
+          <span class="eyebrow">Camada 02 // Servidor Node/TS</span>
+          <h3>Engine, RAG &amp; Construtor</h3>
+          <p class="body-text">Roteadores modulares por domínio, Debate Engine, RAG BM25, Escudo DLP, Sandbox de escrita e Verificador allowlisted.</p>
+          <div class="arch-meta">src/{server,debate,projects,security}/*.ts</div>
+        </div>
+
+        <div class="arch-arrow">→</div>
+
+        <div class="arch-node is-saffron">
+          <span class="eyebrow">Camada 03 // Provedores &amp; Disco</span>
+          <h3>Piloto Automático + Cofre</h3>
+          <p class="body-text">Gemini, Groq e OpenRouter :free sob UsageGate 90%, backoff persistido e armazenamento atômico em JSON/AES-256-GCM.</p>
+          <div class="arch-meta">src/providers/*.ts &bull; data/ (fora do Git)</div>
+        </div>
+      </div>
+
+      <div class="tradeoff-strip">
+        <div>
+          <strong>Por que Zero Framework no UI?</strong>
+          <p>Boot instantâneo, CSP sem <code>unsafe-eval</code> e zero vulnerabilidades transitivas de pacotes front.</p>
+        </div>
+        <div>
+          <strong>Por que JSON Atômico + Cofre?</strong>
+          <p>Portabilidade imediata sem binários C++ no Windows e criptografia transparente em repouso.</p>
+        </div>
+        <div>
+          <strong>Trade-off Honesto Assumido</strong>
+          <p>Acesso remoto depende do PC local ligado (via túnel HTTPS privado) e tiers grátis têm teto diário.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Decisões de Engenharia &amp; Trade-offs Reais</span>
+      <span>07 / 09</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 08: EVIDÊNCIAS & STACK (CLARO — METRICS HERO)
+  ==================================================================== -->
+  <section class="slide light layout-metrics-hero">
+    <div class="slide-top">
+      <span class="eyebrow">07 &mdash; Engenharia &amp; Evidências</span>
+      <span class="stage-pill">Estágio: Produto em Uso Local</span>
+    </div>
+
+    <h2 style="margin-top:12px;">Entregas <em>verificáveis</em> na base de código</h2>
+
+    <div class="metrics-row">
+      <div class="card metric-card">
+        <span class="eyebrow">Suíte de Testes</span>
+        <div class="metric-val">104</div>
+        <p class="body-text">Testes automatizados em 23 suítes (sandbox, segurança, piloto automático e grafo ESM acíclico).</p>
+        <div class="metric-bar"><span style="width:100%;"></span></div>
+      </div>
+
+      <div class="card metric-card">
+        <span class="eyebrow">Auditoria Contínua</span>
+        <div class="metric-val is-sky">5 / 5</div>
+        <p class="body-text">Controles aprovados em <code>security:check</code>: 0 segredos no Git, CSP local, NTFS e 0 CVEs em <code>npm audit</code>.</p>
+        <div class="metric-bar is-sky"><span style="width:100%;"></span></div>
+      </div>
+
+      <div class="card metric-card">
+        <span class="eyebrow">Custo Operacional</span>
+        <div class="metric-val is-saffron">R$ 0</div>
+        <p class="body-text">Orquestração com trava preventiva de 90% e allowlists estritas sobre APIs gratuitas.</p>
+        <div class="metric-bar is-saffron"><span style="width:100%;"></span></div>
+      </div>
+    </div>
+
+    <div class="stack-strip">
+      <span class="eyebrow">Stack Implementada</span>
+      <div class="tag-list">
+        <span class="tag">Node.js 20+ &amp; TypeScript ESM</span>
+        <span class="tag">Vanilla JS Modular</span>
+        <span class="tag">SSE Streaming</span>
+        <span class="tag">AES-256-GCM &amp; DPAPI</span>
+        <span class="tag">BM25 RAG &amp; unpdf</span>
+        <span class="tag">Node Test Runner</span>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Métricas medidas diretamente via npm test e npm run security:check</span>
+      <span>08 / 09</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       SLIDE 09: EVOLUÇÃO & ENCERRAMENTO (ESCURO — CLOSING STATEMENT)
+  ==================================================================== -->
+  <section class="slide layout-closing-statement">
+    <img class="bg-bleed" src="assets/generated/closing-architecture.jpg" alt="Fundo geométrico arquitetural técnico" />
+
+    <div class="slide-top">
+      <span class="eyebrow">08 &mdash; Próximos Passos &amp; Contato</span>
+      <span class="stage-pill">Código Aberto &bull; Portfólio</span>
+    </div>
+
+    <div class="closing-center">
+      <h2>Pronto para <em>construir</em> com múltiplas IAs e controle local</h2>
+      <p class="lead">Um projeto ponta a ponta cobrindo arquitetura de sistemas, resiliência de APIs, segurança prática (OWASP/LGPD) e UX limpa sem frameworks.</p>
+
+      <div class="closing-roadmap">
+        <div class="closing-card">
+          <span class="eyebrow">Próxima Evolução // Construtor</span>
+          <h3>Suporte multi-stack no verificador</h3>
+          <p class="body-text">Expandir verificação segura allowlisted para projetos Python (pytest) e Go além de Node/TypeScript.</p>
+        </div>
+        <div class="closing-card is-sky">
+          <span class="eyebrow">Próxima Evolução // Observabilidade</span>
+          <h3>Telemetria de latência e custo evitado</h3>
+          <p class="body-text">Comparativo histórico de latência por modelo e taxa de acerto das correções automáticas.</p>
+        </div>
+      </div>
+
+      <div class="repo-pill">
+        <span class="accent-sky">GITHUB //</span>
+        <span>github.com/justtem/Triade</span>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>AI Council &bull; Intelligence Hub</span>
+      <span>09 / 09</span>
+    </div>
+  </section>
+
+</body>
+</html>

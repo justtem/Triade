@@ -7,6 +7,7 @@ import {
   decodeStorageText,
   encodeStorageText
 } from "../security/data-protection.js";
+import { writeTextAtomically } from "../shared/atomic-fs.js";
 
 export type UserMemoryCategory =
   | "identity"
@@ -188,11 +189,8 @@ async function writeUserMemoryAtomically(
   filePath: string,
   state: UserMemoryState
 ): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   const encoded = await encodeStorageText(JSON.stringify(state, null, 2));
-  await writeFile(tempPath, encoded, { encoding: "utf8", mode: 0o600 });
-  await rename(tempPath, filePath);
+  await writeTextAtomically(filePath, encoded, { mode: 0o600 });
   cachedState = {
     path: filePath,
     data: {

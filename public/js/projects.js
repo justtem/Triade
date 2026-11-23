@@ -1,7 +1,10 @@
 import {
   SVG_ICONS,
+  FOLDER_POLICY_STORAGE_KEY,
+  FOLDER_INFO_SEEN_KEY,
   $,
   $$,
+  saveStoredOption,
   state,
   debateDetailsById,
   getActiveOrSelectedDebate,
@@ -170,6 +173,8 @@ export function renderProjectsSidebar() {
     row.append(selectBtn, editBtn);
     listEl.appendChild(row);
   }
+
+  uiHooks.renderZeroStateHorizontalShowcase();
 }
 
 export function syncComposerProjectPill() {
@@ -204,7 +209,15 @@ export function syncComposerProjectPill() {
   const badges = [];
   if (project.instructions?.trim()) badges.push("regras");
   if (fileCount > 0) badges.push(`${fileCount} ${fileCount === 1 ? "arquivo" : "arquivos"}`);
-  if (project.linkedFolderPath) badges.push("pasta PC");
+  if (project.linkedFolderPath) {
+    const policyLabel =
+      state.folderPolicy === "readonly"
+        ? "somente leitura"
+        : state.folderPolicy === "confirm"
+          ? "confirmar diff"
+          : "construtor auto";
+    badges.push(isLocalPcBrowser() ? `pasta · ${policyLabel}` : "pasta PC");
+  }
 
   labelBtn.innerHTML = `
     <span class="composer-project-prefix">Projeto:</span>
@@ -214,6 +227,85 @@ export function syncComposerProjectPill() {
   labelBtn.addEventListener("click", () => openProjectModal(project.id));
 
   pill.append(dot, labelBtn);
+
+  // Ponto de exclamação "!" estilo dica de jogo explicando o Construtor automático + seletor de política
+  if (project.linkedFolderPath && isLocalPcBrowser()) {
+    const infoWrap = document.createElement("div");
+    infoWrap.className = "folder-info-wrap";
+
+    const infoBtn = document.createElement("button");
+    infoBtn.type = "button";
+    infoBtn.className = `project-folder-info-btn${state.folderInfoSeen ? "" : " is-unread"}`;
+    infoBtn.setAttribute("aria-label", "Como funciona o Construtor automático nesta pasta");
+    infoBtn.setAttribute("aria-expanded", "false");
+    infoBtn.title = "Como funciona o Construtor automático nesta pasta";
+    infoBtn.textContent = "!";
+
+    const popover = document.createElement("div");
+    popover.className = "folder-info-popover";
+    popover.setAttribute("role", "dialog");
+    popover.setAttribute("aria-label", "Informações do Construtor automático na pasta");
+    popover.hidden = true;
+
+    const shortDir = String(project.linkedFolderPath || "")
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .slice(-2)
+      .join("\\");
+
+    popover.innerHTML = `
+      <div class="folder-info-head">
+        <span class="eyebrow">CONSTRUTOR AUTOMÁTICO</span>
+        <span class="folder-info-path">${escapeHtml(shortDir || project.linkedFolderPath)}</span>
+      </div>
+      <ul class="folder-info-rules">
+        <li><strong>Automático quando você pedir código:</strong> em <em>Chat Rápido</em> ou <em>Debate</em>, pedir para criar, alterar ou corrigir arquivos gera o código, grava na pasta e roda <code>build</code>/<code>test</code> sozinho (o botão muda para <strong>Construir na Pasta →</strong> antes de você enviar).</li>
+        <li><strong>Sem surpresas em perguntas ou no Conselho:</strong> dúvidas conceituais só respondem no chat; no modo <em>Conselho</em> (3 IAs paralelas) nada é gravado até você escolher qual resposta aplicar.</li>
+        <li><strong>Proteção &amp; Desfazer:</strong> nunca apaga arquivos, bloqueia <code>.env</code>/<code>.git</code>/chaves e salva backup em <code>.ai-council-backup/</code> reversível em 1 clique.</li>
+      </ul>
+      <div class="folder-info-policy-section">
+        <span class="folder-info-policy-label">AÇÃO NA PASTA</span>
+        <div class="mode-segmented-pill folder-policy-group" role="group" aria-label="Política de escrita na pasta">
+          <button type="button" class="mode-seg-btn${state.folderPolicy === "auto" ? " is-active" : ""}" data-folder-policy="auto">Automático</button>
+          <button type="button" class="mode-seg-btn${state.folderPolicy === "confirm" ? " is-active" : ""}" data-folder-policy="confirm">Confirmar diff</button>
+          <button type="button" class="mode-seg-btn${state.folderPolicy === "readonly" ? " is-active" : ""}" data-folder-policy="readonly">Somente leitura</button>
+        </div>
+      </div>
+    `;
+
+    popover.addEventListener("click", (e) => e.stopPropagation());
+
+    for (const pBtn of popover.querySelectorAll("[data-folder-policy]")) {
+      pBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const nextPolicy = pBtn.getAttribute("data-folder-policy");
+        if (nextPolicy === "auto" || nextPolicy === "confirm" || nextPolicy === "readonly") {
+          state.folderPolicy = nextPolicy;
+          saveStoredOption(FOLDER_POLICY_STORAGE_KEY, nextPolicy);
+          syncComposerProjectPill();
+          uiHooks.syncComposerModeUi();
+        }
+      });
+    }
+
+    infoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = popover.hidden;
+      for (const openPop of $$(".folder-info-popover")) {
+        openPop.hidden = true;
+      }
+      popover.hidden = !willOpen;
+      infoBtn.setAttribute("aria-expanded", String(willOpen));
+      if (!state.folderInfoSeen) {
+        state.folderInfoSeen = true;
+        saveStoredOption(FOLDER_INFO_SEEN_KEY, "yes");
+        infoBtn.classList.remove("is-unread");
+      }
+    });
+
+    infoWrap.append(infoBtn, popover);
+    pill.appendChild(infoWrap);
+  }
 
   // Em Nova Conversa permite desvincular o projeto em 1 clique antes de enviar
   if (!activeDebate) {

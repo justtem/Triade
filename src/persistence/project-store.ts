@@ -20,6 +20,7 @@ import {
   decodeStorageText,
   encodeStorageText
 } from "../security/data-protection.js";
+import { writeTextAtomically } from "../shared/atomic-fs.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{6,64}$/;
@@ -90,15 +91,8 @@ function withProjectLock<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function writeJsonAtomically(filePath: string, data: unknown): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const tempFile = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    const serialized = await encodeStorageText(JSON.stringify(data, null, 2));
-    await writeFile(tempFile, serialized, { encoding: "utf8", mode: 0o600 });
-    await rename(tempFile, filePath);
-  } finally {
-    await rm(tempFile, { force: true }).catch(() => {});
-  }
+  const serialized = await encodeStorageText(JSON.stringify(data, null, 2));
+  await writeTextAtomically(filePath, serialized, { mode: 0o600 });
 }
 
 async function fileExists(filePath: string): Promise<boolean> {

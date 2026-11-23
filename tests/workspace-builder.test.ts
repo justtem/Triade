@@ -14,6 +14,7 @@ import {
   applyWorkspaceChanges,
   BACKUP_ROOT_DIR_NAME,
   extractWorkspaceFilesFromMarkdown,
+  listWorkspaceSourceFiles,
   previewWorkspaceChanges,
   undoWorkspaceBackup,
   validateRelativeWorkspacePath
@@ -242,6 +243,97 @@ describe("Modo Construtor (Fase 3) — Sandbox, Diff, Backup/Undo, Verifier & Re
         process.env.AI_COUNCIL_DATA_DIR = prevDataDir;
       }
       await rm(isolatedDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("extrai diretivas DELETE fora de blocos de código, remove com backup e restaura no Desfazer", async () => {
+    const md = [
+      "O arquivo compilado antigo está duplicado. Vamos removê-lo:",
+      "DELETE: `tests/old.test.js`",
+      "DELETE: `.env`",
+      "",
+      "### `tests/new.test.ts`",
+      "```ts",
+      "// DELETE: src/nao-deve-remover.ts",
+      "export const ok = true;",
+      "```"
+    ].join("\n");
+
+    const extracted = extractWorkspaceFilesFromMarkdown(md);
+    assert.deepEqual(extracted.deletes, ["tests/old.test.js"]);
+    assert.equal(extracted.files.length, 1);
+
+    const dir = await mkdtemp(join(tmpdir(), "aic-delete-backup-test-"));
+    try {
+      await writeFile(join(dir, "keep.txt"), "keep", "utf8");
+      await applyWorkspaceChanges(dir, [
+        { path: "tests/old.test.js", content: "old stale test\n" },
+        { path: "tests/new.test.ts", content: "new test\n" }
+      ]);
+
+      const treeBefore = await listWorkspaceSourceFiles(dir);
+      assert.ok(treeBefore.includes("tests/old.test.js"));
+      assert.ok(treeBefore.includes("tests/new.test.ts"));
+
+      const delRes = await applyWorkspaceChanges(dir, [], {
+        deletePaths: ["tests/old.test.js", ".env"]
+      });
+      assert.ok(delRes.backup);
+      assert.deepEqual(delRes.backup.filesDeleted, ["tests/old.test.js"]);
+      await assert.rejects(() => access(join(dir, "tests", "old.test.js")));
+
+      const undone = await undoWorkspaceBackup(dir, delRes.backup.batchId);
+      assert.equal(undone.restoredCount, 1);
+      assert.equal(
+        await readFile(join(dir, "tests", "old.test.js"), "utf8"),
+        "old stale test\n"
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detecta TIMEOUT em node --test com servidor aberto e recupera o stack trace oculto via --test-force-exit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aic-timeout-diag-test-"));
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "sample-timeout-diag",
+          version: "1.0.0",
+          type: "module",
+          scripts: {
+            test: "node --test"
+          }
+        }),
+        "utf8"
+      );
+      await writeFile(
+        join(dir, "hang.test.mjs"),
+        [
+          "import test from 'node:test';",
+          "import assert from 'node:assert/strict';",
+          "import http from 'node:http';",
+          "test('falha e deixa servidor aberto', async () => {",
+          "  const srv = http.createServer((_req, res) => res.end('ok'));",
+          "  await new Promise((r) => srv.listen(0, r));",
+          "  assert.equal(201, 200);",
+          "});"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const res = await verifyWorkspaceProject(dir, { checkTimeoutMs: 2_500 });
+      assert.equal(res.allPassed, false);
+      const testCheck = res.checks.at(-1);
+      assert.ok(testCheck);
+      assert.equal(testCheck.timedOut, true);
+      assert.match(testCheck.output, /TIMEOUT/i);
+      assert.match(testCheck.output, /DIAGNÓSTICO AUTOMÁTICO/i);
+      assert.match(testCheck.output, /201 !== 200/);
+      assert.match(testCheck.output, /hang\.test\.mjs/);
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
     }
   });
 });

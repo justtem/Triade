@@ -148,19 +148,6 @@ function buildPaletteItems(rawQuery) {
       }
     },
     {
-      id: "act:mode-builder",
-      section: "AÇÕES RÁPIDAS",
-      title: "Modo: Construtor (Pasta do Projeto)",
-      subtitle: "Planeja arquitetura e arquivos vinculados à pasta local do projeto",
-      badge: state.activeComposerMode === "builder" ? "Ativo" : "",
-      keywords: "modo construtor pasta projeto codigo arquitetura",
-      run: () => {
-        applyComposerMode("builder");
-        switchView("chat");
-        $("#debate-topic")?.focus();
-      }
-    },
-    {
       id: "act:ai-auto",
       section: "AÇÕES RÁPIDAS",
       title: "Usar Roteador Inteligente (Auto)",

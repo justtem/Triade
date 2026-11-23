@@ -23,7 +23,16 @@ import {
 import { abortDebateTasks, kickRunner } from "../debate/runner.js";
 import { getActiveStreams } from "../debate/stream-hub.js";
 import { generateTurnVerdict } from "../debate/verdict.js";
-import { routeAutoParticipants } from "../debate/auto-router.js";
+import {
+  routeAutoComposerStrategy,
+  routeAutoParticipants
+} from "../debate/auto-router.js";
+import { getProjectById } from "../persistence/project-store.js";
+import {
+  AUTO_BUILDER_HINT_RULE,
+  classifyBuilderIntent,
+  normalizeFolderPolicy
+} from "../projects/builder-intent.js";
 import { gatherProjectContext } from "../projects/project-rag.js";
 import { readPrivacySettings } from "../security/data-protection.js";
 import {
@@ -42,6 +51,7 @@ import {
   type AIPlatform,
   type ChatAttachment,
   type DebateSession,
+  type InteractionMode,
   type WebSearchMode
 } from "../shared/debate-types.js";
 import { gatherWebContext } from "../web/web-context.js";
@@ -414,9 +424,10 @@ export async function handleDebateRoutes(
 
         const responseMode =
           payload.responseMode === "normal" ? "normal" : "prompt_markdown";
-        const interactionMode =
+        const requestedInteractionMode: InteractionMode =
           payload.interactionMode === "direct" ? "direct" : "debate";
         const useAutoRoute = payload.routingMode === "auto";
+        const autoSelectInteraction = payload.autoSelectInteraction === true;
 
         const [webSources, rawProjectContext, rawEnrichedAttachments] =
           await Promise.all([
@@ -440,27 +451,75 @@ export async function handleDebateRoutes(
         const enrichedAttachments = shieldedAttachments.attachments;
         const resolvedProjectContext = shieldedProject.context;
 
-        const autoRoute = useAutoRoute
-          ? await routeAutoParticipants({
-              prompt: topicStr,
-              responseMode,
-              interactionMode,
-              attachments: enrichedAttachments,
-              webSources,
-              resolvedProjectContext
-            })
-          : undefined;
+        const linkedProjectObj = projectId
+          ? await getProjectById(projectId).catch(() => null)
+          : null;
+        const hasLinkedFolder = Boolean(linkedProjectObj?.linkedFolderPath?.trim());
+        const isLocalPcReq = auth.isDirectLocalPCRequest(request);
+        const folderPolicy = normalizeFolderPolicy(payload.folderPolicy);
+
+        let interactionMode: InteractionMode = requestedInteractionMode;
+        let resolvedTotalRounds = Number(payload.totalRounds) || 2;
+        let autoRoute;
+
+        if (useAutoRoute && autoSelectInteraction) {
+          const strategy = await routeAutoComposerStrategy({
+            prompt: topicStr,
+            isContinuation: false,
+            hasLinkedFolder,
+            isLocalPc: isLocalPcReq,
+            folderPolicy,
+            responseMode,
+            attachments: enrichedAttachments,
+            webSources,
+            resolvedProjectContext
+          });
+          interactionMode = strategy.interactionMode;
+          resolvedTotalRounds = strategy.totalRounds;
+          autoRoute = strategy.autoRoute;
+        } else if (useAutoRoute) {
+          autoRoute = await routeAutoParticipants({
+            prompt: topicStr,
+            responseMode,
+            interactionMode,
+            attachments: enrichedAttachments,
+            webSources,
+            resolvedProjectContext
+          });
+        }
 
         const finalParticipants = autoRoute
           ? autoRoute.participants
           : rawParticipants;
 
+        const intentDecision = classifyBuilderIntent({
+          prompt: topicStr,
+          hasLinkedFolder,
+          isLocalPc: isLocalPcReq,
+          folderPolicy,
+          interactionMode,
+          participantCount: finalParticipants.length
+        });
+
+        const effectiveBuilderMode =
+          payload.builderMode === true || intentDecision.shouldActivateBuilder;
+        const effectiveBuilderAutoApply =
+          isLocalPcReq &&
+          (payload.builderMode === true
+            ? payload.builderAutoApply === true
+            : intentDecision.shouldAutoApply);
+        const effectiveRules =
+          intentDecision.injectBuilderHint &&
+          !(rulesStr ?? "").toLowerCase().includes("modo construtor")
+            ? [rulesStr, AUTO_BUILDER_HINT_RULE].filter(Boolean).join(" | ")
+            : rulesStr;
+
         const session = await createDebateSession({
           title: titleStr,
           topic: topicStr,
-          rules: rulesStr,
+          rules: effectiveRules,
           participants: finalParticipants,
-          totalRounds: Number(payload.totalRounds) || 2,
+          totalRounds: resolvedTotalRounds,
           focus:
             payload.focus === "backend" || payload.focus === "frontend"
               ? payload.focus
@@ -474,10 +533,8 @@ export async function handleDebateRoutes(
           ...(resolvedProjectContext ? { resolvedProjectContext } : {}),
           ...(autoRoute ? { autoRoute } : {}),
           ...(payload.autoVerdict === true ? { autoVerdict: true } : {}),
-          ...(payload.builderMode === true ? { builderMode: true } : {}),
-          ...(payload.builderMode === true &&
-          payload.builderAutoApply === true &&
-          auth.isDirectLocalPCRequest(request)
+          ...(effectiveBuilderMode ? { builderMode: true } : {}),
+          ...(effectiveBuilderMode && effectiveBuilderAutoApply
             ? { builderAutoApply: true }
             : {})
         });
@@ -659,9 +716,10 @@ export async function handleDebateRoutes(
         const activeProjectId = existingSession?.projectId;
         const responseMode =
           payload.responseMode === "normal" ? "normal" : "prompt_markdown";
-        const interactionMode =
+        const requestedInteractionMode: InteractionMode =
           payload.interactionMode === "direct" ? "direct" : "debate";
         const useAutoRoute = payload.routingMode === "auto";
+        const autoSelectInteraction = payload.autoSelectInteraction === true;
 
         const [webSources, rawProjectContext, rawEnrichedAttachments] =
           await Promise.all([
@@ -684,26 +742,74 @@ export async function handleDebateRoutes(
         const enrichedAttachments = shieldedAttachments.attachments;
         const resolvedProjectContext = shieldedProject.context;
 
-        const autoRoute = useAutoRoute
-          ? await routeAutoParticipants({
-              prompt: messageStr,
-              responseMode,
-              interactionMode,
-              attachments: enrichedAttachments,
-              webSources,
-              resolvedProjectContext
-            })
-          : undefined;
+        const linkedProjectObj = activeProjectId
+          ? await getProjectById(activeProjectId).catch(() => null)
+          : null;
+        const hasLinkedFolder = Boolean(linkedProjectObj?.linkedFolderPath?.trim());
+        const isLocalPcReq = auth.isDirectLocalPCRequest(request);
+        const folderPolicy = normalizeFolderPolicy(payload.folderPolicy);
+
+        let interactionMode: InteractionMode = requestedInteractionMode;
+        let resolvedTotalRounds = Number(payload.totalRounds) || 2;
+        let autoRoute;
+
+        if (useAutoRoute && autoSelectInteraction) {
+          const strategy = await routeAutoComposerStrategy({
+            prompt: messageStr,
+            isContinuation: true,
+            hasLinkedFolder,
+            isLocalPc: isLocalPcReq,
+            folderPolicy,
+            responseMode,
+            attachments: enrichedAttachments,
+            webSources,
+            resolvedProjectContext
+          });
+          interactionMode = strategy.interactionMode;
+          resolvedTotalRounds = strategy.totalRounds;
+          autoRoute = strategy.autoRoute;
+        } else if (useAutoRoute) {
+          autoRoute = await routeAutoParticipants({
+            prompt: messageStr,
+            responseMode,
+            interactionMode,
+            attachments: enrichedAttachments,
+            webSources,
+            resolvedProjectContext
+          });
+        }
 
         const finalParticipants = autoRoute
           ? autoRoute.participants
           : rawParticipants;
 
+        const intentDecision = classifyBuilderIntent({
+          prompt: messageStr,
+          hasLinkedFolder,
+          isLocalPc: isLocalPcReq,
+          folderPolicy,
+          interactionMode,
+          participantCount: finalParticipants.length
+        });
+
+        const effectiveBuilderMode =
+          payload.builderMode === true || intentDecision.shouldActivateBuilder;
+        const effectiveBuilderAutoApply =
+          isLocalPcReq &&
+          (payload.builderMode === true
+            ? payload.builderAutoApply === true
+            : intentDecision.shouldAutoApply);
+        const effectiveRules =
+          intentDecision.injectBuilderHint &&
+          !(rulesStr ?? "").toLowerCase().includes("modo construtor")
+            ? [rulesStr, AUTO_BUILDER_HINT_RULE].filter(Boolean).join(" | ")
+            : rulesStr;
+
         const updated = await continueDebateSession(debateId, {
           message: messageStr,
-          rules: rulesStr,
+          rules: effectiveRules,
           participants: finalParticipants,
-          totalRounds: Number(payload.totalRounds) || 2,
+          totalRounds: resolvedTotalRounds,
           focus:
             payload.focus === "backend" || payload.focus === "frontend"
               ? payload.focus
@@ -716,10 +822,8 @@ export async function handleDebateRoutes(
           ...(resolvedProjectContext ? { resolvedProjectContext } : {}),
           ...(autoRoute ? { autoRoute } : {}),
           ...(payload.autoVerdict === true ? { autoVerdict: true } : {}),
-          ...(payload.builderMode === true ? { builderMode: true } : {}),
-          ...(payload.builderMode === true &&
-          payload.builderAutoApply === true &&
-          auth.isDirectLocalPCRequest(request)
+          ...(effectiveBuilderMode ? { builderMode: true } : {}),
+          ...(effectiveBuilderMode && effectiveBuilderAutoApply
             ? { builderAutoApply: true }
             : {})
         });

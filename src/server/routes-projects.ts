@@ -11,6 +11,17 @@ import {
   updateProject
 } from "../persistence/project-store.js";
 import {
+  analyzeAppBriefing,
+  expandAppBriefingToSpec,
+  type AppBriefingKind,
+  type AppBriefingTheme
+} from "../projects/app-briefing.js";
+import {
+  getProjectDevServerStatus,
+  startProjectDevServer,
+  stopProjectDevServer
+} from "../projects/dev-server-manager.js";
+import {
   createSubfolderInParent,
   pickLocalFolderDialog
 } from "../projects/folder-picker.js";
@@ -271,6 +282,241 @@ export async function handleProjectRoutes(
       );
     }
     return true;
+  }
+
+  // Briefing 1-frase: analisa ideia em 0ms e sugere pasta + perfis de segurança (PC local apenas)
+  if (request.method === "POST" && url.pathname === "/projects/briefing/analyze") {
+    if (!auth.isAuthorizedLocalClient(request)) {
+      sendJson(response, 401, { error: "Não autorizado." }, origin);
+      return true;
+    }
+
+    if (!auth.isDirectLocalPCRequest(request)) {
+      sendJson(
+        response,
+        403,
+        {
+          error:
+            "Briefing com criação de pasta local está disponível apenas diretamente no computador local."
+        },
+        origin
+      );
+      return true;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await readRequestBody(request));
+    } catch {
+      sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+      return true;
+    }
+
+    const prompt =
+      isRecord(payload) && typeof payload.prompt === "string" ? payload.prompt : "";
+    const baseDir =
+      isRecord(payload) && typeof payload.baseDir === "string"
+        ? payload.baseDir
+        : undefined;
+
+    try {
+      const analysis = await analyzeAppBriefing(prompt, { baseDir });
+      sendJson(response, 200, { analysis }, origin);
+    } catch (error) {
+      sendJson(
+        response,
+        400,
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Não foi possível analisar o briefing."
+        },
+        origin
+      );
+    }
+    return true;
+  }
+
+  // Briefing 1-frase: cria subpasta + Projeto com regras OWASP/LGPD e devolve prompt expandido (PC local apenas)
+  if (request.method === "POST" && url.pathname === "/projects/briefing/prepare") {
+    if (!auth.isAuthorizedLocalClient(request)) {
+      sendJson(response, 401, { error: "Não autorizado." }, origin);
+      return true;
+    }
+
+    if (!auth.isDirectLocalPCRequest(request)) {
+      sendJson(
+        response,
+        403,
+        {
+          error:
+            "Criação automática de projetos na pasta está disponível apenas diretamente no computador local."
+        },
+        origin
+      );
+      return true;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await readRequestBody(request));
+    } catch {
+      sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+      return true;
+    }
+
+    if (!isRecord(payload)) {
+      sendJson(response, 400, { error: "Dados do briefing inválidos." }, origin);
+      return true;
+    }
+
+    const rawIdea = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+    const appName = typeof payload.appName === "string" ? payload.appName.trim() : "";
+    const baseDir = typeof payload.baseDir === "string" ? payload.baseDir.trim() : "";
+    const appKind: AppBriefingKind =
+      payload.appKind === "api" || payload.appKind === "landing"
+        ? payload.appKind
+        : "web_app";
+    const theme: AppBriefingTheme = payload.theme === "light" ? "light" : "dark";
+    const secRaw = isRecord(payload.security) ? payload.security : {};
+    const financial = secRaw.financial === true;
+    const lgpd = secRaw.lgpd === true;
+
+    if (!rawIdea) {
+      sendJson(response, 400, { error: "Descreva a ideia do aplicativo." }, origin);
+      return true;
+    }
+
+    try {
+      const analysis = await analyzeAppBriefing(rawIdea, {
+        baseDir: baseDir || undefined
+      });
+      const finalName = appName || analysis.suggestedName;
+      const finalBaseDir = baseDir || analysis.baseDir;
+
+      const folderRes = await createSubfolderInParent(finalBaseDir, finalName);
+      const spec = expandAppBriefingToSpec({
+        rawIdea,
+        appName: finalName,
+        appKind,
+        theme,
+        port: analysis.port,
+        security: { financial, lgpd }
+      });
+
+      const createdProject = await createProject({
+        name: finalName,
+        description: spec.description,
+        color: spec.color,
+        instructions: spec.projectInstructions,
+        linkedFolderPath: folderRes.path
+      });
+      const projects = await listProjects();
+
+      sendJson(
+        response,
+        201,
+        {
+          prepared: true,
+          project: createdProject,
+          projects,
+          folderPath: folderRes.path,
+          expandedPrompt: spec.expandedPrompt,
+          port: spec.port
+        },
+        origin
+      );
+    } catch (error) {
+      sendJson(
+        response,
+        400,
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Não foi possível preparar o projeto."
+        },
+        origin
+      );
+    }
+    return true;
+  }
+
+  // Preview App ao vivo (npm run dev / start — 100% localhost-only)
+  const devServerMatch = url.pathname.match(
+    /^\/projects\/([a-zA-Z0-9_-]{6,64})\/dev-server\/(status|start|stop)$/
+  );
+
+  if (devServerMatch) {
+    if (!auth.isAuthorizedLocalClient(request)) {
+      sendJson(response, 401, { error: "Não autorizado." }, origin);
+      return true;
+    }
+
+    if (!auth.isDirectLocalPCRequest(request)) {
+      sendJson(
+        response,
+        403,
+        {
+          error:
+            "Rodar projetos localmente (npm run dev) é permitido apenas diretamente no PC local."
+        },
+        origin
+      );
+      return true;
+    }
+
+    const projectId = devServerMatch[1] ?? "";
+    const devAction = devServerMatch[2] ?? "";
+    const project = await getProjectById(projectId);
+    if (!project) {
+      sendJson(response, 404, { error: "Projeto não encontrado." }, origin);
+      return true;
+    }
+    const folderPath = (project.linkedFolderPath ?? "").trim();
+
+    if (devAction === "status" && request.method === "GET") {
+      const status = await getProjectDevServerStatus(projectId, folderPath);
+      sendJson(response, 200, { status }, origin);
+      return true;
+    }
+
+    if (devAction === "stop" && request.method === "POST") {
+      const stopped = await stopProjectDevServer(projectId);
+      const status = await getProjectDevServerStatus(projectId, folderPath);
+      sendJson(response, 200, { stopped, status }, origin);
+      return true;
+    }
+
+    if (devAction === "start" && request.method === "POST") {
+      if (!folderPath) {
+        sendJson(
+          response,
+          400,
+          { error: "Este projeto não possui pasta local vinculada." },
+          origin
+        );
+        return true;
+      }
+      try {
+        const status = await startProjectDevServer(projectId, folderPath);
+        sendJson(response, 200, { started: true, status }, origin);
+      } catch (error) {
+        sendJson(
+          response,
+          400,
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Não foi possível iniciar o servidor do app."
+          },
+          origin
+        );
+      }
+      return true;
+    }
   }
 
   const projectFileMatch = url.pathname.match(

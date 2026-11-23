@@ -1909,6 +1909,11 @@ export function buildTurnBlock(debate, turn, isMultiTurn, isLastTurn) {
       );
     }
 
+    const directBuilderPanel = buildBuilderPanelForTurn(debate, turn, turnResponses);
+    if (directBuilderPanel) {
+      turnBlock.appendChild(directBuilderPanel);
+    }
+
     return turnBlock;
   }
 
@@ -2064,6 +2069,138 @@ const BUILDER_STATUS_META = {
   stopped: { label: "Interrompido", cls: "is-idle" }
 };
 
+const devServerStatusByProjectId = new Map();
+const devServerStatusFetchingIds = new Set();
+
+function isSafeLoopbackPreviewUrl(rawUrl) {
+  return /^http:\/\/(?:127\.0\.0\.1|localhost):\d{4,5}\/?$/i.test(String(rawUrl || "").trim());
+}
+
+function buildDevServerPreviewBar(project) {
+  if (!project?.id || !project?.linkedFolderPath || !isLocalPcClient()) return null;
+
+  const projectId = project.id;
+  const cached = devServerStatusByProjectId.get(projectId);
+
+  if (!cached && !devServerStatusFetchingIds.has(projectId)) {
+    devServerStatusFetchingIds.add(projectId);
+    void fetchJson(`/projects/${projectId}/dev-server/status`)
+      .then((res) => {
+        if (res?.status) {
+          devServerStatusByProjectId.set(projectId, res.status);
+          state.lastRenderedChatSignature = "";
+          renderChatStage();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        devServerStatusFetchingIds.delete(projectId);
+      });
+    return null;
+  }
+
+  if (!cached || (!cached.canRun && !cached.running)) return null;
+
+  const bar = document.createElement("div");
+  bar.className = `builder-preview-bar${cached.running ? " is-running" : ""}`;
+
+  const infoGroup = document.createElement("div");
+  infoGroup.className = "builder-preview-info";
+
+  const dot = document.createElement("span");
+  dot.className = `builder-preview-dot${cached.running ? " is-live" : ""}`;
+  dot.setAttribute("aria-hidden", "true");
+
+  const label = document.createElement("span");
+  label.className = "builder-preview-label";
+
+  const actions = document.createElement("div");
+  actions.className = "builder-preview-actions";
+
+  const feedback = document.createElement("span");
+  feedback.className = "builder-preview-feedback";
+
+  if (cached.running) {
+    const safeUrl = isSafeLoopbackPreviewUrl(cached.url) ? cached.url : null;
+    label.textContent = safeUrl ? `App rodando em ${safeUrl}` : "App rodando localmente...";
+
+    if (safeUrl) {
+      const openLink = document.createElement("a");
+      openLink.className = "btn-primary builder-act-btn builder-open-link";
+      openLink.href = safeUrl;
+      openLink.target = "_blank";
+      openLink.rel = "noopener noreferrer";
+      openLink.textContent = "Abrir App ↗";
+      actions.appendChild(openLink);
+    }
+
+    const stopAppBtn = document.createElement("button");
+    stopAppBtn.type = "button";
+    stopAppBtn.className = "btn-ghost-pill btn-danger-outline builder-act-btn";
+    stopAppBtn.textContent = "■ Parar App";
+    stopAppBtn.addEventListener("click", async () => {
+      stopAppBtn.disabled = true;
+      feedback.textContent = "Encerrando servidor...";
+      try {
+        const res = await fetchJson(`/projects/${projectId}/dev-server/stop`, {
+          method: "POST",
+          body: {}
+        });
+        if (res?.status) {
+          devServerStatusByProjectId.set(projectId, res.status);
+        }
+        state.lastRenderedChatSignature = "";
+        renderChatStage();
+      } catch (err) {
+        feedback.textContent =
+          err instanceof Error ? err.message : "Erro ao parar o servidor.";
+        stopAppBtn.disabled = false;
+      }
+    });
+    actions.appendChild(stopAppBtn);
+  } else {
+    label.textContent = `Pronto para rodar (${cached.scriptName === "start" ? "npm start" : "npm run dev"})`;
+
+    const runBtn = document.createElement("button");
+    runBtn.type = "button";
+    runBtn.className = "btn-primary builder-act-btn builder-run-app-btn";
+    runBtn.textContent = "▶ Rodar & Abrir App";
+    runBtn.addEventListener("click", async () => {
+      runBtn.disabled = true;
+      runBtn.textContent = "Iniciando servidor...";
+      feedback.textContent = "Subindo em 127.0.0.1...";
+      try {
+        const res = await fetchJson(`/projects/${projectId}/dev-server/start`, {
+          method: "POST",
+          timeoutMs: 20000,
+          body: {}
+        });
+        if (res?.status) {
+          devServerStatusByProjectId.set(projectId, res.status);
+          if (isSafeLoopbackPreviewUrl(res.status.url)) {
+            window.open(res.status.url, "_blank", "noopener,noreferrer");
+          }
+        }
+        state.lastRenderedChatSignature = "";
+        renderChatStage();
+      } catch (err) {
+        feedback.textContent =
+          err instanceof Error ? err.message : "Não foi possível iniciar o app.";
+        runBtn.disabled = false;
+        runBtn.textContent = "▶ Rodar & Abrir App";
+      }
+    });
+    actions.appendChild(runBtn);
+  }
+
+  infoGroup.append(dot, label);
+  const topRow = document.createElement("div");
+  topRow.className = "builder-preview-row";
+  topRow.append(infoGroup, actions);
+  bar.append(topRow, feedback);
+  return bar;
+}
+
 function isLocalPcClient() {
   const host = window.location?.hostname || "";
   return host === "127.0.0.1" || host === "localhost" || host === "::1";
@@ -2214,6 +2351,50 @@ function buildBuilderPanelForTurn(debate, turn, turnResponses) {
     panel.appendChild(summaryEl);
   }
 
+  // No modo Conselho (2+ IAs diretas em paralelo sem síntese única), permite escolher de qual IA extrair o código
+  const directPlatforms = Array.from(
+    new Set(
+      (turnResponses || [])
+        .filter((r) => r.stage === "initial_response" && typeof r.content === "string" && r.content.includes("```"))
+        .map((r) => r.platform)
+    )
+  );
+  if (isLocal && !isBusy && turn.interactionMode === "direct" && directPlatforms.length > 1) {
+    const sourceRow = document.createElement("div");
+    sourceRow.className = "builder-source-picker";
+
+    const srcLabel = document.createElement("span");
+    srcLabel.className = "builder-source-label";
+    srcLabel.textContent = "Conselho (escolha qual proposta aplicar):";
+    sourceRow.appendChild(srcLabel);
+
+    for (const platKey of directPlatforms) {
+      const pBtn = document.createElement("button");
+      pBtn.type = "button";
+      pBtn.className = "quick-ai-chip";
+      pBtn.textContent = `Usar ${PLATFORMS[platKey] || platKey}`;
+      pBtn.addEventListener("click", async () => {
+        pBtn.disabled = true;
+        try {
+          const res = await fetchJson(`/debates/${debate.id}/builder/extract`, {
+            method: "POST",
+            body: { turnId: turn.id, sourcePlatform: platKey }
+          });
+          if (res?.debate) {
+            upsertDebateSessionLocally(res.debate);
+            state.lastRenderedChatSignature = "";
+            renderChatStage();
+          }
+        } catch {
+          pBtn.disabled = false;
+        }
+      });
+      sourceRow.appendChild(pBtn);
+    }
+
+    panel.appendChild(sourceRow);
+  }
+
   const files = Array.isArray(bState.files) ? bState.files : [];
   const selectedCheckboxes = [];
 
@@ -2250,9 +2431,11 @@ function buildBuilderPanelForTurn(debate, turn, turnResponses) {
           ? "NOVO"
           : file.action === "overwrite"
             ? "ALTERADO"
-            : file.action === "unchanged"
-              ? "IGUAL"
-              : "BLOQUEADO";
+            : file.action === "delete"
+              ? "REMOVIDO"
+              : file.action === "unchanged"
+                ? "IGUAL"
+                : "BLOQUEADO";
 
       const pathCode = document.createElement("code");
       pathCode.className = "builder-file-path";
@@ -2352,95 +2535,170 @@ function buildBuilderPanelForTurn(debate, turn, turnResponses) {
     const writableFiles = files.filter(
       (f) => f.action === "create" || f.action === "overwrite"
     );
+    const hasPendingGen = missingPaths.length > 0 || hasIncomplete;
+    const secondaryMenuItems = [];
 
-    if (writableFiles.length > 0) {
-      const applyTestBtn = document.createElement("button");
-      applyTestBtn.type = "button";
-      applyTestBtn.className = "btn-primary builder-act-btn";
-      applyTestBtn.textContent = "Aplicar na Pasta & Testar →";
-      applyTestBtn.addEventListener("click", () => {
-        const selectedPaths = selectedCheckboxes
-          .filter((cb) => cb.checked)
-          .map((cb) => cb.getAttribute("data-builder-path"))
-          .filter(Boolean);
-        void runAction(
-          `/debates/${debate.id}/builder/apply`,
-          { turnId: turn.id, selectedPaths, runVerification: true, autoFix: true },
-          "Aplicando arquivos com backup e iniciando verificação...",
-          applyTestBtn
-        );
-      });
-      actionsRow.appendChild(applyTestBtn);
+    const getSelectedPaths = () =>
+      selectedCheckboxes
+        .filter((cb) => cb.checked)
+        .map((cb) => cb.getAttribute("data-builder-path"))
+        .filter(Boolean);
 
-      const applyOnlyBtn = document.createElement("button");
-      applyOnlyBtn.type = "button";
-      applyOnlyBtn.className = "btn-secondary builder-act-btn";
-      applyOnlyBtn.textContent = "Só aplicar";
-      applyOnlyBtn.addEventListener("click", () => {
-        const selectedPaths = selectedCheckboxes
-          .filter((cb) => cb.checked)
-          .map((cb) => cb.getAttribute("data-builder-path"))
-          .filter(Boolean);
-        void runAction(
-          `/debates/${debate.id}/builder/apply`,
-          { turnId: turn.id, selectedPaths, runVerification: false },
-          "Gravando arquivos com backup em .ai-council-backup/...",
-          applyOnlyBtn
-        );
+    // Fluxo enxuto e automático: no máximo 1 ação principal relevante + Desfazer (segurança) + menu "⋯" discreto
+    if (stKey === "completed") {
+      // Concluído e validado: zero botões primários redundantes (apenas Desfazer + ⋯)
+      secondaryMenuItems.push({
+        label: "Rodar build / test novamente",
+        onClick: () =>
+          void runAction(
+            `/debates/${debate.id}/builder/verify`,
+            { turnId: turn.id, autoFix: true },
+            "Re-executando verificação na pasta..."
+          )
       });
-      actionsRow.appendChild(applyOnlyBtn);
+      secondaryMenuItems.push({
+        label: "Re-extrair diffs da resposta",
+        onClick: () =>
+          void runAction(
+            `/debates/${debate.id}/builder/extract`,
+            { turnId: turn.id },
+            "Recalculando diffs contra a pasta..."
+          )
+      });
+    } else if (stKey === "failed") {
+      if (writableFiles.length > 0) {
+        const applyTestBtn = document.createElement("button");
+        applyTestBtn.type = "button";
+        applyTestBtn.className = "btn-primary builder-act-btn";
+        applyTestBtn.textContent = "Aplicar & Testar →";
+        applyTestBtn.addEventListener("click", () => {
+          void runAction(
+            `/debates/${debate.id}/builder/apply`,
+            { turnId: turn.id, selectedPaths: getSelectedPaths(), runVerification: true, autoFix: true },
+            "Aplicando arquivos com backup e iniciando verificação...",
+            applyTestBtn
+          );
+        });
+        actionsRow.appendChild(applyTestBtn);
+
+        secondaryMenuItems.push({
+          label: "Só aplicar (sem testar)",
+          onClick: () =>
+            void runAction(
+              `/debates/${debate.id}/builder/apply`,
+              { turnId: turn.id, selectedPaths: getSelectedPaths(), runVerification: false },
+              "Gravando arquivos com backup em .ai-council-backup/..."
+            )
+        });
+      } else {
+        const retryFixBtn = document.createElement("button");
+        retryFixBtn.type = "button";
+        retryFixBtn.className = "btn-primary builder-act-btn";
+        retryFixBtn.textContent = "Tentar corrigir novamente";
+        retryFixBtn.addEventListener("click", () => {
+          void runAction(
+            `/debates/${debate.id}/builder/verify`,
+            { turnId: turn.id, autoFix: true },
+            "Diagnosticando erro e rodando autocorreção automática...",
+            retryFixBtn
+          );
+        });
+        actionsRow.appendChild(retryFixBtn);
+      }
+
+      secondaryMenuItems.push({
+        label: "Re-extrair diffs da resposta",
+        onClick: () =>
+          void runAction(
+            `/debates/${debate.id}/builder/extract`,
+            { turnId: turn.id },
+            "Recalculando diffs contra a pasta..."
+          )
+      });
+    } else {
+      // Estados ready / stopped / idle (ex.: modo "Perguntar antes" ou Conselho)
+      if (writableFiles.length > 0) {
+        const applyTestBtn = document.createElement("button");
+        applyTestBtn.type = "button";
+        applyTestBtn.className = "btn-primary builder-act-btn";
+        applyTestBtn.textContent = "Aplicar & Testar →";
+        applyTestBtn.addEventListener("click", () => {
+          void runAction(
+            `/debates/${debate.id}/builder/apply`,
+            { turnId: turn.id, selectedPaths: getSelectedPaths(), runVerification: true, autoFix: true },
+            "Aplicando arquivos com backup e iniciando verificação...",
+            applyTestBtn
+          );
+        });
+        actionsRow.appendChild(applyTestBtn);
+
+        secondaryMenuItems.push({
+          label: "Só aplicar (sem testar)",
+          onClick: () =>
+            void runAction(
+              `/debates/${debate.id}/builder/apply`,
+              { turnId: turn.id, selectedPaths: getSelectedPaths(), runVerification: false },
+              "Gravando arquivos com backup em .ai-council-backup/..."
+            )
+        });
+        secondaryMenuItems.push({
+          label: "Rodar build / test",
+          onClick: () =>
+            void runAction(
+              `/debates/${debate.id}/builder/verify`,
+              { turnId: turn.id, autoFix: true },
+              "Executando verificação e autocorreção se necessário..."
+            )
+        });
+      } else if (!hasPendingGen) {
+        const verifyBtn = document.createElement("button");
+        verifyBtn.type = "button";
+        verifyBtn.className = "btn-secondary builder-act-btn";
+        verifyBtn.textContent = "Rodar build / test";
+        verifyBtn.addEventListener("click", () => {
+          void runAction(
+            `/debates/${debate.id}/builder/verify`,
+            { turnId: turn.id, autoFix: true },
+            "Executando verificação e autocorreção se necessário...",
+            verifyBtn
+          );
+        });
+        actionsRow.appendChild(verifyBtn);
+      }
+
+      if (hasPendingGen) {
+        const genBtn = document.createElement("button");
+        genBtn.type = "button";
+        genBtn.className = writableFiles.length > 0 ? "btn-secondary builder-act-btn" : "btn-primary builder-act-btn";
+        genBtn.textContent = `Gerar arquivos restantes (${missingPaths.length + (hasIncomplete ? files.filter((f) => f.incomplete).length : 0)})`;
+        genBtn.addEventListener("click", () => {
+          void runAction(
+            `/debates/${debate.id}/builder/generate-missing`,
+            { turnId: turn.id },
+            "Gerando arquivos completos um a um...",
+            genBtn
+          );
+        });
+        actionsRow.appendChild(genBtn);
+      }
+
+      secondaryMenuItems.push({
+        label: "Re-extrair diffs da resposta",
+        onClick: () =>
+          void runAction(
+            `/debates/${debate.id}/builder/extract`,
+            { turnId: turn.id },
+            "Recalculando diffs contra a pasta..."
+          )
+      });
     }
-
-    if (missingPaths.length > 0 || hasIncomplete) {
-      const genBtn = document.createElement("button");
-      genBtn.type = "button";
-      genBtn.className = "btn-secondary builder-act-btn";
-      genBtn.textContent = `Gerar arquivos restantes (${missingPaths.length + (hasIncomplete ? files.filter((f) => f.incomplete).length : 0)})`;
-      genBtn.addEventListener("click", () => {
-        void runAction(
-          `/debates/${debate.id}/builder/generate-missing`,
-          { turnId: turn.id },
-          "Gerando arquivos completos um a um...",
-          genBtn
-        );
-      });
-      actionsRow.appendChild(genBtn);
-    }
-
-    const verifyBtn = document.createElement("button");
-    verifyBtn.type = "button";
-    verifyBtn.className = "btn-secondary builder-act-btn";
-    verifyBtn.textContent = "Rodar build / test";
-    verifyBtn.addEventListener("click", () => {
-      void runAction(
-        `/debates/${debate.id}/builder/verify`,
-        { turnId: turn.id, autoFix: true },
-        "Executando verificação e autocorreção se necessário...",
-        verifyBtn
-      );
-    });
-    actionsRow.appendChild(verifyBtn);
-
-    const reextractBtn = document.createElement("button");
-    reextractBtn.type = "button";
-    reextractBtn.className = "btn-ghost-pill builder-act-btn";
-    reextractBtn.textContent = "Re-extrair";
-    reextractBtn.addEventListener("click", () => {
-      void runAction(
-        `/debates/${debate.id}/builder/extract`,
-        { turnId: turn.id },
-        "Recalculando diffs contra a pasta...",
-        reextractBtn
-      );
-    });
-    actionsRow.appendChild(reextractBtn);
 
     if (bState.lastBackup && !bState.lastBackup.undone) {
       const undoBtn = document.createElement("button");
       undoBtn.type = "button";
       undoBtn.className = "btn-ghost-pill btn-danger-outline builder-act-btn";
       undoBtn.title = `Restaurar backup ${bState.lastBackup.backupRelDir}`;
-      undoBtn.textContent = "Desfazer último lote";
+      undoBtn.textContent = "Desfazer";
       undoBtn.addEventListener("click", () => {
         void runAction(
           `/debates/${debate.id}/builder/undo`,
@@ -2452,7 +2710,57 @@ function buildBuilderPanelForTurn(debate, turn, turnResponses) {
       actionsRow.appendChild(undoBtn);
     }
 
-    panel.append(actionsRow, feedbackEl);
+    if (secondaryMenuItems.length > 0) {
+      const moreWrap = document.createElement("div");
+      moreWrap.className = "review-dropdown builder-more-wrap";
+
+      const moreBtn = document.createElement("button");
+      moreBtn.type = "button";
+      moreBtn.className = "icon-btn builder-more-btn";
+      moreBtn.textContent = "⋯";
+      moreBtn.title = "Mais ações do Construtor";
+      moreBtn.setAttribute("aria-label", "Mais ações do Construtor");
+
+      const moreMenu = document.createElement("div");
+      moreMenu.className = "review-dropdown-menu";
+      moreMenu.hidden = true;
+
+      for (const item of secondaryMenuItems) {
+        const optBtn = document.createElement("button");
+        optBtn.type = "button";
+        optBtn.className = "review-dropdown-item";
+        optBtn.textContent = item.label;
+        optBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          moreMenu.hidden = true;
+          item.onClick();
+        });
+        moreMenu.appendChild(optBtn);
+      }
+
+      moreBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const willOpen = moreMenu.hidden;
+        for (const openMenu of $$(".review-dropdown-menu, .topbar-ai-menu")) {
+          openMenu.hidden = true;
+        }
+        moreMenu.hidden = !willOpen;
+      });
+
+      moreWrap.append(moreBtn, moreMenu);
+      actionsRow.appendChild(moreWrap);
+    }
+
+    if (actionsRow.childElementCount > 0) {
+      panel.append(actionsRow, feedbackEl);
+    }
+
+    if (stKey === "completed" && linkedProject?.linkedFolderPath) {
+      const previewBar = buildDevServerPreviewBar(linkedProject);
+      if (previewBar) {
+        panel.appendChild(previewBar);
+      }
+    }
   } else if (!isLocal) {
     const remoteNote = document.createElement("p");
     remoteNote.className = "builder-remote-note";
@@ -2477,7 +2785,11 @@ function buildBuilderPanelForTurn(debate, turn, turnResponses) {
 
       const badge = document.createElement("span");
       badge.className = `builder-file-badge ${chk.ok ? "is-create" : "is-blocked"}`;
-      badge.textContent = chk.ok ? "OK" : `ERRO (${chk.exitCode})`;
+      badge.textContent = chk.ok
+        ? "OK"
+        : chk.timedOut
+          ? "TIMEOUT"
+          : `ERRO (${chk.exitCode})`;
 
       const cmd = document.createElement("code");
       cmd.textContent = chk.command;
@@ -2639,30 +2951,39 @@ export function renderChatStage() {
 
   saveCurrentDraftsFromDom();
   state.lastRenderedChatSignature = signature;
-  threadEl.replaceChildren();
+
+  // CRÍTICO: captura a posição de scroll ANTES de trocar o DOM (evita que replaceChildren zere scrollTop para 0)
+  const chatScroll = $("#chat-scroll-area");
+  const savedScrollTop = chatScroll ? chatScroll.scrollTop : 0;
+  const wasNearBottomBeforeRender = isChatNearBottom(chatScroll);
 
   buildChatRoundMinimap(debate);
 
   const turns = getSessionTurns(debate);
   const isMultiTurn = turns.length > 1;
-  const savedScrollTop = $("#chat-scroll-area")?.scrollTop ?? 0;
-  const wasNearBottomBeforeRender = isChatNearBottom();
+  const nextNodes = [];
 
   turns.forEach((turn, idx) => {
     if (idx > 0) {
       const sep = document.createElement("div");
       sep.className = "chat-turn-divider";
-      threadEl.appendChild(sep);
+      nextNodes.push(sep);
     }
     const isLastTurn = idx === turns.length - 1;
-    threadEl.appendChild(buildTurnBlock(debate, turn, isMultiTurn, isLastTurn));
+    nextNodes.push(buildTurnBlock(debate, turn, isMultiTurn, isLastTurn));
   });
 
+  threadEl.replaceChildren(...nextNodes);
   observeScrollRevealElements(threadEl);
 
   const responseCount = Array.isArray(debate.responses) ? debate.responses.length : 0;
   const conclusionCount = turns.filter((t) => Boolean(t.conclusion)).length;
-  const contentKey = `${turns.length}:${responseCount}:${conclusionCount}:${activeStreamKeys}`;
+  const verdictCount = turns.filter((t) => Boolean(t.verdict)).length;
+  const lastBuilder = turns.at(-1)?.builderState;
+  const builderSig = lastBuilder
+    ? `${lastBuilder.status || ""}:${lastBuilder.fixAttempt || 0}:${(lastBuilder.checks || []).length}`
+    : "";
+  const contentKey = `${turns.length}:${responseCount}:${conclusionCount}:${verdictCount}:${builderSig}:${activeStreamKeys}`;
 
   if (state.lastAutoScrollDebateId !== debate.id) {
     state.lastAutoScrollDebateId = debate.id;
@@ -2685,9 +3006,11 @@ export function renderChatStage() {
         ? "Síntese pronta"
         : "Nova resposta";
     if (wasNearBottomBeforeRender) {
-      handleSmartAutoScroll({ force: true, smooth: true, label });
+      if (chatScroll) {
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+      }
+      handleSmartAutoScroll({ force: true, smooth: false, label });
     } else {
-      const chatScroll = $("#chat-scroll-area");
       if (chatScroll) {
         chatScroll.scrollTop = savedScrollTop;
       }
@@ -2695,6 +3018,12 @@ export function renderChatStage() {
     }
     requestAnimationFrame(updateChatScrollLinkedEffects);
   } else {
+    // Re-render do mesmo estado (ex.: status do Preview App, expandir/colapsar): mantém a posição exata
+    if (chatScroll) {
+      chatScroll.scrollTop = wasNearBottomBeforeRender
+        ? chatScroll.scrollHeight
+        : savedScrollTop;
+    }
     requestAnimationFrame(updateChatScrollLinkedEffects);
   }
 }

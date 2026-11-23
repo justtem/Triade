@@ -214,7 +214,7 @@ export interface AutoRouteDecision {
   skippedForQuota?: AutoPlatform[];
 }
 
-export type BuilderFileAction = "create" | "overwrite" | "unchanged" | "blocked";
+export type BuilderFileAction = "create" | "overwrite" | "delete" | "unchanged" | "blocked";
 
 export type BuilderRunStatus =
   | "idle"
@@ -244,6 +244,7 @@ export interface BuilderCommandRun {
   command: string;
   exitCode: number;
   ok: boolean;
+  timedOut?: boolean;
   durationMs: number;
   output: string;
 }
@@ -255,6 +256,7 @@ export interface BuilderBackupInfo {
   filesWritten: string[];
   filesCreated: string[];
   filesOverwritten: string[];
+  filesDeleted?: string[];
   undone?: boolean;
 }
 

@@ -7,6 +7,7 @@ import {
   decodeStorageText,
   encodeStorageText
 } from "../security/data-protection.js";
+import { writeTextAtomically } from "../shared/atomic-fs.js";
 import type {
   DebateFocus,
   InteractionMode,
@@ -82,15 +83,8 @@ function withTemplateLock<T>(operation: () => Promise<T>): Promise<T> {
 
 async function writeTemplatesAtomically(templates: PromptTemplate[]): Promise<void> {
   const file = getTemplatesFile();
-  await mkdir(dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    const encoded = await encodeStorageText(JSON.stringify(templates, null, 2));
-    await writeFile(tmp, encoded, { encoding: "utf8", mode: 0o600 });
-    await rename(tmp, file);
-  } finally {
-    await rm(tmp, { force: true }).catch(() => {});
-  }
+  const encoded = await encodeStorageText(JSON.stringify(templates, null, 2));
+  await writeTextAtomically(file, encoded, { mode: 0o600 });
 }
 
 function normalizeFocus(value: unknown): DebateFocus {

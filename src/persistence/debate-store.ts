@@ -15,6 +15,7 @@ import {
   decodeStorageText,
   encodeStorageText
 } from "../security/data-protection.js";
+import { writeTextAtomically } from "../shared/atomic-fs.js";
 import type { DebateSession, DebateSummary } from "../shared/debate-types.js";
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -158,16 +159,8 @@ function sessionFilePath(id: string): string {
 }
 
 async function writeJsonAtomically(filePath: string, data: unknown): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const temporaryFile = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-
-  try {
-    const serialized = await encodeStorageText(JSON.stringify(data, null, 2));
-    await writeFile(temporaryFile, serialized, { encoding: "utf8", mode: 0o600 });
-    await rename(temporaryFile, filePath);
-  } finally {
-    await rm(temporaryFile, { force: true }).catch(() => {});
-  }
+  const serialized = await encodeStorageText(JSON.stringify(data, null, 2));
+  await writeTextAtomically(filePath, serialized, { mode: 0o600 });
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
