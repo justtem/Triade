@@ -91,9 +91,10 @@ function emptyCatalog(): CatalogCacheState {
   };
 }
 
-const catalogs: Record<"gemini" | "groq", CatalogCacheState> = {
+const catalogs: Record<"gemini" | "groq" | "nvidia", CatalogCacheState> = {
   gemini: emptyCatalog(),
-  groq: emptyCatalog()
+  groq: emptyCatalog(),
+  nvidia: emptyCatalog()
 };
 
 const healthMap = new Map<string, ModelHealthEntry>();
@@ -318,6 +319,73 @@ export function parseGroqCatalog(payload: unknown): string[] {
   return entries.map((e) => e.id);
 }
 
+const NVIDIA_EXCLUDED_REGEX =
+  /(?:embed|embedding|rerank|guard|safeguard|shield|moderation|reward|steerlm|retriever|nv-embed|nvclip|clip|vision|(?:-vl\b|\bvl-)|kosmos|deplot|paligemma|neva|vila|ocr|parse|audio|speech|whisper|riva|tts|asr|parakeet|canary|diffusion|flux|sdxl|stable-diffusion|cosmos|video|3d|protein|esmfold|diffdock|molmim|bionemo|corrdiff|fourcastnet|weather|translate)/i;
+
+const NVIDIA_PREFERRED_CHAT_FAMILY_REGEX =
+  /(?:qwen|deepseek|nemotron|llama|mistral|codestral|devstral|mixtral|gemma|kimi|moonshot|glm|minimax|gpt-oss|phi-)/i;
+
+export function isAllowedNvidiaChatModel(raw: unknown): {
+  id: string;
+  score: number;
+} | null {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+  const id = typeof item.id === "string" ? item.id.trim() : "";
+
+  if (!id || !SAFE_MODEL_ID_REGEX.test(id)) return null;
+  if (NVIDIA_EXCLUDED_REGEX.test(id)) return null;
+
+  const lower = id.toLowerCase();
+  if (!NVIDIA_PREFERRED_CHAT_FAMILY_REGEX.test(lower)) return null;
+  // Evita variantes base não-instruct quando não forem famílias de chat/raciocínio
+  if (/(?:^|\/|-)base(?:-|$)/.test(lower)) return null;
+
+  // Prioriza modelos rápidos de código/instruct (2-6s TTFB) ACIMA de modelos
+  // gigantes de raciocínio lento (550B / R1), que ficam como reserva na fila.
+  let score = 20;
+  if (/qwen.*coder/.test(lower)) score += 55;
+  else if (/devstral|codestral/.test(lower)) score += 52;
+  else if (/llama-3\.3-70b|llama-4-(?:maverick|scout)/.test(lower)) score += 48;
+  else if (/qwen2\.5-(?:72b|32b)-instruct|qwen-?3-(?:32b|next|235b)/.test(lower)) score += 45;
+  else if (/mistral-large|mistral-small|mistral-medium/.test(lower)) score += 43;
+  else if (/deepseek-v3|deepseek-v4/.test(lower) && !/r1|reasoner/.test(lower)) score += 41;
+  else if (/gpt-oss-120b|kimi|moonshot/.test(lower)) score += 38;
+  else if (/nemotron.*super|nemotron-3.*ultra|nemotron/.test(lower)) score += 30;
+  else if (/deepseek-r1/.test(lower)) score += 28;
+  else if (/70b|72b|120b/.test(lower)) score += 34;
+  else if (/27b|32b|34b/.test(lower)) score += 28;
+
+  if (/instruct|chat/.test(lower)) score += 6;
+  // Penaliza modelos ultra-pesados (400B–1T) ou reasoning-only para evitar latência de 60-90s no #1
+  if (/(?:550b|671b|405b|\b1t\b|-1t-|thinking|reasoner|kimi-k3)/.test(lower)) score -= 12;
+
+  return { id, score };
+}
+
+export function parseNvidiaCatalog(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return [];
+  const data = (payload as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+
+  const seen = new Set<string>();
+  const entries: Array<{ id: string; score: number }> = [];
+
+  for (const raw of data) {
+    const entry = isAllowedNvidiaChatModel(raw);
+    if (!entry || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    entries.push(entry);
+  }
+
+  entries.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.id.localeCompare(b.id);
+  });
+
+  return entries.map((e) => e.id);
+}
+
 // ---------------------------------------------------------------
 // Atualização de catálogos (/models — 0 tokens, 0 reqs de chat)
 // ---------------------------------------------------------------
@@ -458,8 +526,72 @@ export async function refreshGroqCatalog(options: {
   return task;
 }
 
-// ---------------------------------------------------------------
-// Registro de saúde, latência real (EWMA) e cooldown exponencial
+export async function refreshNvidiaCatalog(options: {
+  apiKey: string;
+  baseURL?: string;
+  force?: boolean;
+  nowMs?: number;
+  fetchFn?: AutopilotFetchLike;
+}): Promise<string[]> {
+  const nowMs = options.nowMs ?? Date.now();
+  const cache = catalogs.nvidia;
+  const isFresh =
+    cache.lastFetchedAtMs !== null &&
+    nowMs - cache.lastFetchedAtMs < CATALOG_CACHE_TTL_MS &&
+    cache.models.length > 0;
+
+  if (!options.force && isFresh) {
+    cache.source = "cache";
+    return cache.models;
+  }
+  if (cache.inFlight && !options.force) {
+    return cache.inFlight;
+  }
+
+  const base = (
+    options.baseURL?.trim() || "https://integrate.api.nvidia.com/v1"
+  ).replace(/\/+$/, "");
+  const endpoint = `${base}/models`;
+  const fetcher: AutopilotFetchLike = options.fetchFn ?? ((url, init) => fetch(url, init));
+
+  let task: Promise<string[]> | null = null;
+  task = (async () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), CATALOG_TIMEOUT_MS);
+    try {
+      const res = await fetcher(endpoint, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${options.apiKey}`
+        },
+        signal: ctrl.signal
+      });
+      if (!res.ok) {
+        throw new Error(`NVIDIA NIM /models HTTP ${res.status}`);
+      }
+      const parsed = parseNvidiaCatalog(await res.json());
+      if (parsed.length > 0) {
+        cache.models = parsed;
+        cache.modelSet = new Set(parsed);
+        cache.lastFetchedAtMs = options.nowMs ?? Date.now();
+        cache.source = "live";
+      }
+      return cache.models;
+    } catch {
+      cache.source = cache.models.length > 0 ? "cache" : "fallback";
+      return cache.models;
+    } finally {
+      clearTimeout(timer);
+      if (cache.inFlight === task) {
+        cache.inFlight = null;
+      }
+    }
+  })();
+
+  cache.inFlight = task;
+  return task;
+}
 // ---------------------------------------------------------------
 
 export async function recordAutopilotSuccess(
@@ -765,8 +897,71 @@ export async function resolveGroqAutopilotModels(
   return buildGroqAutopilotQueue(preferredModels, nowMs);
 }
 
+export function buildNvidiaAutopilotQueue(
+  preferredModels: readonly string[],
+  nowMs = Date.now()
+): string[] {
+  const discovered = catalogs.nvidia.models;
+  const hasCatalog = discovered.length > 0;
+  const ordered: string[] = [];
+  const pushUnique = (id: string) => {
+    if (id && !ordered.includes(id)) ordered.push(id);
+  };
+
+  for (const pref of preferredModels) {
+    if (!hasCatalog || catalogs.nvidia.modelSet.has(pref)) {
+      pushUnique(pref);
+    }
+  }
+  for (const id of discovered) {
+    pushUnique(id);
+  }
+  for (const pref of preferredModels) {
+    pushUnique(pref);
+  }
+
+  const healthy: string[] = [];
+  const cooled: string[] = [];
+  for (const id of ordered) {
+    if (isAutopilotModelCooledDown("nvidia", id, nowMs)) {
+      cooled.push(id);
+    } else {
+      healthy.push(id);
+    }
+  }
+
+  return [...healthy, ...cooled];
+}
+
+export async function resolveNvidiaAutopilotModels(
+  preferredModels: readonly string[],
+  options: {
+    apiKey: string;
+    baseURL?: string;
+    skipNetwork?: boolean;
+    nowMs?: number;
+    fetchFn?: AutopilotFetchLike;
+  }
+): Promise<string[]> {
+  await ensureHealthLoaded();
+  const nowMs = options.nowMs ?? Date.now();
+  const cache = catalogs.nvidia;
+  if (
+    !options.skipNetwork &&
+    (cache.lastFetchedAtMs === null || nowMs - cache.lastFetchedAtMs >= CATALOG_CACHE_TTL_MS)
+  ) {
+    await refreshNvidiaCatalog({
+      apiKey: options.apiKey,
+      baseURL: options.baseURL,
+      nowMs,
+      fetchFn: options.fetchFn
+    });
+  }
+  return buildNvidiaAutopilotQueue(preferredModels, nowMs);
+}
+
 export async function getProviderAutopilotSnapshot(
-  provider: "gemini" | "groq",
+  provider: "gemini" | "groq" | "nvidia",
   preferredModels: readonly string[],
   nowMs = Date.now()
 ): Promise<ProviderAutopilotSnapshot> {
@@ -775,7 +970,9 @@ export async function getProviderAutopilotSnapshot(
   const activeModels =
     provider === "gemini"
       ? buildGeminiAutopilotQueue(preferredModels, nowMs)
-      : buildGroqAutopilotQueue(preferredModels, nowMs);
+      : provider === "groq"
+        ? buildGroqAutopilotQueue(preferredModels, nowMs)
+        : buildNvidiaAutopilotQueue(preferredModels, nowMs);
 
   const latenciesMs: Record<string, number> = {};
   const cooledDown: ProviderAutopilotSnapshot["cooledDown"] = [];
@@ -818,6 +1015,7 @@ export async function getProviderAutopilotSnapshot(
 export function resetModelAutopilotForTests(): void {
   catalogs.gemini = emptyCatalog();
   catalogs.groq = emptyCatalog();
+  catalogs.nvidia = emptyCatalog();
   healthMap.clear();
   healthLoadedDir = null;
 }

@@ -1,6 +1,7 @@
 import {
   PLATFORMS,
   PLATFORM_MONOGRAMS,
+  CORE_AUTO_PLATFORM_IDS,
   AUTO_PLATFORM_IDS,
   STAGE_LABELS,
   FOCUS_LABELS,
@@ -302,8 +303,8 @@ export function buildTurnUserMessage(debate, turn, isMultiTurn) {
   const metaParts = [`${modeLabel} · ${dynLabel}`];
   if (turn.autoRoute && participantsNames) {
     const routeTarget =
-      (turn.participants || []).length === AUTO_PLATFORM_IDS.length &&
-      AUTO_PLATFORM_IDS.every((id) => (turn.participants || []).includes(id))
+      (turn.participants || []).length === CORE_AUTO_PLATFORM_IDS.length &&
+      CORE_AUTO_PLATFORM_IDS.every((id) => (turn.participants || []).includes(id))
         ? "Trio"
         : participantsNames;
     const reasonText = turn.autoRoute.reason ? ` (${turn.autoRoute.reason})` : "";
@@ -950,7 +951,11 @@ export function buildResponseCard(debate, resp, turn) {
     );
 
     // Menu "⋯" agrupando Regenerar + Revisar com outra IA (mantém o cabeçalho limpo sem encavalar)
-    const otherAuto = AUTO_PLATFORM_IDS.filter((p) => p !== resp.platform);
+    const otherAuto = AUTO_PLATFORM_IDS.filter((p) => {
+      if (p === resp.platform) return false;
+      const info = state.latestProviders.find((item) => item.id === p);
+      return !(info?.optional && !info?.ready);
+    });
     const moreWrap = document.createElement("div");
     moreWrap.className = "review-dropdown-wrap";
 
@@ -1606,11 +1611,15 @@ export function buildVerdictSection(debate, turn, turnResponses) {
   sep.className = "review-menu-sep";
   moreMenu.appendChild(sep);
 
+  const nvidiaReady = Boolean(
+    state.latestProviders.find((item) => item.id === "nvidia")?.ready
+  );
   const judgeOptions = [
     { id: "auto", label: "Reavaliar · Auto" },
     { id: "gemini", label: "Reavaliar · Gemini" },
     { id: "openrouter", label: "Reavaliar · OpenRouter" },
-    { id: "groq", label: "Reavaliar · Groq" }
+    { id: "groq", label: "Reavaliar · Groq" },
+    ...(nvidiaReady ? [{ id: "nvidia", label: "Reavaliar · NVIDIA NIM" }] : [])
   ];
 
   for (const opt of judgeOptions) {

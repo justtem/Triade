@@ -4,6 +4,7 @@ import {
   ALL_PLATFORMS,
   isAutoPlatform,
   type AIPlatform,
+  type AutoPlatform,
   type ChatAttachment,
   type ChatTurn,
   type ContinueDebateInput,
@@ -74,18 +75,22 @@ export const PLATFORM_NAMES: Record<AIPlatform, string> = {
   claude: "Claude",
   gemini: "Gemini",
   groq: "Groq",
-  openrouter: "OpenRouter"
+  openrouter: "OpenRouter",
+  nvidia: "NVIDIA NIM"
 };
 
 const DEFAULT_RULES =
   "Seja curto, direto e 100% concreto. Sem enrolação, sem introdução longa e sem teoria desnecessária. Foque na solução prática e acionável.";
 
 const MEMORY_COMPACTION_SYSTEM_PROMPT = [
-  "Você mantém a Memória Compartilhada de uma conversa usada simultaneamente por 3 IAs (Gemini, Groq e OpenRouter).",
+  "Você mantém a Memória Compartilhada de uma conversa usada simultaneamente pelas IAs do AI Council.",
   "Resuma apenas fatos concretos, decisões tomadas, preferências do usuário, nomes/números/regras e estado atual do assunto ou código.",
   "Não invente nada, não dê opiniões e escreva em tópicos curtos em português do Brasil (máximo ~300 palavras).",
   ANTI_INJECTION_SYSTEM_RULE
 ].join(" ");
+
+const ANTI_ABANDONMENT_CRITIQUE_RULE =
+  "Regra de independência (obrigatória): mantenha sua própria estrutura, abordagem e acertos da rodada anterior. NUNCA abandone ou reescreva sua resposta só para concordar com um colega; incorpore somente correções de bugs reais, vulnerabilidades ou melhorias técnicas comprovadas e defenda objetivamente onde sua proposta for melhor.";
 
 export const DEFAULT_SYSTEM_PROMPT = [
   "Você integra o AI Council, um conselho técnico de IAs que debate para chegar à melhor resposta.",
@@ -196,6 +201,15 @@ function roleFor(platform: AIPlatform, focus: DebateFocus): Role {
         round1: "Proponha a solução focando em clareza e manutenção.",
         critique: "Refine a legibilidade mantendo a lógica consolidada do conselho."
       };
+
+    case "nvidia":
+      return {
+        title: "Engenheiro de código e robustez",
+        round1:
+          "Proponha uma implementação limpa, tipada e pronta para rodar, destacando casos de borda e performance.",
+        critique:
+          "Preserve seus acertos técnicos sem abandonar sua própria proposta; integre apenas correções ou melhorias comprovadas dos colegas."
+      };
   }
 }
 
@@ -239,6 +253,14 @@ function normalRoleFor(platform: AIPlatform): Role {
         title: "Clareza e síntese",
         round1: "Responda com naturalidade, clareza e boa organização.",
         critique: "Refine a clareza mantendo os pontos mais úteis dos colegas."
+      };
+
+    case "nvidia":
+      return {
+        title: "Aprofundamento prático",
+        round1: "Responda de forma natural, técnica e direta com exemplos práticos.",
+        critique:
+          "Preserve seus pontos fortes sem abandonar sua própria visão e incorpore melhorias concretas dos colegas."
       };
   }
 }
@@ -821,16 +843,35 @@ function buildPreviousBlock(
   session: DebateSession,
   turn: ChatTurn,
   round: number,
-  maxChars: number
+  maxChars: number,
+  selfPlatform?: AIPlatform
 ): string {
-  return responsesForTurn(session, turn.id)
-    .filter((resp) => resp.round === round && resp.stage !== "synthesis")
-    .map((resp) =>
-      [
-        `### ${labelFor(resp.platform, turn.focus, turn.responseMode)}`,
+  const roundResponses = responsesForTurn(session, turn.id).filter(
+    (resp) => resp.round === round && resp.stage !== "synthesis"
+  );
+
+  // Ancora a própria resposta anterior no topo da crítica para evitar que a IA
+  // abandone sua solução ao ler as propostas dos colegas.
+  const ordered = selfPlatform
+    ? [
+        ...roundResponses.filter((r) => r.platform === selfPlatform),
+        ...roundResponses.filter((r) => r.platform !== selfPlatform)
+      ]
+    : roundResponses;
+
+  return ordered
+    .map((resp) => {
+      const baseLabel = labelFor(resp.platform, turn.focus, turn.responseMode);
+      const tag = selfPlatform
+        ? resp.platform === selfPlatform
+          ? " [SUA RESPOSTA ANTERIOR — PRESERVE SEUS ACERTOS]"
+          : " [COLEGA]"
+        : "";
+      return [
+        `### ${baseLabel}${tag}`,
         compactForPrompt(resp.content, maxChars)
-      ].join("\n")
-    )
+      ].join("\n");
+    })
     .join("\n\n");
 }
 
@@ -1012,7 +1053,8 @@ function buildCritiqueUserPrompt(
     session,
     turn,
     previousRound,
-    budget.critiquePeerChars
+    budget.critiquePeerChars,
+    platform
   );
   const customRules = turn.rules.trim();
 
@@ -1037,7 +1079,8 @@ function buildCritiqueUserPrompt(
       "",
       `Seu papel: ${role.title}.`,
       role.critique,
-      "Comente brevemente o que ajustou e entregue sua resposta refinada em tom natural e objetivo."
+      ANTI_ABANDONMENT_CRITIQUE_RULE,
+      "Comente brevemente o que manteve e o que ajustou, e entregue sua resposta refinada em tom natural e objetivo."
     );
     return parts.join("\n");
   }
@@ -1061,7 +1104,8 @@ function buildCritiqueUserPrompt(
     "",
     `Seu papel: ${role.title}.`,
     role.critique,
-    `Formato: (1) até 3 falhas reais (não invente se já estiver correto); (2) código único mesclando o melhor das 3 propostas (proibido TODOs ou cortes). Seja curto.`
+    ANTI_ABANDONMENT_CRITIQUE_RULE,
+    `Formato: (1) até 3 falhas reais nos colegas ou na sua própria proposta (não invente se já estiver correto); (2) código único preservando sua base e integrando apenas melhorias comprovadas (proibido TODOs ou cortes). Seja curto.`
   );
   return parts.join("\n");
 }
@@ -1111,6 +1155,18 @@ function buildSynthesisUserPrompt(
   }
 
   const effectiveRules = customRules || DEFAULT_RULES;
+  const activeParticipantNames = Array.from(
+    new Set(
+      responsesForTurn(session, turn.id)
+        .filter((r) => r.round === turn.totalRounds && r.stage !== "synthesis")
+        .map((r) => PLATFORM_NAMES[r.platform])
+    )
+  );
+  const participantsSummary =
+    activeParticipantNames.length > 0
+      ? activeParticipantNames.join(", ")
+      : turn.participants.map((p) => PLATFORM_NAMES[p]).join(", ");
+
   const parts: string[] = [];
   if (projectInstrBlock) {
     parts.push(projectInstrBlock, "");
@@ -1122,13 +1178,13 @@ function buildSynthesisUserPrompt(
     `Pedido original: ${turn.prompt}`,
     `Diretriz: ${effectiveRules}`,
     "",
-    `Posições finais da rodada ${turn.totalRounds}:`,
+    `Posições finais da rodada ${turn.totalRounds} (${participantsSummary}):`,
     "",
     finalBlock,
     "",
-    `Você é o relator. Faça um MERGE linha a linha mantendo sua estrutura base (Gemini) somada às validações do Groq e otimizações do OpenRouter (ignore códigos cortados/TODOs e restaure qualquer trava de estado omitida):`,
+    `Você é o relator (${PLATFORM_NAMES[relator]}). Faça um MERGE linha a linha consolidando a melhor estrutura base somada às validações de segurança, correções de borda e otimizações válidas de todos os colegas (${participantsSummary}). Ignore blocos cortados/TODOs, mantenha 100% de consistência nos nomes de arquivos, funções, tipos e rotas, e restaure qualquer trava de estado omitida:`,
     `1. "# Solução final" — a solução consolidada completa.`,
-    `2. "## Conclusão do conselho" — 1 parágrafo curto sobre o que foi fundido.`
+    `2. "## Conclusão do conselho" — 1 parágrafo curto sobre o que foi fundido de cada participante.`
   );
   return parts.join("\n");
 }
@@ -1155,7 +1211,11 @@ function createInitialParticipantStates(
 }
 
 function pickRelator(participants: AIPlatform[]): AIPlatform {
+  // Quando NVIDIA NIM participa do debate, ela assume a relatoria para aliviar a cota do Gemini;
+  // caso contrário mantém Gemini -> OpenRouter -> primeiro automático.
+  if (participants.includes("nvidia")) return "nvidia";
   if (participants.includes("gemini")) return "gemini";
+  if (participants.includes("openrouter")) return "openrouter";
 
   const firstAuto = participants.find((p) => isAutoPlatform(p));
   return firstAuto ?? participants[0] ?? "gemini";
@@ -2295,6 +2355,95 @@ export async function recordTaskFailure(
       };
       syncActiveTurnStatus(session);
     }
+
+    await writeDebateSessionAtomically(session);
+    emitDebateUpdated(session);
+    return session;
+  });
+}
+
+/**
+ * Failover automático entre provedores quando uma IA cai (ex.: 503/rate-limit) durante um debate:
+ * transfere a tarefa pendente para um provedor saudável reserva sem pausar o fluxo do usuário.
+ */
+export async function failoverTaskToBackupProvider(
+  debateId: string,
+  taskId: string,
+  backupPlatform: AutoPlatform,
+  failureReason: string
+): Promise<DebateSession | null> {
+  return withDebateLock(async () => {
+    const session = await readDebateSessionById(debateId);
+    const task = session?.tasks.find((t) => t.id === taskId);
+
+    if (!session || !task || task.status === "completed") {
+      return null;
+    }
+
+    const previousPlatform = task.platform;
+    if (previousPlatform === backupPlatform) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const targetTurn =
+      (task.turnId ? session.turns?.find((t) => t.id === task.turnId) : undefined) ??
+      session.turns?.at(-1);
+
+    task.platform = backupPlatform;
+    task.seat = "auto";
+    task.attempts = 0;
+    task.lastError = undefined;
+    const backupBudget = budgetForPlatform(backupPlatform);
+    task.maxTokens =
+      task.stage === "synthesis"
+        ? backupBudget.maxTokens.synthesis
+        : task.stage === "critique"
+          ? backupBudget.maxTokens.critique
+          : backupBudget.maxTokens.initial_response;
+
+    if (task.stage === "synthesis") {
+      task.role = `Relator (failover de ${PLATFORM_NAMES[previousPlatform]})`;
+    } else if (targetTurn?.interactionMode === "debate") {
+      task.role =
+        targetTurn.responseMode === "normal"
+          ? normalRoleFor(backupPlatform).title
+          : roleFor(backupPlatform, targetTurn.focus).title;
+    }
+
+    if (targetTurn) {
+      if (!targetTurn.participants.includes(backupPlatform)) {
+        const idx = targetTurn.participants.indexOf(previousPlatform);
+        if (idx >= 0 && task.stage !== "synthesis") {
+          targetTurn.participants[idx] = backupPlatform;
+        } else {
+          targetTurn.participants.push(backupPlatform);
+        }
+      }
+      targetTurn.status = "running";
+    }
+
+    if (!session.participants.includes(backupPlatform)) {
+      session.participants.push(backupPlatform);
+    }
+
+    session.participantStates[backupPlatform] = {
+      platform: backupPlatform,
+      availability: "unknown"
+    };
+    if (session.participantStates[previousPlatform]) {
+      session.participantStates[previousPlatform] = {
+        ...session.participantStates[previousPlatform],
+        availability: "warning",
+        lastSignalAt: now,
+        lastLimitMessage: `Failover para ${PLATFORM_NAMES[backupPlatform]}: ${failureReason.slice(0, 140)}`
+      };
+    }
+
+    session.status = "running";
+    session.pauseInfo = undefined;
+    session.updatedAt = now;
+    syncActiveTurnStatus(session);
 
     await writeDebateSessionAtomically(session);
     emitDebateUpdated(session);

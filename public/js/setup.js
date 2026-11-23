@@ -1,7 +1,8 @@
 import { $, state } from "./state.js";
 import { fetchJson, refreshDashboard } from "./api.js";
 
-const SETUP_PROVIDERS = ["gemini", "groq", "openrouter"];
+const SETUP_PROVIDERS = ["gemini", "groq", "openrouter", "nvidia"];
+const OPTIONAL_SETUP_PROVIDERS = new Set(["nvidia"]);
 
 function applyProviderBadge(plat, text, variant) {
   const el = $(`#setup-status-${plat}`);
@@ -49,14 +50,20 @@ function applySetupStatusToModal(statusData) {
         input.placeholder = "Deixe em branco para manter a chave atual";
       }
     } else {
-      applyProviderBadge(plat, "Pendente", "is-pending");
+      applyProviderBadge(
+        plat,
+        OPTIONAL_SETUP_PROVIDERS.has(plat) ? "Opcional" : "Pendente",
+        "is-pending"
+      );
       if (input) {
         input.placeholder =
           plat === "gemini"
             ? "Cole sua GEMINI_API_KEY (AIza...)"
             : plat === "groq"
               ? "Cole sua GROQ_API_KEY (gsk_...)"
-              : "Cole sua OPENROUTER_API_KEY (sk-or-...)";
+              : plat === "nvidia"
+                ? "Opcional — Cole sua NVIDIA_API_KEY (nvapi-...)"
+                : "Cole sua OPENROUTER_API_KEY (sk-or-...)";
       }
     }
     applyFieldMessage(plat, "", false);
@@ -157,6 +164,7 @@ export async function handleSaveSetupForm(event) {
     geminiApiKey: $("#setup-key-gemini")?.value?.trim() || "",
     groqApiKey: $("#setup-key-groq")?.value?.trim() || "",
     openrouterApiKey: $("#setup-key-openrouter")?.value?.trim() || "",
+    nvidiaApiKey: $("#setup-key-nvidia")?.value?.trim() || "",
     accessPassword: $("#setup-access-password")?.value?.trim() || ""
   };
 

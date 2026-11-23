@@ -343,4 +343,157 @@ describe("auto-router (Modo Auto 0ms)", () => {
     assert.equal(res.interactionMode, "direct");
     assert.deepEqual(res.autoRoute.participants, ["gemini", "groq", "openrouter"]);
   });
+
+  it("Passo 2: prioriza NVIDIA NIM em edição na pasta, contexto longo e como reserva de debate para desafogar Gemini", () => {
+    const withNvidia: ProviderStatus[] = [
+      ...allHealthy(),
+      makeProviderStatus("nvidia", { requestsToday: 5, requestsDailyCap: 270 })
+    ];
+
+    // 1. Edição rápida na pasta com Gemini saudável -> mantém Gemini pela velocidade/precisão TS;
+    //    se Gemini cair abaixo de 20% ou 503, failover automático para NVIDIA NIM!
+    const editResHealthy = resolveAutoComposerStrategy(
+      {
+        prompt: "Adicione um filtro por categoria no cabeçalho",
+        isContinuation: true,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      withNvidia
+    );
+    assert.equal(editResHealthy.interactionMode, "direct");
+    assert.deepEqual(editResHealthy.autoRoute.participants, ["gemini"]);
+
+    const editResFailover = resolveAutoComposerStrategy(
+      {
+        prompt: "Adicione um filtro por categoria no cabeçalho",
+        isContinuation: true,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      [
+        makeProviderStatus("gemini", { requestsToday: 85, requestsDailyCap: 100 }),
+        makeProviderStatus("groq", { requestsToday: 20, requestsDailyCap: 900 }),
+        makeProviderStatus("openrouter", { requestsToday: 5, requestsDailyCap: 45 }),
+        makeProviderStatus("nvidia", { requestsToday: 5, requestsDailyCap: 270 })
+      ]
+    );
+    assert.deepEqual(editResFailover.autoRoute.participants, ["nvidia"]);
+
+    // 2. Contexto extenso (sem PDF/imagem) -> NVIDIA NIM preservando Gemini
+    const longRes = resolveAutoRoute(
+      {
+        prompt: "Resuma os pontos principais desse código.",
+        responseMode: "normal",
+        interactionMode: "direct",
+        resolvedProjectContext: {
+          projectId: "proj-2",
+          projectName: "FinBolso",
+          instructions: "Seja claro.",
+          chunks: [
+            {
+              source: "server.ts",
+              kind: "folder",
+              score: 5,
+              content: "x".repeat(4500)
+            }
+          ]
+        }
+      },
+      withNvidia
+    );
+    assert.deepEqual(longRes.participants, ["nvidia"]);
+    assert.equal(longRes.category, "long_context");
+
+    // 3. Reserva automática no Debate quando OpenRouter cai abaixo de 10%
+    const lowOrWithNvidia: ProviderStatus[] = [
+      makeProviderStatus("gemini", { requestsToday: 10, requestsDailyCap: 100 }),
+      makeProviderStatus("groq", { requestsToday: 10, requestsDailyCap: 900 }),
+      makeProviderStatus("openrouter", { requestsToday: 44, requestsDailyCap: 45 }),
+      makeProviderStatus("nvidia", { requestsToday: 5, requestsDailyCap: 270 })
+    ];
+    const debateRes = resolveAutoRoute(
+      {
+        prompt: "Compare abordagens de cache",
+        responseMode: "normal",
+        interactionMode: "debate"
+      },
+      lowOrWithNvidia
+    );
+    assert.deepEqual(debateRes.participants, ["gemini", "groq", "nvidia"]);
+
+    // 4. Sem NVIDIA: quando Gemini cai abaixo de 45% e OpenRouter tem folga, rotaciona edição para OpenRouter
+    const lowGeminiNoNvidia: ProviderStatus[] = [
+      makeProviderStatus("gemini", { requestsToday: 65, requestsDailyCap: 100 }),
+      makeProviderStatus("groq", { requestsToday: 20, requestsDailyCap: 900 }),
+      makeProviderStatus("openrouter", { requestsToday: 5, requestsDailyCap: 45 })
+    ];
+    const rotatedEdit = resolveAutoComposerStrategy(
+      {
+        prompt: "Adicione um botão de exportar JSON no cabeçalho",
+        isContinuation: true,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      lowGeminiNoNvidia
+    );
+    assert.deepEqual(rotatedEdit.autoRoute.participants, ["openrouter"]);
+
+    // 5. Construção completa de app novo com NVIDIA ativa -> NVIDIA + Groq + OpenRouter (poupa 100% do Gemini!)
+    const majorBuildWithNvidia = resolveAutoComposerStrategy(
+      {
+        prompt: "Crie na pasta um app completo CineLista para organizar filmes e séries",
+        isContinuation: false,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      withNvidia
+    );
+    assert.equal(majorBuildWithNvidia.interactionMode, "debate");
+    assert.deepEqual(majorBuildWithNvidia.autoRoute.participants, [
+      "nvidia",
+      "groq",
+      "openrouter"
+    ]);
+
+    // 6. Queda global 503 no Gemini (todos modelos em cooldown) -> Auto-Router pula Gemini e chama NVIDIA!
+    const geminiOutageWithNvidia: ProviderStatus[] = [
+      {
+        ...makeProviderStatus("gemini", { requestsToday: 2, requestsDailyCap: 90 }),
+        autopilot: {
+          source: "live",
+          lastFetchedAt: "2026-11-23T18:00:00Z",
+          discoveredCount: 2,
+          activeModels: ["gemini-3.5-flash", "gemini-3.5-flash-lite"],
+          primaryModel: "gemini-3.5-flash",
+          fastBackupModel: "gemini-3.5-flash-lite",
+          latenciesMs: {},
+          cooledDown: [
+            { model: "gemini-3.5-flash", reason: "congested", until: "2026-11-23T19:00:00Z" },
+            { model: "gemini-3.5-flash-lite", reason: "congested", until: "2026-11-23T19:00:00Z" }
+          ]
+        }
+      },
+      makeProviderStatus("groq", { requestsToday: 10, requestsDailyCap: 900 }),
+      makeProviderStatus("openrouter", { requestsToday: 2, requestsDailyCap: 45 }),
+      makeProviderStatus("nvidia", { requestsToday: 2, requestsDailyCap: 270 })
+    ];
+    const outageDebate = resolveAutoRoute(
+      {
+        prompt: "Compare arquiteturas REST vs RPC",
+        responseMode: "normal",
+        interactionMode: "debate"
+      },
+      geminiOutageWithNvidia
+    );
+    assert.deepEqual(outageDebate.participants, ["groq", "openrouter", "nvidia"]);
+  });
 });

@@ -17,13 +17,15 @@ const PLACEHOLDER_PREFIXES = [
 export const PROVIDER_ENV_KEYS: Record<AutoPlatform, string> = {
   gemini: "GEMINI_API_KEY",
   groq: "GROQ_API_KEY",
-  openrouter: "OPENROUTER_API_KEY"
+  openrouter: "OPENROUTER_API_KEY",
+  nvidia: "NVIDIA_API_KEY"
 };
 
 export const PROVIDER_KEY_URLS: Record<AutoPlatform, string> = {
   gemini: "https://aistudio.google.com/apikey",
   groq: "https://console.groq.com/keys",
-  openrouter: "https://openrouter.ai/keys"
+  openrouter: "https://openrouter.ai/keys",
+  nvidia: "https://build.nvidia.com"
 };
 
 export function isPlaceholderSecret(value: string | undefined): boolean {
@@ -283,6 +285,22 @@ export async function validateProviderApiKey(
         return { ok: false, error: "Chave Groq inválida ou revogada." };
       }
       return { ok: false, error: `Groq retornou HTTP ${res.status}.` };
+    }
+
+    if (platform === "nvidia") {
+      const base = (
+        process.env.NVIDIA_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1"
+      ).replace(/\/+$/, "");
+      const res = await fetch(`${base}/models`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${cleanKey}` },
+        signal: timeout
+      });
+      if (res.ok) return { ok: true };
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, error: "Chave NVIDIA NIM inválida ou revogada." };
+      }
+      return { ok: false, error: `NVIDIA NIM retornou HTTP ${res.status}.` };
     }
 
     const base = (

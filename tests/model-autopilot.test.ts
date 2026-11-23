@@ -7,17 +7,21 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   buildGeminiAutopilotQueue,
   buildGroqAutopilotQueue,
+  buildNvidiaAutopilotQueue,
   getProviderAutopilotSnapshot,
   isAllowedFreeGeminiModel,
   isAllowedGroqChatModel,
+  isAllowedNvidiaChatModel,
   isAutopilotModelCooledDown,
   parseGeminiCatalog,
   parseGroqCatalog,
+  parseNvidiaCatalog,
   pickGeminiHedgePlan,
   recordAutopilotFailure,
   recordAutopilotSuccess,
   refreshGeminiCatalog,
   refreshGroqCatalog,
+  refreshNvidiaCatalog,
   resetModelAutopilotForTests
 } from "../src/providers/model-autopilot.js";
 import { runWithFallback } from "../src/providers/policy.js";
@@ -352,5 +356,77 @@ describe("Piloto Automático de Modelos (Gemini + Groq + Hedge Cirúrgico)", () 
       "gemini-2.5-flash",
       "gemma-4-31b-it"
     ]);
+  });
+
+  it("NVIDIA NIM Autopilot filtra embeddings/guard/difusão/VL, prioriza modelos rápidos de código acima de reasoning 550B e aplica cooldown automático", async () => {
+    assert.equal(isAllowedNvidiaChatModel({ id: "nvidia/nv-embedqa-e5-v5" }), null);
+    assert.equal(isAllowedNvidiaChatModel({ id: "meta/llama-guard-4-12b" }), null);
+    assert.equal(isAllowedNvidiaChatModel({ id: "stabilityai/sdxl-turbo" }), null);
+    assert.equal(isAllowedNvidiaChatModel({ id: "nvidia/nemotron-3.5-super-vl-120b-a12b" }), null);
+
+    const parsed = parseNvidiaCatalog({
+      data: [
+        { id: "nvidia/nv-embed-v1" },
+        { id: "nvidia/riva-asr" },
+        { id: "nvidia/nemotron-3.5-super-vl-120b-a12b" },
+        { id: "meta/llama-3.3-70b-instruct" },
+        { id: "qwen/qwen2.5-coder-32b-instruct" },
+        { id: "deepseek-ai/deepseek-v3.2" },
+        { id: "nvidia/nemotron-3-ultra-550b-a55b" }
+      ]
+    });
+
+    assert.equal(parsed[0], "qwen/qwen2.5-coder-32b-instruct");
+    assert.ok(parsed.indexOf("meta/llama-3.3-70b-instruct") < parsed.indexOf("nvidia/nemotron-3-ultra-550b-a55b"));
+    assert.equal(parsed.includes("nvidia/nemotron-3.5-super-vl-120b-a12b"), false);
+    assert.equal(parsed.includes("nvidia/nv-embed-v1"), false);
+
+    const now = Date.now();
+    await refreshNvidiaCatalog({
+      apiKey: "nvapi-test-catalog-key",
+      nowMs: now,
+      fetchFn: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            { id: "qwen/qwen2.5-coder-32b-instruct" },
+            { id: "meta/llama-3.3-70b-instruct" }
+          ]
+        })
+      })
+    });
+
+    const beforeCooldown = buildNvidiaAutopilotQueue(
+      ["qwen/qwen2.5-coder-32b-instruct", "meta/llama-3.3-70b-instruct"],
+      now
+    );
+    assert.equal(beforeCooldown[0], "qwen/qwen2.5-coder-32b-instruct");
+
+    await recordAutopilotFailure(
+      "nvidia",
+      "qwen/qwen2.5-coder-32b-instruct",
+      { kind: "transient", message: "Timeout TTFB (28s)" },
+      now
+    );
+
+    assert.equal(
+      isAutopilotModelCooledDown("nvidia", "qwen/qwen2.5-coder-32b-instruct", now + 1000),
+      true
+    );
+
+    const afterCooldown = buildNvidiaAutopilotQueue(
+      ["qwen/qwen2.5-coder-32b-instruct", "meta/llama-3.3-70b-instruct"],
+      now + 1000
+    );
+    assert.equal(afterCooldown[0], "meta/llama-3.3-70b-instruct");
+
+    const snap = await getProviderAutopilotSnapshot(
+      "nvidia",
+      ["qwen/qwen2.5-coder-32b-instruct", "meta/llama-3.3-70b-instruct"],
+      now + 1000
+    );
+    assert.equal(snap.primaryModel, "meta/llama-3.3-70b-instruct");
+    assert.equal(snap.cooledDown.length, 1);
   });
 });

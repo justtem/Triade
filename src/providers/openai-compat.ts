@@ -34,7 +34,7 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
     baseURL: options.baseURL,
     // Sem retentativas escondidas do SDK: cada chamada HTTP passa pelo UsageGate.
     maxRetries: 0,
-    timeout: 90_000,
+    timeout: 60_000,
     defaultHeaders: options.extraHeaders
   });
 
@@ -98,11 +98,17 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                   : {})
               } as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming;
 
-              // Proteção anti-travamento (TTFB): evita que um modelo gratuito congestionado segure o Trio por 90s
-              const ttfbLimitMs = options.id === "openrouter" ? 28_000 : 18_000;
+              // Proteção anti-travamento (TTFB): evita que um modelo gratuito congestionado segure o fluxo
+              const ttfbLimitMs =
+                options.id === "openrouter"
+                  ? 25_000
+                  : options.id === "nvidia"
+                    ? 20_000
+                    : 18_000;
               const ttfbCtrl = new AbortController();
               let timedOutBeforeFirstToken = false;
-              let firstTokenSeen = false;
+              let firstContentSeen = false;
+              let reasoningGraceUsed = false;
 
               const onOuterAbort = () => ttfbCtrl.abort(effectiveSignal?.reason);
               if (effectiveSignal) {
@@ -113,8 +119,8 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                 }
               }
 
-              const ttfbTimer = setTimeout(() => {
-                if (!firstTokenSeen) {
+              let ttfbTimer = setTimeout(() => {
+                if (!firstContentSeen) {
                   timedOutBeforeFirstToken = true;
                   ttfbCtrl.abort();
                 }
@@ -136,10 +142,26 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                     break;
                   }
                   const choice = chunk.choices?.[0];
-                  const piece = choice?.delta?.content ?? "";
+                  const deltaObj = choice?.delta as
+                    | { content?: string | null; reasoning_content?: string | null }
+                    | undefined;
+                  const piece = deltaObj?.content ?? "";
+                  const reasoningPiece = deltaObj?.reasoning_content ?? "";
+                  // Se o modelo só está emitindo reasoning_content oculto, dá no máximo +15s de folga
+                  // (evita que um modelo reasoning 550B fique 90s pensando sem entregar 1 caractere de código)
+                  if (reasoningPiece && !firstContentSeen && !reasoningGraceUsed) {
+                    reasoningGraceUsed = true;
+                    clearTimeout(ttfbTimer);
+                    ttfbTimer = setTimeout(() => {
+                      if (!firstContentSeen) {
+                        timedOutBeforeFirstToken = true;
+                        ttfbCtrl.abort();
+                      }
+                    }, 15_000);
+                  }
                   if (piece) {
-                    if (!firstTokenSeen) {
-                      firstTokenSeen = true;
+                    if (!firstContentSeen) {
+                      firstContentSeen = true;
                       clearTimeout(ttfbTimer);
                     }
                     fullText += piece;

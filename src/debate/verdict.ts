@@ -28,7 +28,7 @@ const VERDICT_SYSTEM_PROMPT = [
   "{",
   '  "consensus": ["ponto objetivo 1 onde concordam", "ponto 2"],',
   '  "divergences": ["divergência, risco ou erro que uma IA apontou ou cometeu"],',
-  '  "winner": "gemini" | "groq" | "openrouter" | "chatgpt" | "claude" | "tie",',
+  '  "winner": "gemini" | "groq" | "openrouter" | "nvidia" | "chatgpt" | "claude" | "tie",',
   '  "winnerReason": "1 a 2 frases diretas explicando por que essa resposta é a melhor",',
   '  "practicalSummary": "Síntese prática em 3 a 5 linhas combinando o melhor de todas as respostas"',
   "}",
@@ -242,9 +242,15 @@ export async function rankJudgeCandidates(
         tokCap && tokCap > 0 ? Math.max(0, 1 - tokUsed / tokCap) : 1;
       const remainingRatio = Math.min(reqRatio, tokRatio);
 
-      // Bônus de contexto para OpenRouter e Gemini (Groq gratuito tem 8k TPM)
+      // Bônus de contexto priorizando NVIDIA NIM e OpenRouter para aliviar a cota do Gemini
       const contextBonus =
-        s.id === "openrouter" ? 0.18 : s.id === "gemini" ? 0.14 : 0;
+        s.id === "nvidia"
+          ? 0.22
+          : s.id === "openrouter"
+            ? 0.18
+            : s.id === "gemini"
+              ? 0.1
+              : 0;
       return {
         id: s.id,
         remainingRatio,

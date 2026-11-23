@@ -5,6 +5,7 @@ export type VoicePersona =
   | "gemini"
   | "groq"
   | "openrouter"
+  | "nvidia"
   | "chatgpt"
   | "claude"
   | "judge";
@@ -65,6 +66,12 @@ export const DEFAULT_PERSONA_PROFILES: Record<VoicePersona, PersonaVoiceProfile>
     pitch: "+0Hz",
     roleHint: "Voz alternativa"
   },
+  nvidia: {
+    voiceKey: "antonio",
+    rate: "+2%",
+    pitch: "+0Hz",
+    roleHint: "Engenheiro de código"
+  },
   chatgpt: {
     voiceKey: "francisca",
     rate: "+2%",
@@ -117,6 +124,7 @@ export function normalizePersona(raw?: string): VoicePersona {
     clean === "gemini" ||
     clean === "groq" ||
     clean === "openrouter" ||
+    clean === "nvidia" ||
     clean === "chatgpt" ||
     clean === "claude" ||
     clean === "judge"

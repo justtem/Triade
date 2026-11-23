@@ -1016,7 +1016,8 @@ export async function handleDebateRoutes(
         const judge =
           payload.judge === "gemini" ||
           payload.judge === "groq" ||
-          payload.judge === "openrouter"
+          payload.judge === "openrouter" ||
+          payload.judge === "nvidia"
             ? payload.judge
             : undefined;
 

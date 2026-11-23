@@ -115,8 +115,9 @@ async function pickHealthyMemoryExtractorProvider(): Promise<AutoPlatform | null
   initProviders();
   const statuses = await getProvidersStatus();
 
-  // Preferência: Gemini (200k TPM) > Groq (1000 RPD) > OpenRouter
-  const priority: AutoPlatform[] = ["gemini", "groq", "openrouter"];
+  // Preferência para extração JSON curta (<= 320 tokens):
+  // Groq (1000 RPD, ultrarrápido) > NVIDIA NIM > OpenRouter > Gemini (preservado para multimodal/longo)
+  const priority: AutoPlatform[] = ["groq", "nvidia", "openrouter", "gemini"];
 
   for (const id of priority) {
     const st = statuses.find((s) => s.id === id);

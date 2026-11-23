@@ -34,7 +34,8 @@ import {
 export const SEALED_API_ENV_KEYS = [
   "GEMINI_API_KEY",
   "GROQ_API_KEY",
-  "OPENROUTER_API_KEY"
+  "OPENROUTER_API_KEY",
+  "NVIDIA_API_KEY"
 ] as const;
 export type SealedApiEnvKey = (typeof SEALED_API_ENV_KEYS)[number];
 

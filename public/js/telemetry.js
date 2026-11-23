@@ -324,6 +324,10 @@ export function updateRightAiPanel() {
     if (!card || !badge) continue;
 
     const providerInfo = state.latestProviders.find((p) => p.id === platform);
+    const isUnconfiguredOptional = Boolean(providerInfo?.optional && !providerInfo?.ready);
+    card.hidden = isUnconfiguredOptional;
+    if (isUnconfiguredOptional) continue;
+
     const usage = providerInfo?.usage;
     const reqShort = usage
       ? `${usage.requestsToday}/${usage.requestsDailyCap} req`
@@ -597,10 +601,17 @@ export function updateProviderCards(providers) {
     let stateClass = "online";
 
     if (!provider.ready) {
-      label = provider.reason || "Não configurado";
-      badgeText = "Sem chave";
-      badgeClass = "blocked";
-      stateClass = "offline";
+      if (provider.optional) {
+        label = provider.reason || "Opcional — sem chave configurada";
+        badgeText = "Opcional";
+        badgeClass = "unknown";
+        stateClass = "checking";
+      } else {
+        label = provider.reason || "Não configurado";
+        badgeText = "Sem chave";
+        badgeClass = "blocked";
+        stateClass = "offline";
+      }
     } else if (exhausted) {
       label = "Limite diário local atingido";
       badgeText = "Limite diário";
@@ -632,7 +643,11 @@ export function updateProviderCards(providers) {
 
     if (provider.id === "openrouter") {
       renderOpenRouterFreeDiscoveryCard(provider);
-    } else if (provider.id === "gemini" || provider.id === "groq") {
+    } else if (
+      provider.id === "gemini" ||
+      provider.id === "groq" ||
+      provider.id === "nvidia"
+    ) {
       renderProviderAutopilotStrip(provider);
     }
   }

@@ -1,6 +1,7 @@
 import {
   applyLimitSignalToDebates,
   DEFAULT_SYSTEM_PROMPT,
+  failoverTaskToBackupProvider,
   getDebateSessionById,
   getPendingMemoryCompaction,
   listDebateSummaries,
@@ -25,11 +26,17 @@ import {
 import {
   getProvider,
   getProviderIssue,
+  getProvidersStatus,
   initProviders
 } from "../providers/registry.js";
 
 import { classifyError, type ProviderMediaPart } from "../providers/types.js";
-import { isAutoPlatform, type DebateSession, type DebateTask } from "../shared/debate-types.js";
+import {
+  isAutoPlatform,
+  type AutoPlatform,
+  type DebateSession,
+  type DebateTask
+} from "../shared/debate-types.js";
 import {
   AUTO_VERDICT_MIN_QUOTA_RATIO,
   generateTurnVerdict,
@@ -66,6 +73,76 @@ const MAX_AUTO_VERDICT_HISTORY = 200;
 const userMemoryInFlight = new Set<string>();
 const userMemoryAttempted = new Set<string>();
 const MAX_USER_MEMORY_HISTORY = 300;
+
+async function pickHealthyFailoverProvider(
+  session: DebateSession | null,
+  task: DebateTask,
+  failedPlatform: AutoPlatform
+): Promise<AutoPlatform | null> {
+  const statuses = await getProvidersStatus();
+
+  const busyInSameStage = new Set<string>([failedPlatform]);
+  if (session && task.stage !== "synthesis") {
+    for (const t of session.tasks) {
+      if (
+        t.id !== task.id &&
+        t.turnId === task.turnId &&
+        t.round === task.round &&
+        t.stage === task.stage
+      ) {
+        busyInSameStage.add(t.platform);
+      }
+    }
+    for (const r of session.responses) {
+      if (
+        r.turnId === task.turnId &&
+        r.round === task.round &&
+        r.stage === task.stage
+      ) {
+        busyInSameStage.add(r.platform);
+      }
+    }
+  }
+
+  const promptSize =
+    (task.systemPrompt?.length ?? 0) + (task.userPrompt?.length ?? task.prompt.length);
+  const allowGroq = task.stage !== "synthesis" && promptSize <= 14_000;
+  const order: AutoPlatform[] = allowGroq
+    ? ["nvidia", "openrouter", "gemini", "groq"]
+    : ["nvidia", "openrouter", "gemini"];
+
+  for (const candidate of order) {
+    if (busyInSameStage.has(candidate)) continue;
+    const st = statuses.find((s) => s.id === candidate);
+    if (!st || !st.ready || !getProvider(candidate)) continue;
+
+    const ap = st.autopilot;
+    if (
+      ap &&
+      ap.activeModels.length > 0 &&
+      ap.cooledDown.length >= ap.activeModels.length
+    ) {
+      continue;
+    }
+
+    const usage = st.usage;
+    if (usage) {
+      const reqRatio =
+        usage.requestsDailyCap > 0
+          ? (usage.requestsDailyCap - usage.requestsToday) / usage.requestsDailyCap
+          : 1;
+      const tokRatio =
+        usage.tokensDailyCap && usage.tokensDailyCap > 0
+          ? (usage.tokensDailyCap - usage.tokensToday) / usage.tokensDailyCap
+          : 1;
+      if (Math.min(reqRatio, tokRatio) < 0.05) continue;
+    }
+
+    return candidate;
+  }
+
+  return null;
+}
 
 /**
  * Cancela instantaneamente todas as requisições HTTP/stream em andamento de uma
@@ -224,6 +301,23 @@ async function runTask(
       }
 
       if (failure.kind === "rate_limit" || failure.kind === "quota_exhausted") {
+        // Antes de pausar o debate, tenta transferir a tarefa para uma IA reserva saudável (ex.: NVIDIA NIM)
+        const backup = await pickHealthyFailoverProvider(session, task, platform);
+        if (backup) {
+          const reassigned = await failoverTaskToBackupProvider(
+            debateId,
+            task.id,
+            backup,
+            failure.message
+          );
+          if (reassigned) {
+            console.warn(
+              `[AI Council] Failover automático (${failure.kind}): ${label} → ${PLATFORM_NAMES[backup]} assumiu a tarefa ${task.stage} (rodada ${task.round}).`
+            );
+            return true;
+          }
+        }
+
         const { pausedDebateIds } = await applyLimitSignalToDebates(
           platform,
           "blocked",
@@ -237,6 +331,30 @@ async function runTask(
         );
 
         return false;
+      }
+
+      // Em erro transitório (ex.: 503 high demand), resposta vazia ou modelo 404,
+      // transfere automaticamente para uma IA saudável reserva em vez de travar o debate.
+      if (
+        failure.kind === "transient" ||
+        failure.kind === "empty" ||
+        failure.kind === "model"
+      ) {
+        const backup = await pickHealthyFailoverProvider(session, task, platform);
+        if (backup) {
+          const reassigned = await failoverTaskToBackupProvider(
+            debateId,
+            task.id,
+            backup,
+            failure.message
+          );
+          if (reassigned) {
+            console.warn(
+              `[AI Council] Failover automático (${failure.kind}): ${label} → ${PLATFORM_NAMES[backup]} assumiu a tarefa ${task.stage} (rodada ${task.round}).`
+            );
+            return true;
+          }
+        }
       }
 
       const fatal = failure.kind === "auth" || failure.kind === "model";
@@ -312,9 +430,10 @@ async function runMemoryCompaction(job: PendingMemoryCompaction): Promise<void> 
   memoryInFlight.add(job.debateId);
 
   try {
-    // Usa Gemini (maior janela gratuita: 200k TPM) ou OpenRouter se Gemini não estiver ativo.
-    // Nunca consome o TPM restrito do Groq para compactação em segundo plano.
-    const provider = getProvider("gemini") ?? getProvider("openrouter");
+    // Prioriza NVIDIA NIM / OpenRouter para compactação em segundo plano, preservando a cota do Gemini.
+    // Nunca consome o TPM restrito do Groq para resumos longos de histórico.
+    const provider =
+      getProvider("nvidia") ?? getProvider("openrouter") ?? getProvider("gemini");
     if (!provider) return;
 
     const result = await provider.generate({

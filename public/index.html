@@ -189,6 +189,25 @@
                         >
                         <span class="setup-field-msg" id="setup-msg-openrouter" role="status"></span>
                     </div>
+
+                    <div class="setup-provider-row" data-setup-provider="nvidia">
+                        <div class="setup-provider-top">
+                            <div class="setup-provider-title">
+                                <span class="setup-provider-dot dot-emerald" aria-hidden="true"></span>
+                                <strong>NVIDIA NIM (Opcional · Qwen / Nemotron / Llama / DeepSeek)</strong>
+                                <span class="setup-provider-status" id="setup-status-nvidia">Opcional</span>
+                            </div>
+                            <a class="setup-key-link" href="https://build.nvidia.com" target="_blank" rel="noopener noreferrer">Gerar chave grátis →</a>
+                        </div>
+                        <input
+                            type="password"
+                            id="setup-key-nvidia"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Opcional — Cole sua NVIDIA_API_KEY (nvapi-...)"
+                        >
+                        <span class="setup-field-msg" id="setup-msg-nvidia" role="status"></span>
+                    </div>
                 </div>
 
                 <div class="setup-access-section">
@@ -205,7 +224,7 @@
                 </div>
 
                 <div class="setup-privacy-notice" role="note">
-                    <strong>Privacidade &amp; operadores de IA:</strong> conversas, projetos e chaves ficam apenas neste PC. Ao enviar prompts, anexos ou voz, o conteúdo é processado pelas APIs escolhidas (Google Gemini, Groq e OpenRouter) conforme as políticas de cada provedor. Evite enviar senhas ou dados pessoais sensíveis.
+                    <strong>Privacidade &amp; operadores de IA:</strong> conversas, projetos e chaves ficam apenas neste PC. Ao enviar prompts, anexos ou voz, o conteúdo é processado pelas APIs escolhidas (Google Gemini, Groq, OpenRouter e NVIDIA NIM quando ativada) conforme as políticas de cada provedor — nos planos gratuitos (incluindo Gemini e NVIDIA NIM), prompts podem ser usados para melhoria de serviço. Evite enviar senhas ou dados pessoais sensíveis.
                 </div>
 
                 <div class="setup-wizard-footer">
@@ -950,6 +969,14 @@
                                 </select>
                             </label>
                             <label>
+                                <span>NVIDIA NIM</span>
+                                <select id="voice-cast-nvidia">
+                                    <option value="thalita">Thalita (Multilíngue)</option>
+                                    <option value="antonio">Antônio (Firme)</option>
+                                    <option value="francisca">Francisca (Expressiva)</option>
+                                </select>
+                            </label>
+                            <label>
                                 <span>Juiz / Veredito</span>
                                 <select id="voice-cast-judge">
                                     <option value="thalita">Thalita (Multilíngue)</option>
@@ -1031,6 +1058,7 @@
                                 <button type="button" class="quick-ai-chip is-active" data-quick-ai="gemini" aria-pressed="true">Gemini</button>
                                 <button type="button" class="quick-ai-chip" data-quick-ai="groq" aria-pressed="false">Groq</button>
                                 <button type="button" class="quick-ai-chip" data-quick-ai="openrouter" aria-pressed="false">OpenRouter</button>
+                                <button type="button" class="quick-ai-chip" data-quick-ai="nvidia" aria-pressed="false">NVIDIA NIM</button>
                             </div>
                         </div>
 
@@ -1053,6 +1081,11 @@
                                         <label class="participant-pill is-selected" title="OpenRouter">
                                             <input type="checkbox" name="participants" value="openrouter" checked>
                                             <span class="pill-name">OpenRouter</span>
+                                        </label>
+
+                                        <label class="participant-pill" title="NVIDIA NIM (opcional)">
+                                            <input type="checkbox" name="participants" value="nvidia">
+                                            <span class="pill-name">NVIDIA NIM</span>
                                         </label>
                                     </div>
 
@@ -1372,6 +1405,39 @@
                                         <button type="button" class="btn-secondary openrouter-refresh-btn" id="openrouter-refresh-free-btn" title="Consultar catálogo :free do OpenRouter agora (0 tokens)">Atualizar :free</button>
                                     </div>
                                     <div class="openrouter-free-models" id="openrouter-free-models-list"></div>
+                                </div>
+                            </article>
+
+                            <!-- NVIDIA NIM -->
+                            <article class="platform-card" data-platform="nvidia" data-scroll-reveal>
+                                <div class="platform-header">
+                                    <div class="platform-identity">
+                                        <div class="platform-logo">NV</div>
+                                        <div>
+                                            <h4>NVIDIA NIM</h4>
+                                            <span>API automática (opcional · grátis)</span>
+                                        </div>
+                                    </div>
+                                    <span class="platform-badge unknown">Opcional</span>
+                                </div>
+                                <div class="platform-divider"></div>
+                                <div class="platform-details">
+                                    <div>
+                                        <span>Disponibilidade</span>
+                                        <strong data-field="availability">Opcional</strong>
+                                    </div>
+                                    <div>
+                                        <span>Uso hoje</span>
+                                        <strong data-field="last-event">Nenhum registrado</strong>
+                                    </div>
+                                    <div>
+                                        <span>Eventos históricos</span>
+                                        <strong data-field="event-count">0</strong>
+                                    </div>
+                                </div>
+                                <div class="openrouter-free-panel" id="nvidia-autopilot-panel">
+                                    <span class="openrouter-free-title">PILOTO AUTOMÁTICO</span>
+                                    <div class="openrouter-free-models" id="nvidia-autopilot-models"></div>
                                 </div>
                             </article>
 
@@ -1754,6 +1820,29 @@
                                 <div class="ai-quota-fill" data-ai-quota-fill="openrouter" style="width: 0%"></div>
                             </div>
                             <span class="ai-quota-mono" data-ai-quota-value="openrouter">--/-- req</span>
+                        </div>
+                    </article>
+
+                    <!-- 4. NVIDIA NIM (Opcional — #76e39b) -->
+                    <article class="ai-status-card" data-ai-card="nvidia" data-sticky-index="3" hidden>
+                        <div class="ai-card-line-1">
+                            <div class="ai-card-identity">
+                                <span class="ai-brand-svg nvidia-svg" aria-hidden="true">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M2 12s3.8-6 10-6 10 6 10 6-3.8 6-10 6-10-6-10-6z"></path>
+                                        <circle cx="12" cy="12" r="2.8"></circle>
+                                    </svg>
+                                </span>
+                                <h4>NVIDIA NIM</h4>
+                            </div>
+                            <span class="ai-exec-badge neutral" data-ai-badge="nvidia" data-live-timer-platform="nvidia">Opcional</span>
+                        </div>
+
+                        <div class="ai-card-line-2">
+                            <div class="ai-quota-bar" aria-hidden="true">
+                                <div class="ai-quota-fill" data-ai-quota-fill="nvidia" style="width: 0%"></div>
+                            </div>
+                            <span class="ai-quota-mono" data-ai-quota-value="nvidia">--/-- req</span>
                         </div>
                     </article>
 

@@ -59,11 +59,13 @@ function extractGeminiGroundingSources(
   }
 }
 
+const GEMINI_TTFB_LIMIT_MS = 20_000;
+
 export function makeGemini(options: GeminiOptions): Provider {
   const ai = new GoogleGenAI({
     apiKey: options.apiKey,
     httpOptions: {
-      timeout: 90_000,
+      timeout: 45_000,
       // Por padrão o SDK tenta até 5 vezes sozinho. Aqui é 1 só: as
       // retentativas são controladas (e contadas) pelo UsageGate.
       retryOptions: { attempts: 1 },
@@ -128,51 +130,98 @@ export function makeGemini(options: GeminiOptions): Provider {
             let truncated = false;
 
             if (effectiveOnDelta) {
-              const stream = await ai.models.generateContentStream({
-                model,
-                contents,
-                config
-              });
-
-              let fullText = "";
-              let inputTokens: number | undefined;
-              let outputTokens: number | undefined;
-              let totalTokens: number | undefined;
-
-              for await (const chunk of stream) {
-                if (effectiveSignal?.aborted) {
-                  break;
+              // Proteção anti-travamento (TTFB): evita esperar 45-90s quando o Google AI Studio
+              // entra em pico 503 — libera o failover para outro modelo/provedor em ~20s.
+              const ttfbCtrl = new AbortController();
+              let timedOutBeforeFirstToken = false;
+              let firstTokenSeen = false;
+              const onOuterAbort = () => ttfbCtrl.abort(effectiveSignal?.reason);
+              if (effectiveSignal) {
+                if (effectiveSignal.aborted) {
+                  ttfbCtrl.abort(effectiveSignal.reason);
+                } else {
+                  effectiveSignal.addEventListener("abort", onOuterAbort, { once: true });
                 }
-                const piece = chunk.text ?? "";
-                if (piece) {
-                  fullText += piece;
-                  effectiveOnDelta(piece);
-                }
-                if (chunk.usageMetadata) {
-                  inputTokens = chunk.usageMetadata.promptTokenCount ?? inputTokens;
-                  outputTokens =
-                    chunk.usageMetadata.candidatesTokenCount ?? outputTokens;
-                  totalTokens = chunk.usageMetadata.totalTokenCount ?? totalTokens;
-                }
-                const firstCand = (chunk as { candidates?: unknown[] }).candidates?.[0];
-                if (isGeminiMaxTokensFinish(firstCand)) {
-                  truncated = true;
-                }
-                extractGeminiGroundingSources(firstCand, groundingMap);
               }
+              const ttfbTimer = setTimeout(() => {
+                if (!firstTokenSeen) {
+                  timedOutBeforeFirstToken = true;
+                  ttfbCtrl.abort();
+                }
+              }, GEMINI_TTFB_LIMIT_MS);
 
-              const groundingSources = Array.from(groundingMap.entries()).map(
-                ([url, title]) => ({ title, url })
-              );
+              try {
+                const stream = await ai.models.generateContentStream({
+                  model,
+                  contents,
+                  config: {
+                    ...config,
+                    abortSignal: ttfbCtrl.signal
+                  }
+                });
 
-              return {
-                text: fullText,
-                inputTokens,
-                outputTokens,
-                totalTokens,
-                ...(truncated ? { truncated: true } : {}),
-                ...(groundingSources.length > 0 ? { groundingSources } : {})
-              };
+                let fullText = "";
+                let inputTokens: number | undefined;
+                let outputTokens: number | undefined;
+                let totalTokens: number | undefined;
+
+                for await (const chunk of stream) {
+                  if (effectiveSignal?.aborted || ttfbCtrl.signal.aborted) {
+                    break;
+                  }
+                  const piece = chunk.text ?? "";
+                  if (piece) {
+                    if (!firstTokenSeen) {
+                      firstTokenSeen = true;
+                      clearTimeout(ttfbTimer);
+                    }
+                    fullText += piece;
+                    effectiveOnDelta(piece);
+                  }
+                  if (chunk.usageMetadata) {
+                    inputTokens = chunk.usageMetadata.promptTokenCount ?? inputTokens;
+                    outputTokens =
+                      chunk.usageMetadata.candidatesTokenCount ?? outputTokens;
+                    totalTokens = chunk.usageMetadata.totalTokenCount ?? totalTokens;
+                  }
+                  const firstCand = (chunk as { candidates?: unknown[] }).candidates?.[0];
+                  if (isGeminiMaxTokensFinish(firstCand)) {
+                    truncated = true;
+                  }
+                  extractGeminiGroundingSources(firstCand, groundingMap);
+                }
+
+                if (timedOutBeforeFirstToken && !fullText) {
+                  throw new Error(
+                    `Timeout TTFB (${Math.round(GEMINI_TTFB_LIMIT_MS / 1000)}s sem primeiro token em ${model})`
+                  );
+                }
+
+                const groundingSources = Array.from(groundingMap.entries()).map(
+                  ([url, title]) => ({ title, url })
+                );
+
+                return {
+                  text: fullText,
+                  inputTokens,
+                  outputTokens,
+                  totalTokens,
+                  ...(truncated ? { truncated: true } : {}),
+                  ...(groundingSources.length > 0 ? { groundingSources } : {})
+                };
+              } catch (streamErr) {
+                if (timedOutBeforeFirstToken && !effectiveSignal?.aborted) {
+                  throw new Error(
+                    `Timeout TTFB (${Math.round(GEMINI_TTFB_LIMIT_MS / 1000)}s sem primeiro token em ${model})`
+                  );
+                }
+                throw streamErr;
+              } finally {
+                clearTimeout(ttfbTimer);
+                if (effectiveSignal) {
+                  effectiveSignal.removeEventListener("abort", onOuterAbort);
+                }
+              }
             }
 
             const response = await ai.models.generateContent({

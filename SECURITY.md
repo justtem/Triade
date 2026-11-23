@@ -31,8 +31,8 @@ O projeto adota **Defesa em Profundidade**, **Menor Privilégio**, **Fail-Closed
 | **Anti-SSRF (Busca Web & URLs)** | Bloqueio de loopback, IPs privados/LAN/CGNAT/link-local e protocolos não-HTTP, com resolução DNS prévia contra *DNS rebinding* e validação manual de cada salto de redirecionamento (`redirect: "manual"`). |
 | **Prompt Injection & XSS** | Isolamento de páginas web, anexos e arquivos de Projetos em blocos `<untrusted_data>` (com escape de tag) + instruções anti-injeção nos system prompts. Renderização de Markdown segura via DOM, neutralização de imagens externas (anti-exfiltração), `KaTeX` com `trust: false`, `Mermaid` com `securityLevel: "strict"` + sanitizador próprio de SVG e uso rigoroso de `textContent` nos painéis interativos (paleta, atalhos, briefing e preview). |
 | **Prevenção de Vazamento (DLP + OCR)** | Escudo de Privacidade híbrido com detecção de chaves de API, chaves PEM, JWT, credenciais, CPF/CNPJ (Mod-11), cartões (Luhn), e-mails e telefones. Confirmação interativa para mensagens/prints (com **OCR local offline** no Windows e tarja visual via `<canvas>`) e mascaramento automático de anexos, PDFs e arquivos de Projetos. |
-| **Criptografia em Repouso & Persistência Atômica** | Criptografia opcional **`AES-256-GCM`** para conversas, projetos, templates, memória, eventos e selagem opcional de chaves de API — via **Windows DPAPI** ou **Senha Mestra** (*Envelope Encryption* com `scrypt`, Chave de Recuperação, chave mantida apenas em RAM, auto-bloqueio por inatividade e zeramento de buffer com `Buffer.fill(0)`). Gravação atômica via `.tmp` + `rename` com retry exponencial contra locks NTFS (`atomic-fs.ts`) e permissão restrita (`0o600` / NTFS exclusivo ao usuário + `SYSTEM`). |
-| **Trava de Custo Zero** | Validação fail-closed nos provedores: `OpenRouter` aceita apenas modelos `:free` com preço explicitamente zerado; auto-descoberta do `Gemini` usa allowlist restrita às famílias `Flash`/`Gemma`; `UsageGate` impõe margem preventiva de 90%. |
+| **Criptografia em Repouso & Persistência Atômica** | Criptografia opcional **`AES-256-GCM`** para conversas, projetos, templates, memória, eventos e selagem opcional de chaves de API (`GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` e `NVIDIA_API_KEY` opcional) — via **Windows DPAPI** ou **Senha Mestra** (*Envelope Encryption* com `scrypt`, Chave de Recuperação, chave mantida apenas em RAM, auto-bloqueio por inatividade e zeramento de buffer com `Buffer.fill(0)`). Gravação atômica via `.tmp` + `rename` com retry exponencial contra locks NTFS (`atomic-fs.ts`) e permissão restrita (`0o600` / NTFS exclusivo ao usuário + `SYSTEM`). |
+| **Trava de Custo Zero** | Validação fail-closed nos provedores: `OpenRouter` aceita apenas modelos `:free` com preço explicitamente zerado; auto-descoberta do `Gemini` usa allowlist restrita às famílias `Flash`/`Gemma`; `NVIDIA NIM` opera na conta gratuita sem cartão (`build.nvidia.com`) com filtro de modelos de chat/código; `UsageGate` impõe margem preventiva de 90%. |
 
 ---
 
@@ -51,7 +51,7 @@ Os 5 controles verificados continuamente são:
 4. **Permissões de Sistema (Windows NTFS):** valida restrição de acesso aos diretórios locais sensíveis.
 5. **Suítes de Segurança & Integridade ESM:** executa testes automatizados de autenticação, CSRF, rate-limit, anti-SSRF, DLP, criptografia, Prompt Injection, XSS e integridade acíclica do frontend.
 
-A suíte completa (`npm test`) executa **126 testes em 26 suítes**, incluindo cobertura dedicada para sandbox de escrita/remoção, bloqueio remoto `403`, Briefing OWASP/LGPD, Mini-Auditor estático 0 ms e gerenciamento de Preview App.
+A suíte completa (`npm test`) executa **131 testes em 26 suítes**, incluindo cobertura dedicada para sandbox de escrita/remoção, bloqueio remoto `403`, Briefing OWASP/LGPD, Mini-Auditor estático 0 ms, gerenciamento de Preview App, Setup/Cofre com provedor opcional (`NVIDIA NIM`), failover e contrato do Construtor.
 
 ---
 
@@ -64,7 +64,7 @@ Nenhum software oferece segurança absoluta. Ao utilizar o AI Council, considere
 - **Sistema operacional comprometido:** controles em nível de aplicação não protegem contra malware ativo com privilégios na sessão do usuário (ex.: *keyloggers* ou leitura direta da RAM enquanto o cofre estiver destrancado). Mantenha o SO atualizado, antivírus ativo e criptografia de disco (como BitLocker/FileVault) habilitada.
 - **Limites do OCR local:** a detecção de texto sensível em imagens funciona bem em capturas de tela nítidas, mas pode falhar em fotos borradas, fontes muito pequenas ou escrita manual; revise e utilize o editor de tarja manual quando necessário.
 - **Exposição de rede:** para acesso remoto, prefira túneis privados com HTTPS fim-a-fim (como Tailscale Serve) e senha forte (`12+` caracteres) em vez de expor a porta diretamente na internet pública.
-- **Provedores externos:** o conteúdo enviado nas conversas é processado pelas APIs de terceiros configuradas pelo próprio usuário, sujeitas às políticas de privacidade de cada provedor.
+- **Provedores externos:** o conteúdo enviado nas conversas é processado pelas APIs de terceiros configuradas pelo próprio usuário (Google Gemini, Groq, OpenRouter e, quando ativada, NVIDIA NIM), sujeitas às políticas de privacidade de cada provedor — nos planos gratuitos (incluindo Google AI Studio fora da UE e NVIDIA Developer Trial), os prompts podem ser usados para melhoria de serviços/modelos; evite enviar senhas ou dados pessoais sensíveis.
 
 ---
 

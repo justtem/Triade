@@ -12,8 +12,10 @@ import {
   recordAutopilotSuccess,
   refreshGeminiCatalog,
   refreshGroqCatalog,
+  refreshNvidiaCatalog,
   resolveGeminiAutopilotModels,
   resolveGroqAutopilotModels,
+  resolveNvidiaAutopilotModels,
   type ProviderAutopilotSnapshot
 } from "./model-autopilot.js";
 import {
@@ -68,11 +70,19 @@ const DEFAULT_OPENROUTER_MODELS = [
   "google/gemma-4-31b-it:free",
   "cohere/north-mini-code:free"
 ];
+const DEFAULT_NVIDIA_MODELS = [
+  "qwen/qwen2.5-coder-32b-instruct",
+  "meta/llama-3.3-70b-instruct",
+  "mistralai/devstral-2-123b-instruct-2512",
+  "deepseek-ai/deepseek-v3.2",
+  "nvidia/nemotron-3-ultra-550b-a55b"
+];
 
 const PLATFORM_LABELS: Record<AutoPlatform, string> = {
   gemini: "Gemini",
   groq: "Groq",
-  openrouter: "OpenRouter"
+  openrouter: "OpenRouter",
+  nvidia: "NVIDIA NIM"
 };
 
 // ---------------------------------------------------------------
@@ -305,6 +315,74 @@ function initOpenRouter(): void {
   }
 }
 
+function initNvidia(): void {
+  const models = envList("NVIDIA_MODELS", [
+    envString("NVIDIA_MODEL") ?? DEFAULT_NVIDIA_MODELS[0] ?? "qwen/qwen2.5-coder-32b-instruct",
+    ...envList("NVIDIA_FALLBACK_MODELS", DEFAULT_NVIDIA_MODELS.slice(1))
+  ]);
+
+  configuredModels.set("nvidia", models);
+
+  const apiKey = envString("NVIDIA_API_KEY");
+  if (!isValidApiKeyValue(apiKey)) {
+    issues.set(
+      "nvidia",
+      "Opcional — adicione NVIDIA_API_KEY nas Chaves para ativar."
+    );
+    return;
+  }
+
+  const baseURL = envString("NVIDIA_BASE_URL") ?? "https://integrate.api.nvidia.com/v1";
+  const autopilotEnabled = envString("NVIDIA_AUTOPILOT") !== "false";
+
+  // Limites conservadores para o plano gratuito NVIDIA Developer (build.nvidia.com):
+  // ~40 RPM dinâmico e teto diário local configurável no .env.
+  const gate = new UsageGate(
+    "nvidia",
+    {
+      rpm: envInt("NVIDIA_RPM", 40),
+      rpd: envInt("NVIDIA_RPD", 300)
+    },
+    "UTC",
+    safetyFactor()
+  );
+
+  gates.set("nvidia", gate);
+
+  providers.set(
+    "nvidia",
+    makeOpenAICompat({
+      id: "nvidia",
+      name: "NVIDIA NIM",
+      apiKey,
+      baseURL,
+      models,
+      resolveModels: autopilotEnabled
+        ? () =>
+            resolveNvidiaAutopilotModels(models, {
+              apiKey,
+              baseURL,
+              skipNetwork: isRunningUnderTest()
+            })
+        : undefined,
+      onModelSuccess: (model, ttfbMs) => {
+        void recordAutopilotSuccess("nvidia", model, ttfbMs);
+      },
+      onModelError: (model, error) => {
+        void recordAutopilotFailure("nvidia", model, error);
+      },
+      gate,
+      maxHttpAttempts: envInt("NVIDIA_MAX_ATTEMPTS", 2),
+      maxTokensParam: "max_tokens",
+      tokenHeadroom: 400
+    })
+  );
+
+  if (autopilotEnabled && !isRunningUnderTest()) {
+    void refreshNvidiaCatalog({ apiKey, baseURL }).catch(() => {});
+  }
+}
+
 export function initProviders(): void {
   if (initialized) return;
   initialized = true;
@@ -312,6 +390,7 @@ export function initProviders(): void {
   initGemini();
   initGroq();
   initOpenRouter();
+  initNvidia();
 }
 
 /** Recarrega imediatamente os provedores após salvar novas chaves no Setup guiado (hot-reload). */
@@ -341,6 +420,7 @@ export function getProviderLabel(id: AutoPlatform): string {
 export interface ProviderStatus {
   id: AutoPlatform;
   name: string;
+  optional?: boolean;
   ready: boolean;
   reason: string | null;
   models: string[];
@@ -370,7 +450,7 @@ export async function refreshOpenRouterFreeModelsNow(options: {
 export async function getProvidersStatus(): Promise<ProviderStatus[]> {
   initProviders();
 
-  const ids: AutoPlatform[] = ["gemini", "groq", "openrouter"];
+  const ids: AutoPlatform[] = ["gemini", "groq", "openrouter", "nvidia"];
   const result: ProviderStatus[] = [];
 
   for (const id of ids) {
@@ -378,7 +458,7 @@ export async function getProvidersStatus(): Promise<ProviderStatus[]> {
     const budget = budgetForPlatform(id);
     const preferred = configuredModels.get(id) ?? [];
     const autopilot =
-      id === "gemini" || id === "groq"
+      id === "gemini" || id === "groq" || id === "nvidia"
         ? await getProviderAutopilotSnapshot(id, preferred)
         : undefined;
     const freeDiscovery =
@@ -389,6 +469,7 @@ export async function getProvidersStatus(): Promise<ProviderStatus[]> {
     result.push({
       id,
       name: PLATFORM_LABELS[id],
+      ...(id === "nvidia" ? { optional: true } : {}),
       ready: providers.has(id),
       reason: issues.get(id) ?? null,
       models:

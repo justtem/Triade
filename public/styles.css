@@ -10,6 +10,7 @@
   --color-violet-deep: #363054;     /* Exclusivamente sombras sólidas de marca */
   --color-sky-pulse: #94dbff;       /* Destaques azuis em títulos e ícone Gemini */
   --color-saffron-whisper: #d6ca6f; /* Destaques dourados em títulos e ícone Groq */
+  --color-emerald-spark: #76e39b;   /* Destaque verde técnico do ícone NVIDIA NIM */
   --color-rose-quartz: #ffa3c2;     /* Destaques rosados em títulos */
   --color-bone: #e3e3e3;            /* Texto principal e bordas dominantes de cards */
   --color-obsidian: #181818;        /* Canvas e superfícies principais */
@@ -1704,6 +1705,7 @@ a {
 .ai-monogram[data-brand="gemini"] { color: var(--color-sky-pulse); }
 .ai-monogram[data-brand="groq"] { color: var(--color-saffron-whisper); }
 .ai-monogram[data-brand="openrouter"] { color: var(--color-iris-glow); }
+.ai-monogram[data-brand="nvidia"] { color: var(--color-emerald-spark); }
 .ai-monogram[data-brand="chatgpt"] { color: var(--color-bone); }
 .ai-monogram[data-brand="claude"] { color: var(--color-rose-quartz); }
 
@@ -2552,6 +2554,11 @@ a {
   box-shadow: 4px 4px 0px 0px #363054;
 }
 
+.ai-panel-scroll-viewport.is-scrolled .ai-status-card[data-sticky-index="3"] {
+  margin-top: -5px;
+  box-shadow: 4px 4px 0px 0px #363054;
+}
+
 /* Mini-Card Compacto de IA Automática (Contido 100% dentro da aba) */
 .ai-status-card {
   position: relative;
@@ -2588,6 +2595,10 @@ a {
   border-color: var(--color-saffron-whisper);
 }
 
+.ai-status-card[data-ai-card="nvidia"].is-thinking {
+  border-color: var(--color-emerald-spark);
+}
+
 .ai-status-card.is-thinking .ai-brand-svg {
   animation: workingIconPulse 1.4s infinite ease-in-out;
 }
@@ -2615,6 +2626,10 @@ a {
 
 .ai-status-card[data-ai-card="openrouter"].is-scroll-focused {
   border-color: var(--color-iris-glow);
+}
+
+.ai-status-card[data-ai-card="nvidia"].is-scroll-focused {
+  border-color: var(--color-emerald-spark);
 }
 
 .ai-status-card.is-completed {
@@ -2655,6 +2670,7 @@ a {
 .gemini-svg { color: var(--color-sky-pulse); }
 .groq-svg { color: var(--color-saffron-whisper); }
 .openrouter-svg { color: var(--color-iris-glow); }
+.nvidia-svg { color: var(--color-emerald-spark); }
 
 .ai-card-identity h4 {
   font-size: 12.5px;
@@ -2699,6 +2715,10 @@ a {
 
 .ai-status-card[data-ai-card="groq"] .ai-quota-fill {
   background: var(--color-saffron-whisper);
+}
+
+.ai-status-card[data-ai-card="nvidia"] .ai-quota-fill {
+  background: var(--color-emerald-spark);
 }
 
 .ai-quota-mono {
@@ -3735,6 +3755,7 @@ a {
 .topbar-ai-icon[data-active-ai="gemini"] { color: var(--color-sky-pulse); }
 .topbar-ai-icon[data-active-ai="groq"] { color: var(--color-saffron-whisper); }
 .topbar-ai-icon[data-active-ai="openrouter"] { color: var(--color-iris-glow); }
+.topbar-ai-icon[data-active-ai="nvidia"] { color: var(--color-emerald-spark); }
 .topbar-ai-icon[data-active-ai="chatgpt"] { color: var(--color-bone); }
 .topbar-ai-icon[data-active-ai="claude"] { color: var(--color-rose-quartz); }
 .topbar-ai-icon[data-active-ai="auto"] { color: var(--color-sky-pulse); }
@@ -5102,6 +5123,7 @@ a {
 .voice-player-icon[data-brand="gemini"] { color: var(--color-sky-pulse); }
 .voice-player-icon[data-brand="groq"] { color: var(--color-saffron-whisper); }
 .voice-player-icon[data-brand="openrouter"] { color: var(--color-iris-glow); }
+.voice-player-icon[data-brand="nvidia"] { color: var(--color-emerald-spark); }
 
 .voice-player-titles {
   display: flex;
@@ -6172,6 +6194,7 @@ a {
 .setup-provider-dot.dot-sky { background: var(--color-sky-pulse); }
 .setup-provider-dot.dot-saffron { background: var(--color-saffron-whisper); }
 .setup-provider-dot.dot-iris { background: var(--color-iris-glow); }
+.setup-provider-dot.dot-emerald { background: var(--color-emerald-spark); }
 
 .setup-provider-status {
   font-family: var(--font-jetbrains-mono);

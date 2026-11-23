@@ -13,6 +13,7 @@ export const DEFAULT_VOICE_CAST = {
   gemini: "thalita",
   groq: "antonio",
   openrouter: "francisca",
+  nvidia: "antonio",
   chatgpt: "francisca",
   claude: "thalita",
   judge: "antonio"

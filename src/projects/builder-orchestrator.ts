@@ -6,7 +6,11 @@ import {
   writeDebateSessionAtomically
 } from "../persistence/debate-store.js";
 import { getProjectById } from "../persistence/project-store.js";
-import { getProvider } from "../providers/registry.js";
+import {
+  getProvider,
+  getProvidersStatus,
+  type ProviderStatus
+} from "../providers/registry.js";
 import { emitDebateUpdated } from "../debate/stream-hub.js";
 import { ANTI_INJECTION_SYSTEM_RULE } from "../security/prompt-defense.js";
 import type {
@@ -165,24 +169,201 @@ async function patchTurnBuilderState(
   });
 }
 
+const GROQ_SAFE_BUILDER_MAX_CHARS = 11_000;
+const GROQ_SAFE_BUILDER_MAX_OUTPUT_TOKENS = 1_800;
+
+function computeRemainingQuotaRatio(status: ProviderStatus): number {
+  if (!status.ready) return 0;
+  const usage = status.usage;
+  if (!usage) return 1;
+  const reqRatio =
+    usage.requestsDailyCap > 0
+      ? Math.max(0, (usage.requestsDailyCap - usage.requestsToday) / usage.requestsDailyCap)
+      : 1;
+  const tokRatio =
+    usage.tokensDailyCap && usage.tokensDailyCap > 0
+      ? Math.max(0, (usage.tokensDailyCap - usage.tokensToday) / usage.tokensDailyCap)
+      : 1;
+  return Math.min(reqRatio, tokRatio);
+}
+
+function isProviderAutopilotCongested(status: ProviderStatus | undefined): boolean {
+  const ap = status?.autopilot;
+  return Boolean(
+    ap &&
+      Array.isArray(ap.activeModels) &&
+      ap.activeModels.length > 0 &&
+      Array.isArray(ap.cooledDown) &&
+      ap.cooledDown.length >= ap.activeModels.length
+  );
+}
+
+/**
+ * Define a ordem de provedores do Construtor (Auto-Fix e geração de arquivos):
+ * 1. Arquivos leves (<= 11k chars, <= 1800 tok): Groq (0,5s TTFB, 900 RPD) entra antes para poupar Gemini;
+ * 2. Build / Auto-Fix / arquivos de código: Gemini em #1 quando saudável (2-3s TTFB e excelente em TypeScript estrito),
+ *    com failover automático imediato para NVIDIA NIM -> OpenRouter quando Gemini estiver em 503 ou cota < 12%.
+ */
+export function resolveBuilderProviderOrder(params: {
+  promptChars: number;
+  maxTokens: number;
+  statuses: ProviderStatus[];
+}): AutoPlatform[] {
+  const statusMap = new Map<AutoPlatform, ProviderStatus>();
+  const ratioMap = new Map<AutoPlatform, number>();
+  for (const st of params.statuses) {
+    statusMap.set(st.id, st);
+    ratioMap.set(st.id, computeRemainingQuotaRatio(st));
+  }
+
+  const isHealthy = (id: AutoPlatform, minRatio = 0.08): boolean => {
+    const st = statusMap.get(id);
+    if (!st?.ready) return false;
+    if (isProviderAutopilotCongested(st)) return false;
+    return (ratioMap.get(id) ?? 0) >= minRatio;
+  };
+
+  const groqFitsSafely =
+    params.promptChars <= GROQ_SAFE_BUILDER_MAX_CHARS &&
+    params.maxTokens <= GROQ_SAFE_BUILDER_MAX_OUTPUT_TOKENS;
+
+  const ordered: AutoPlatform[] = [];
+  const push = (id: AutoPlatform) => {
+    if (!ordered.includes(id)) ordered.push(id);
+  };
+
+  // Arquivos curtos (package.json, tsconfig.json, README, CSS pequeno): Groq resolve em < 1s poupando Gemini.
+  if (groqFitsSafely && isHealthy("groq", 0.15)) {
+    push("groq");
+  }
+
+  // Build / testes / Auto-Fix: Gemini em #1 pela velocidade (Flash-Lite ~2s) e precisão em TypeScript;
+  // se Gemini estiver em 503/cooldown ou cota baixa (< 12%), NVIDIA NIM e OpenRouter assumem na hora.
+  if (isHealthy("gemini", 0.12)) push("gemini");
+  if (isHealthy("nvidia", 0.08)) push("nvidia");
+  if (isHealthy("openrouter", 0.1)) push("openrouter");
+
+  // Fallback final para qualquer provedor ainda ready com cota > 0
+  const fallbackPool: AutoPlatform[] = groqFitsSafely
+    ? ["gemini", "nvidia", "openrouter", "groq"]
+    : ["gemini", "nvidia", "openrouter"];
+  for (const id of fallbackPool) {
+    if (statusMap.get(id)?.ready && (ratioMap.get(id) ?? 0) > 0) {
+      push(id);
+    }
+  }
+
+  if (ordered.length === 0) {
+    return ["gemini", "nvidia", "openrouter"];
+  }
+  return ordered;
+}
+
+/**
+ * Extrai o contrato real (exports, rotas HTTP, IDs HTML e scripts) dos arquivos
+ * já completos para garantir handoff limpo entre IAs (ex.: Groq -> NVIDIA/OpenRouter/Gemini)
+ * sem divergência de nomes de funções, variáveis, tipos ou rotas.
+ */
+export function extractWorkspaceContractSummary(
+  files: Array<{ path: string; content: string; incomplete?: boolean }>
+): string {
+  const lines: string[] = [];
+
+  for (const file of files) {
+    if (file.incomplete || !file.content.trim()) continue;
+    const lower = file.path.toLowerCase();
+    const details: string[] = [];
+
+    if (lower.endsWith("package.json")) {
+      try {
+        const pkg = JSON.parse(file.content) as {
+          type?: string;
+          scripts?: Record<string, string>;
+        };
+        if (pkg.type) details.push(`type="${pkg.type}"`);
+        if (pkg.scripts && typeof pkg.scripts === "object") {
+          const scriptKeys = Object.keys(pkg.scripts).slice(0, 6);
+          if (scriptKeys.length > 0) details.push(`scripts: ${scriptKeys.join(", ")}`);
+        }
+      } catch {
+        // Ignora JSON inválido
+      }
+    } else if (/\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(lower)) {
+      const exportsSet = new Set<string>();
+      for (const m of file.content.matchAll(
+        /\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|const|let|class|interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g
+      )) {
+        if (m[1]) exportsSet.add(m[1]);
+      }
+      if (exportsSet.size > 0) {
+        details.push(`exports: ${Array.from(exportsSet).slice(0, 12).join(", ")}`);
+      }
+
+      const routesSet = new Set<string>();
+      for (const m of file.content.matchAll(
+        /(?:\.(?:get|post|put|patch|delete)\(\s*["'`](\/[A-Za-z0-9_/:.-]+)["'`]|pathname\s*===?\s*["'`](\/[A-Za-z0-9_/:.-]+)["'`])/gi
+      )) {
+        const route = m[1] || m[2];
+        if (route) routesSet.add(route);
+      }
+      if (routesSet.size > 0) {
+        details.push(`rotas: ${Array.from(routesSet).slice(0, 10).join(", ")}`);
+      }
+    } else if (lower.endsWith(".html")) {
+      const idsSet = new Set<string>();
+      for (const m of file.content.matchAll(/\bid=["']([A-Za-z][A-Za-z0-9_-]{1,48})["']/g)) {
+        if (m[1]) idsSet.add(`#${m[1]}`);
+      }
+      if (idsSet.size > 0) {
+        details.push(`IDs DOM: ${Array.from(idsSet).slice(0, 14).join(", ")}`);
+      }
+    }
+
+    if (details.length > 0) {
+      lines.push(`- \`${file.path}\`: ${details.join(" | ")}`);
+    }
+  }
+
+  return lines.join("\n").slice(0, 3_200);
+}
+
+function isLightweightConfigOrDocFile(relPath: string): boolean {
+  const lower = relPath.toLowerCase();
+  return (
+    /(?:^|\/)(?:package\.json|tsconfig\.json|readme\.md|\.gitignore|\.env\.example)$/.test(
+      lower
+    ) || lower.endsWith(".css")
+  );
+}
+
 async function callBuilderModel(params: {
   systemPrompt: string;
   userPrompt: string;
   maxTokens: number;
   signal?: AbortSignal;
+  onAttempt?: (platform: AutoPlatform) => void;
 }): Promise<{ content: string; platform: AutoPlatform; model: string }> {
-  const order: AutoPlatform[] = ["gemini", "openrouter"];
+  const statuses = await getProvidersStatus();
+  const order = resolveBuilderProviderOrder({
+    promptChars: params.systemPrompt.length + params.userPrompt.length,
+    maxTokens: params.maxTokens,
+    statuses
+  });
   let lastError: unknown = null;
 
   for (const plat of order) {
     const provider = getProvider(plat);
     if (!provider) continue;
+    params.onAttempt?.(plat);
     try {
+      // Usa streaming interno (onDelta no-op) para ativar a trava TTFB (18-25s)
+      // e impedir que um modelo lento/congestionado trave o Auto-Fix por 60-90s.
       const res = await provider.generate({
         system: params.systemPrompt,
         user: params.userPrompt,
         maxTokens: params.maxTokens,
-        signal: params.signal
+        signal: params.signal,
+        onDelta: () => {}
       });
       if (res.text && res.text.trim().length > 0) {
         return {
@@ -199,8 +380,8 @@ async function callBuilderModel(params: {
 
   throw new Error(
     lastError instanceof Error
-      ? `Nenhum provedor disponível para o Construtor (Gemini/OpenRouter): ${lastError.message}`
-      : "Nenhum provedor configurado para o Construtor (Gemini ou OpenRouter)."
+      ? `Nenhum provedor disponível para o Construtor (${order.join("/")}): ${lastError.message}`
+      : `Nenhum provedor configurado para o Construtor (${order.join("/")}).`
   );
 }
 
@@ -265,8 +446,45 @@ export async function extractBuilderFilesForTurn(
   );
 
   let extraction = extractWorkspaceFilesFromMarkdown(primaryMarkdown);
-  if (!options.sourcePlatform && extraction.files.length === 0 && allMarkdown !== primaryMarkdown) {
-    extraction = extractWorkspaceFilesFromMarkdown(allMarkdown);
+  if (!options.sourcePlatform && allMarkdown !== primaryMarkdown) {
+    if (extraction.files.length === 0) {
+      extraction = extractWorkspaceFilesFromMarkdown(allMarkdown);
+    } else if (
+      extraction.missingPaths.length > 0 ||
+      extraction.files.some((f) => f.incomplete)
+    ) {
+      // Handoff limpo por fronteira de arquivo: se a resposta principal truncou/omitiu
+      // algum arquivo, aproveita versões 100% completas entregues por colegas no mesmo turno.
+      const peerExtraction = extractWorkspaceFilesFromMarkdown(allMarkdown);
+      const completePeerByPath = new Map<string, ExtractedWorkspaceFile>();
+      for (const f of peerExtraction.files) {
+        if (!f.incomplete && f.content.trim().length > 0) {
+          completePeerByPath.set(f.path.toLowerCase(), f);
+        }
+      }
+
+      const mergedFiles: ExtractedWorkspaceFile[] = extraction.files.map((f) => {
+        if (!f.incomplete) return f;
+        const peerComplete = completePeerByPath.get(f.path.toLowerCase());
+        return peerComplete ?? f;
+      });
+      const existingLower = new Set(mergedFiles.map((f) => f.path.toLowerCase()));
+      const remainingMissing: string[] = [];
+      for (const mp of extraction.missingPaths) {
+        const peerComplete = completePeerByPath.get(mp.toLowerCase());
+        if (peerComplete && !existingLower.has(mp.toLowerCase())) {
+          mergedFiles.push(peerComplete);
+          existingLower.add(mp.toLowerCase());
+        } else {
+          remainingMissing.push(mp);
+        }
+      }
+      extraction = {
+        ...extraction,
+        files: mergedFiles,
+        missingPaths: remainingMissing
+      };
+    }
   }
 
   const preview = await previewWorkspaceChanges(proj.folderPath, extraction.files);
@@ -390,6 +608,7 @@ export async function generateRemainingBuilderFiles(
         updatedAt: new Date().toISOString()
       }));
 
+      const contractSummary = extractWorkspaceContractSummary(workingFiles);
       const knownSummary = workingFiles
         .filter((f) => !f.incomplete && f.path !== targetPath)
         .slice(0, 8)
@@ -398,17 +617,26 @@ export async function generateRemainingBuilderFiles(
 
       const userPrompt = [
         `Pedido do usuário:\n${turn.prompt}`,
-        `\nPlano / síntese do Conselho:\n${primaryMarkdown.slice(0, 10_000)}`,
-        knownSummary ? `\nArquivos já definidos (mantenha imports e tipos 100% compatíveis):\n${knownSummary}` : "",
+        `\nPlano / síntese do Conselho:\n${primaryMarkdown.slice(0, 8_000)}`,
+        contractSummary
+          ? `\nCONTRATO REAL DOS ARQUIVOS JÁ PRONTOS (OBRIGATÓRIO: não renomeie funções, tipos, rotas nem IDs DOM abaixo — importe e reutilize exatamente estes nomes):\n${contractSummary}`
+          : "",
+        knownSummary
+          ? `\nArquivos já definidos (somente completos, mantenha 100% de compatibilidade):\n${knownSummary}`
+          : "",
         `\nGere agora o arquivo completo: \`${targetPath}\``
       ]
         .filter(Boolean)
         .join("\n");
 
+      const maxTokensForTarget = isLightweightConfigOrDocFile(targetPath)
+        ? 1_600
+        : 6_000;
+
       const res = await callBuilderModel({
         systemPrompt,
         userPrompt,
-        maxTokens: 6_000,
+        maxTokens: maxTokensForTarget,
         signal
       });
 
@@ -454,7 +682,7 @@ function isPrioritizedSourceFile(relPath: string): boolean {
   );
 }
 
-async function readRelevantFilesForFix(
+export async function readRelevantFilesForFix(
   folderPath: string,
   errorOutput: string,
   fallbackPaths: string[],
@@ -462,9 +690,12 @@ async function readRelevantFilesForFix(
 ): Promise<Array<{ path: string; content: string }>> {
   const ordered: string[] = [];
   const seen = new Set<string>();
-  const addCandidate = (p: string) => {
+  const citedSet = new Set<string>();
+  const addCandidate = (p: string, isCited = false) => {
     const clean = p.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-    if (!clean || clean.startsWith("node_modules/") || seen.has(clean)) return;
+    if (!clean || clean.startsWith("node_modules/")) return;
+    if (isCited) citedSet.add(clean.toLowerCase());
+    if (seen.has(clean)) return;
     seen.add(clean);
     ordered.push(clean);
   };
@@ -473,19 +704,25 @@ async function readRelevantFilesForFix(
   const normalizedErr = errorOutput.replace(/\\/g, "/");
   for (const treePath of workspaceTree) {
     if (normalizedErr.includes(treePath)) {
-      addCandidate(treePath);
+      addCandidate(treePath, true);
     }
   }
   for (const m of errorOutput.matchAll(
     /([a-zA-Z0-9._-]+(?:[\\/][a-zA-Z0-9._-]+)+\.(?:ts|tsx|js|jsx|mjs|cjs|json|css|html))/g
   )) {
-    addCandidate(m[1] ?? "");
+    addCandidate(m[1] ?? "", true);
   }
+
+  // Se o erro for puramente de compilação TypeScript (tsc / TSxxxx) com arquivos citados,
+  // evita poluir o prompt com HTML/CSS irrelevantes — acelera drasticamente o Auto-Fix.
+  const isPureTsCompileError =
+    citedSet.size > 0 && /\berror\s+TS\d{4}\b/i.test(errorOutput);
 
   // 2. Arquivos de configuração e recém-alterados
   addCandidate("package.json");
   addCandidate("tsconfig.json");
   for (const p of fallbackPaths) {
+    if (isPureTsCompileError && /\.(?:css|html|md)$/i.test(p)) continue;
     addCandidate(p);
   }
 
@@ -494,9 +731,15 @@ async function readRelevantFilesForFix(
     (p) => isPrioritizedSourceFile(p) && /(?:^|\/)(?:tests?|__tests__|spec)\//i.test(p)
   );
   const extraSrcFiles = workspaceTree.filter(
-    (p) => isPrioritizedSourceFile(p) && !extraTestFiles.includes(p)
+    (p) =>
+      isPrioritizedSourceFile(p) &&
+      !extraTestFiles.includes(p) &&
+      !(isPureTsCompileError && /\.(?:css|html)$/i.test(p))
   );
-  for (const p of [...extraTestFiles, ...extraSrcFiles]) {
+  for (const p of [...extraSrcFiles, ...extraTestFiles]) {
+    if (isPureTsCompileError && extraTestFiles.includes(p) && !citedSet.has(p.toLowerCase())) {
+      continue;
+    }
     addCandidate(p);
   }
 
@@ -508,7 +751,22 @@ async function readRelevantFilesForFix(
     try {
       const safe = await resolveSafeWorkspacePath(folderPath, relPath);
       const raw = await readFile(safe.absPath, "utf8");
-      const trimmed = raw.slice(0, Math.min(5_500, MAX_FIX_CONTEXT_CHARS - totalChars));
+      const isCited = citedSet.has(safe.relPath.toLowerCase());
+      // Arquivos citados no erro recebem até 18k chars (sem truncar linhas finais onde o erro ocorre!)
+      const perFileCap = isCited ? 18_000 : 3_800;
+      const budgetLeft = MAX_FIX_CONTEXT_CHARS - totalChars;
+      const limit = Math.min(perFileCap, budgetLeft);
+      let trimmed: string;
+      if (raw.length <= limit) {
+        trimmed = raw;
+      } else if (isCited && limit > 2_000) {
+        // Preserva imports/topo + fim do arquivo (onde geralmente ficam rotas/handlers)
+        const headLen = Math.floor(limit * 0.45);
+        const tailLen = limit - headLen - 40;
+        trimmed = `${raw.slice(0, headLen)}\n/* ... trecho omitido ... */\n${raw.slice(-tailLen)}`;
+      } else {
+        trimmed = raw.slice(0, limit);
+      }
       totalChars += trimmed.length;
       loaded.push({ path: safe.relPath, content: trimmed });
     } catch {
@@ -690,7 +948,27 @@ async function runVerificationAndAutoFixLoop(params: {
       systemPrompt: fixSystemPrompt,
       userPrompt: fixUserPrompt,
       maxTokens: 6_500,
-      signal
+      signal,
+      onAttempt: (plat) => {
+        const label =
+          plat === "nvidia"
+            ? "NVIDIA NIM"
+            : plat === "openrouter"
+              ? "OpenRouter"
+              : plat === "groq"
+                ? "Groq"
+                : "Gemini";
+        void patchTurnBuilderState(debateId, turnId, (prev) => ({
+          ...(prev ?? { enabled: true, autoApply: false, files: [], status: "fixing", updatedAt: "" }),
+          status: "fixing",
+          summary: `Erro em "${failedCheck?.command || "verificação"}". Corrigindo (${fixAttempt}/${MAX_FIX_ATTEMPTS}) via ${label}...`,
+          lastBackup: latestBackup ?? prev?.lastBackup,
+          checks: lastChecks,
+          fixAttempt,
+          maxFixAttempts: MAX_FIX_ATTEMPTS,
+          updatedAt: new Date().toISOString()
+        })).catch(() => {});
+      }
     });
 
     const patchExtraction = extractWorkspaceFilesFromMarkdown(fixRes.content);

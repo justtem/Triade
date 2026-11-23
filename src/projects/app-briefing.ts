@@ -384,14 +384,14 @@ export function expandAppBriefingToSpec(
         ]
       : input.appKind === "landing"
         ? [
-            `3. src/server.ts: exporta createApp() servindo public/index.html, public/style.css e public/app.js de forma segura (anti-path-traversal), mais endpoint leve de contato/interação em /api/entries se aplicável.`,
+            `3. src/server.ts: exporta createApp() servindo public/index.html, public/style.css e public/app.js de forma segura (anti-path-traversal, resolvendo a pasta com resolve(process.cwd(), "public") para funcionar tanto em src/ quanto em dist/), mais endpoint leve de contato/interação em /api/entries se aplicável.`,
             `4. src/index.ts: sobe o servidor em 127.0.0.1 na porta process.env.PORT || ${port} e imprime a URL pronta no terminal.`,
-            `5. public/index.html, public/style.css e public/app.js: landing page completa, interativa e responsiva. ${themeInstruction}`
+            `5. public/index.html, public/style.css e public/app.js: landing page completa, interativa e responsiva (inclua teste verificando GET / retornando HTTP 200 com text/html). ${themeInstruction}`
           ]
         : [
-            `3. src/server.ts: exporta createApp() retornando o http.Server com API REST completa em JSON (/api/...) + serviço seguro de arquivos estáticos da pasta public/ (/, /style.css, /app.js) com proteção anti-path-traversal e headers X-Content-Type-Options: nosniff e X-Frame-Options: DENY.`,
+            `3. src/server.ts: exporta createApp() retornando o http.Server com API REST completa em JSON (/api/...) + serviço seguro de arquivos estáticos da pasta public/ (/, /style.css, /app.js) resolvendo o diretório via resolve(process.cwd(), "public") (para funcionar tanto em src/ quanto compilado em dist/), com proteção anti-path-traversal e headers X-Content-Type-Options: nosniff e X-Frame-Options: DENY.`,
             `4. src/index.ts: sobe o servidor em 127.0.0.1 na porta process.env.PORT || ${port} e imprime a URL pronta no terminal.`,
-            `5. public/index.html, public/style.css e public/app.js: interface funcional completa, interativa e responsiva ligada à API (sem innerHTML com dados do usuário). ${themeInstruction}`
+            `5. public/index.html, public/style.css e public/app.js: interface funcional completa, interativa e responsiva ligada à API (sem innerHTML com dados do usuário; inclua nos testes verificação de GET / retornando HTTP 200 com text/html). ${themeInstruction}`
           ];
 
   const securityPromptLines: string[] = [];

@@ -591,7 +591,8 @@ describe("Escudo de Privacidade (DLP Híbrido) & Criptografia em Repouso (AES-25
       const prevEnv = {
         GEMINI_API_KEY: process.env.GEMINI_API_KEY,
         GROQ_API_KEY: process.env.GROQ_API_KEY,
-        OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY
+        OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+        NVIDIA_API_KEY: process.env.NVIDIA_API_KEY
       };
 
       const fakeGemini = "AIzaSyTestVaultGeminiKey1234567890";
@@ -615,6 +616,7 @@ describe("Escudo de Privacidade (DLP Híbrido) & Criptografia em Repouso (AES-25
         process.env.GEMINI_API_KEY = fakeGemini;
         process.env.GROQ_API_KEY = fakeGroq;
         process.env.OPENROUTER_API_KEY = fakeOr;
+        delete process.env.NVIDIA_API_KEY;
 
         // Ativa Senha Mestra
         const masterRes = await fetch(`${baseUrl}/privacy/vault/setup-master`, {

@@ -7,6 +7,12 @@ import { join } from "node:path";
 
 import { inspectLinkedFolder } from "../src/projects/project-rag.js";
 import {
+  extractWorkspaceContractSummary,
+  readRelevantFilesForFix,
+  resolveBuilderProviderOrder
+} from "../src/projects/builder-orchestrator.js";
+import type { ProviderStatus } from "../src/providers/registry.js";
+import {
   planWorkspaceVerification,
   verifyWorkspaceProject
 } from "../src/projects/workspace-verifier.js";
@@ -334,6 +340,167 @@ describe("Modo Construtor (Fase 3) — Sandbox, Diff, Backup/Undo, Verifier & Re
       assert.match(testCheck.output, /hang\.test\.mjs/);
     } finally {
       await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+    }
+  });
+
+  it("Passo 2: resolveBuilderProviderOrder usa Gemini #1 no build/Auto-Fix (com failover NVIDIA/OpenRouter) e Groq em arquivos curtos", () => {
+    const mk = (
+      id: ProviderStatus["id"],
+      requestsToday: number,
+      requestsDailyCap: number,
+      ready = true
+    ): ProviderStatus => ({
+      id,
+      name: id,
+      ready,
+      reason: null,
+      models: [`${id}-m`],
+      usage: {
+        provider: id,
+        requestsLastMinute: 0,
+        requestsPerMinuteCap: 30,
+        requestsToday,
+        requestsDailyCap,
+        tokensLastMinute: 0,
+        tokensToday: 0,
+        tokensDailyCap: null,
+        resetsAt: "2026-11-24T00:00:00Z"
+      },
+      contextBudget: {
+        historyChars: 20_000,
+        maxOutputTokens: 4800,
+        synthesisOutputTokens: 6400
+      }
+    });
+
+    const statuses = [
+      mk("gemini", 20, 90, true),
+      mk("groq", 15, 900, true),
+      mk("openrouter", 5, 45, true),
+      mk("nvidia", 5, 270, true)
+    ];
+
+    // 1. Auto-Fix / arquivo grande (22k chars, 6000 tokens) -> Gemini #1 (precisão TS/velocidade), NVIDIA #2, OpenRouter #3, NUNCA Groq
+    const heavyOrder = resolveBuilderProviderOrder({
+      promptChars: 22_000,
+      maxTokens: 6_000,
+      statuses
+    });
+    assert.equal(heavyOrder[0], "gemini");
+    assert.equal(heavyOrder[1], "nvidia");
+    assert.equal(heavyOrder[2], "openrouter");
+    assert.equal(heavyOrder.includes("groq"), false);
+
+    // 2. Quando Gemini está em queda 503 (todos modelos em cooldown) -> NVIDIA NIM assume #1 na hora!
+    const congestedGeminiStatuses: ProviderStatus[] = [
+      {
+        ...mk("gemini", 20, 90, true),
+        autopilot: {
+          source: "live",
+          lastFetchedAt: "2026-11-23T18:00:00Z",
+          discoveredCount: 1,
+          activeModels: ["gemini-3.5-flash-lite"],
+          primaryModel: "gemini-3.5-flash-lite",
+          fastBackupModel: null,
+          latenciesMs: {},
+          cooledDown: [
+            { model: "gemini-3.5-flash-lite", reason: "congested", until: "2026-11-23T19:00:00Z" }
+          ]
+        }
+      },
+      mk("groq", 15, 900, true),
+      mk("openrouter", 5, 45, true),
+      mk("nvidia", 5, 270, true)
+    ];
+    const failoverOrder = resolveBuilderProviderOrder({
+      promptChars: 22_000,
+      maxTokens: 6_000,
+      statuses: congestedGeminiStatuses
+    });
+    assert.equal(failoverOrder[0], "nvidia");
+
+    // 3. Arquivo curto (package.json / CSS — 4k chars, 1600 tokens) -> Groq (0,5s / 900 RPD) antes do Gemini
+    const lightOrder = resolveBuilderProviderOrder({
+      promptChars: 4_000,
+      maxTokens: 1_600,
+      statuses
+    });
+    assert.equal(lightOrder[0], "groq");
+    assert.equal(lightOrder[1], "gemini");
+  });
+
+  it("Passo 2: extractWorkspaceContractSummary extrai exports, rotas e IDs DOM ignorando arquivos incompletos", () => {
+    const contract = extractWorkspaceContractSummary([
+      {
+        path: "package.json",
+        content: JSON.stringify({
+          type: "module",
+          scripts: { build: "tsc", test: "node --test" }
+        })
+      },
+      {
+        path: "src/server.ts",
+        content: [
+          "export interface Expense { id: string; amount: number; }",
+          "export function createApp() {",
+          '  if (url.pathname === "/api/expenses") return [];',
+          "}"
+        ].join("\n")
+      },
+      {
+        path: "public/index.html",
+        content: '<header><select id="category-filter"></select><button id="export-json-btn">Exportar</button></header>'
+      },
+      {
+        path: "src/truncated.ts",
+        content: "export function shouldNeverLeak() { // ...",
+        incomplete: true
+      }
+    ]);
+
+    assert.match(contract, /package\.json.*type="module".*build, test/);
+    assert.match(contract, /src\/server\.ts.*exports: Expense, createApp/);
+    assert.match(contract, /rotas: \/api\/expenses/);
+    assert.match(contract, /public\/index\.html.*#category-filter, #export-json-btn/);
+    assert.equal(contract.includes("shouldNeverLeak"), false);
+  });
+
+  it("readRelevantFilesForFix lê arquivo citado completo (>10k chars) sem cortar as linhas do erro TS e pula CSS/HTML irrelevantes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aic-fix-context-test-"));
+    try {
+      await applyWorkspaceChanges(dir, [
+        {
+          path: "package.json",
+          content: JSON.stringify({ name: "cine", scripts: { build: "tsc" } })
+        },
+        {
+          path: "tsconfig.json",
+          content: JSON.stringify({ compilerOptions: { strict: true } })
+        },
+        {
+          path: "public/style.css",
+          content: `body { color: #fff; }\n${"/* pad */\n".repeat(400)}`
+        },
+        {
+          path: "src/server.ts",
+          content: `${"// header line\n".repeat(450)}export function bugAtLine451(): boolean { return sendJson(); }\n`
+        }
+      ]);
+
+      const tree = await listWorkspaceSourceFiles(dir);
+      const loaded = await readRelevantFilesForFix(
+        dir,
+        "src/server.ts(451,42): error TS2322: Type 'void' is not assignable to type 'boolean'.",
+        ["public/style.css", "src/server.ts"],
+        tree
+      );
+
+      const serverEntry = loaded.find((f) => f.path === "src/server.ts");
+      assert.ok(serverEntry);
+      assert.match(serverEntry.content, /bugAtLine451/);
+      assert.equal(loaded.some((f) => f.path === "public/style.css"), false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

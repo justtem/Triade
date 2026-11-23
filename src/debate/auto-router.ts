@@ -70,7 +70,20 @@ function computeQuotaHealth(status: ProviderStatus): QuotaHealth {
 
   const remainingRatio = Math.min(reqRatio, tokRatio);
   const usable = remainingRatio > 0;
-  const healthy = remainingRatio >= QUOTA_HEALTHY_MIN_RATIO;
+
+  // Se todos os modelos do Piloto Automático deste provedor estiverem em cooldown
+  // (ex.: queda global 503 no Google AI Studio), trata como indisponível temporariamente
+  // para que outra IA saudável (ex.: NVIDIA NIM) assuma automaticamente.
+  const ap = status.autopilot;
+  const allModelsCooledDown = Boolean(
+    ap &&
+      Array.isArray(ap.activeModels) &&
+      ap.activeModels.length > 0 &&
+      Array.isArray(ap.cooledDown) &&
+      ap.cooledDown.length >= ap.activeModels.length
+  );
+
+  const healthy = remainingRatio >= QUOTA_HEALTHY_MIN_RATIO && !allModelsCooledDown;
 
   return {
     platform: status.id,
@@ -151,12 +164,13 @@ export function resolveAutoRoute(
   }
   for (const p of AUTO_PLATFORMS) {
     if (!healthMap.has(p)) {
+      const isOptional = p === "nvidia";
       healthMap.set(p, {
         platform: p,
-        ready: true,
-        healthy: true,
-        usable: true,
-        remainingRatio: 1
+        ready: !isOptional,
+        healthy: !isOptional,
+        usable: !isOptional,
+        remainingRatio: isOptional ? 0 : 1
       });
     }
   }
@@ -177,9 +191,10 @@ export function resolveAutoRoute(
   const hasCodeFence = prompt.includes("```");
 
   // 1. Modo Debate: respeita a dinâmica e exige 2 a 3 IAs saudáveis
+  //    Se alguma das 3 principais estiver com cota baixa, NVIDIA NIM entra como reserva automática.
   if (input.interactionMode === "debate") {
     const { chosen, skippedForQuota } = pickFromPriority(
-      ["gemini", "groq", "openrouter"],
+      ["gemini", "groq", "openrouter", "nvidia"],
       healthMap,
       2,
       3
@@ -265,7 +280,7 @@ export function resolveAutoRoute(
 
   if (isComplexCouncil) {
     const { chosen, skippedForQuota } = pickFromPriority(
-      ["gemini", "groq", "openrouter"],
+      ["gemini", "groq", "openrouter", "nvidia"],
       healthMap,
       2,
       3
@@ -281,7 +296,9 @@ export function resolveAutoRoute(
     };
   }
 
-  // 5. Contexto extenso (prompt longo, arquivo grande ou projeto com bastante conteúdo) -> Gemini
+  // 5. Contexto extenso (prompt longo, arquivo grande ou projeto volumoso)
+  //    Prioriza NVIDIA NIM quando ativa para preservar a cota do Gemini para PDFs/imagens;
+  //    se o Gemini estiver abaixo de 45% e OpenRouter saudável (>30%), alterna para OpenRouter.
   const isLongContext =
     prompt.length >= 650 ||
     attachedTextChars >= 3_500 ||
@@ -289,24 +306,38 @@ export function resolveAutoRoute(
     (input.webSources?.length ?? 0) >= 3;
 
   if (isLongContext) {
+    const geminiRatio = healthMap.get("gemini")?.remainingRatio ?? 0;
+    const openRouterRatio = healthMap.get("openrouter")?.remainingRatio ?? 0;
+    const longPriority: AutoPlatform[] =
+      geminiRatio < 0.45 && openRouterRatio >= 0.3
+        ? ["nvidia", "openrouter", "gemini", "groq"]
+        : ["nvidia", "gemini", "openrouter", "groq"];
     const { chosen, skippedForQuota } = pickFromPriority(
-      ["gemini", "openrouter", "groq"],
+      longPriority,
       healthMap,
       1,
       1
     );
-    const fellBack = chosen[0] !== "gemini";
+    const fellBack = chosen[0] !== "nvidia" && chosen[0] !== "gemini";
     return {
       participants: chosen,
-      reason: fellBack ? "contexto longo (fallback de cota)" : "contexto extenso",
-      category: fellBack ? "quota_fallback" : "long_context",
+      reason:
+        chosen[0] === "nvidia"
+          ? "contexto extenso (NVIDIA NIM · Gemini preservado)"
+          : fellBack
+            ? "contexto longo (cota preservada)"
+            : "contexto extenso",
+      category:
+        fellBack && geminiRatio < QUOTA_HEALTHY_MIN_RATIO
+          ? "quota_fallback"
+          : "long_context",
       ...(skippedForQuota.length > 0 ? { skippedForQuota } : {})
     };
   }
 
-  // 6. Padrão: pergunta direta / rápida -> Groq (ultrarrápido e 1.000 RPD)
+  // 6. Padrão: pergunta direta / rápida -> Groq (ultrarrápido e 1.000 RPD), com NVIDIA antes do Gemini
   const { chosen, skippedForQuota } = pickFromPriority(
-    ["groq", "gemini", "openrouter"],
+    ["groq", "nvidia", "gemini", "openrouter"],
     healthMap,
     1,
     1
@@ -383,26 +414,47 @@ export function resolveAutoComposerStrategy(
       FULL_PROJECT_BUILD_RE.test(normPrompt);
 
     if (isMajorBuild) {
-      const autoRoute = resolveAutoRoute(
-        {
-          prompt: input.prompt,
-          responseMode: input.responseMode,
-          interactionMode: "debate",
-          attachments: input.attachments,
-          webSources: input.webSources,
-          resolvedProjectContext: input.resolvedProjectContext
-        },
-        providerStatuses
+      // Construção completa de app/site na pasta:
+      // prioriza NVIDIA NIM + Groq + OpenRouter quando NVIDIA está ativa (poupando 100% do Gemini!),
+      // mantendo Gemini + Groq + OpenRouter automaticamente quando NVIDIA não está configurada.
+      const healthMap = new Map<AutoPlatform, QuotaHealth>();
+      for (const st of providerStatuses) {
+        healthMap.set(st.id, computeQuotaHealth(st));
+      }
+      for (const p of AUTO_PLATFORMS) {
+        if (!healthMap.has(p)) {
+          const isOptional = p === "nvidia";
+          healthMap.set(p, {
+            platform: p,
+            ready: !isOptional,
+            healthy: !isOptional,
+            usable: !isOptional,
+            remainingRatio: isOptional ? 0 : 1
+          });
+        }
+      }
+      const buildOrder: AutoPlatform[] = healthMap.get("nvidia")?.healthy
+        ? ["nvidia", "groq", "openrouter", "gemini"]
+        : ["gemini", "groq", "openrouter", "nvidia"];
+      const { chosen, skippedForQuota } = pickFromPriority(
+        buildOrder,
+        healthMap,
+        2,
+        3
       );
       return {
         interactionMode: "debate",
         totalRounds: 1,
         autoRoute: {
-          ...autoRoute,
+          participants: chosen,
+          category: "debate",
           reason:
-            autoRoute.skippedForQuota && autoRoute.skippedForQuota.length > 0
-              ? "construção completa em Debate (cota preservada)"
-              : "construção completa (Debate + Síntese)"
+            skippedForQuota.length > 0
+              ? "construção completa em Debate (cota/saúde preservada)"
+              : chosen.includes("nvidia")
+                ? "construção completa (NVIDIA NIM + Conselho · Gemini preservado)"
+                : "construção completa (Debate + Síntese)",
+          ...(skippedForQuota.length > 0 ? { skippedForQuota } : {})
         }
       };
     }
@@ -414,17 +466,29 @@ export function resolveAutoComposerStrategy(
     }
     for (const p of AUTO_PLATFORMS) {
       if (!healthMap.has(p)) {
+        const isOptional = p === "nvidia";
         healthMap.set(p, {
           platform: p,
-          ready: true,
-          healthy: true,
-          usable: true,
-          remainingRatio: 1
+          ready: !isOptional,
+          healthy: !isOptional,
+          usable: !isOptional,
+          remainingRatio: isOptional ? 0 : 1
         });
       }
     }
+    const geminiHealth = healthMap.get("gemini");
+    const geminiRatio = geminiHealth?.remainingRatio ?? 0;
+    const openRouterRatio = healthMap.get("openrouter")?.remainingRatio ?? 0;
+    // Edição rápida na pasta: prioriza Gemini quando saudável (>= 20% cota) pela velocidade e precisão em TS;
+    // se Gemini cair em 503/cooldown ou baixar de 20%, NVIDIA NIM e OpenRouter assumem automaticamente.
+    const editPriority: AutoPlatform[] =
+      !geminiHealth?.healthy || geminiRatio < 0.2
+        ? ["nvidia", "openrouter", "gemini", "groq"]
+        : geminiRatio < 0.45 && openRouterRatio >= 0.3
+          ? ["openrouter", "gemini", "nvidia", "groq"]
+          : ["gemini", "nvidia", "openrouter", "groq"];
     const { chosen, skippedForQuota } = pickFromPriority(
-      ["gemini", "openrouter", "groq"],
+      editPriority,
       healthMap,
       1,
       1
@@ -435,9 +499,11 @@ export function resolveAutoComposerStrategy(
       autoRoute: {
         participants: chosen,
         reason:
-          skippedForQuota.length > 0
-            ? "edição rápida na pasta (cota preservada)"
-            : "edição rápida na pasta",
+          chosen[0] === "nvidia"
+            ? "edição rápida na pasta (NVIDIA NIM · failover)"
+            : skippedForQuota.length > 0
+              ? "edição rápida na pasta (cota preservada)"
+              : "edição rápida na pasta",
         category: "quick",
         ...(skippedForQuota.length > 0 ? { skippedForQuota } : {})
       }

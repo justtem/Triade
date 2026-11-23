@@ -3,10 +3,11 @@ export type AIPlatform =
   | "claude"
   | "gemini"
   | "groq"
-  | "openrouter";
+  | "openrouter"
+  | "nvidia";
 
 /** Assentos automáticos: o servidor chama a API sozinho. */
-export type AutoPlatform = "gemini" | "groq" | "openrouter";
+export type AutoPlatform = "gemini" | "groq" | "openrouter" | "nvidia";
 
 /** Assentos manuais: o usuário cola a resposta da interface web. */
 export type ManualPlatform = "chatgpt" | "claude";
@@ -16,13 +17,21 @@ export const ALL_PLATFORMS: readonly AIPlatform[] = [
   "claude",
   "gemini",
   "groq",
+  "openrouter",
+  "nvidia"
+];
+
+export const REQUIRED_AUTO_PLATFORMS: readonly AutoPlatform[] = [
+  "gemini",
+  "groq",
   "openrouter"
 ];
 
 export const AUTO_PLATFORMS: readonly AutoPlatform[] = [
   "gemini",
   "groq",
-  "openrouter"
+  "openrouter",
+  "nvidia"
 ];
 
 export function isAutoPlatform(

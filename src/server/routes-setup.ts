@@ -25,6 +25,7 @@ import {
 import { isRecord, readRequestBody, sendJson } from "./http-utils.js";
 
 const REQUIRED_PROVIDERS: AutoPlatform[] = ["gemini", "groq", "openrouter"];
+const OPTIONAL_PROVIDERS: AutoPlatform[] = ["nvidia"];
 
 function buildSetupProvidersPayload() {
   return {
@@ -42,6 +43,12 @@ function buildSetupProvidersPayload() {
       configured: isValidApiKeyValue(process.env.OPENROUTER_API_KEY),
       maskedKey: maskApiKey(process.env.OPENROUTER_API_KEY),
       keyUrl: PROVIDER_KEY_URLS.openrouter
+    },
+    nvidia: {
+      optional: true,
+      configured: isValidApiKeyValue(process.env.NVIDIA_API_KEY),
+      maskedKey: maskApiKey(process.env.NVIDIA_API_KEY),
+      keyUrl: PROVIDER_KEY_URLS.nvidia
     }
   };
 }
@@ -124,7 +131,9 @@ export async function handleSetupRoutes(
       openrouter:
         typeof payload.openrouterApiKey === "string"
           ? payload.openrouterApiKey.trim()
-          : ""
+          : "",
+      nvidia:
+        typeof payload.nvidiaApiKey === "string" ? payload.nvidiaApiKey.trim() : ""
     };
 
     const incomingPassword =
@@ -158,10 +167,11 @@ export async function handleSetupRoutes(
       gemini: incomingKeys.gemini || (process.env.GEMINI_API_KEY?.trim() ?? ""),
       groq: incomingKeys.groq || (process.env.GROQ_API_KEY?.trim() ?? ""),
       openrouter:
-        incomingKeys.openrouter || (process.env.OPENROUTER_API_KEY?.trim() ?? "")
+        incomingKeys.openrouter || (process.env.OPENROUTER_API_KEY?.trim() ?? ""),
+      nvidia: incomingKeys.nvidia || (process.env.NVIDIA_API_KEY?.trim() ?? "")
     };
 
-    const validation: Record<AutoPlatform, KeyValidationResult> = {
+    const validation: Partial<Record<AutoPlatform, KeyValidationResult>> = {
       gemini: { ok: false },
       groq: { ok: false },
       openrouter: { ok: false }
@@ -193,9 +203,17 @@ export async function handleSetupRoutes(
 
     const validator = options.validateKeyFn ?? validateProviderApiKey;
 
-    // Testa online todas as 3 chaves em paralelo (endpoints gratuitos, 0 tokens gastos)
+    const providersToValidate: AutoPlatform[] = [...REQUIRED_PROVIDERS];
+    for (const optPlat of OPTIONAL_PROVIDERS) {
+      // Só valida provedor opcional se o usuário enviou uma chave nova ou já tem uma válida salva
+      if (incomingKeys[optPlat] || isValidApiKeyValue(effectiveKeys[optPlat])) {
+        providersToValidate.push(optPlat);
+      }
+    }
+
+    // Testa online todas as chaves configuradas em paralelo (endpoints gratuitos, 0 tokens gastos)
     const results = await Promise.all(
-      REQUIRED_PROVIDERS.map(async (plat) => {
+      providersToValidate.map(async (plat) => {
         const res = await validator(plat, effectiveKeys[plat]);
         return [plat, res] as const;
       })
@@ -220,11 +238,13 @@ export async function handleSetupRoutes(
       return true;
     }
 
-    // Salva somente as chaves alteradas (ou todas as 3 garantidas) + senha se fornecida
+    // Salva as 3 chaves obrigatórias + eventuais opcionais válidas + senha se fornecida
     const apiKeyUpdates: Partial<Record<SealedApiEnvKey, string>> = {};
-    for (const plat of REQUIRED_PROVIDERS) {
+    for (const plat of providersToValidate) {
       const envName = PROVIDER_ENV_KEYS[plat] as SealedApiEnvKey;
-      apiKeyUpdates[envName] = effectiveKeys[plat];
+      if (isValidApiKeyValue(effectiveKeys[plat])) {
+        apiKeyUpdates[envName] = effectiveKeys[plat];
+      }
     }
 
     const privacySettings = await readPrivacySettings();

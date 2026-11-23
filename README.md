@@ -1,8 +1,8 @@
 # AI Council — Intelligence Hub
 
-**Orquestrador local-first multi-IA (Gemini, Groq e OpenRouter) com custo zero, Briefing 1-Frase com Expansor OWASP/LGPD, Modo Construtor 100% Automático na pasta com Auto-Fix + Mini-Auditor 0 ms, Preview App ao vivo (`▶ Rodar & Abrir App`), streaming paralelo via SSE, RAG BM25, voz neural individual e arquitetura *Security & Privacy by Design*.**
+**Orquestrador local-first multi-IA (Gemini, Groq, OpenRouter e NVIDIA NIM opcional) com custo zero, Briefing 1-Frase com Expansor OWASP/LGPD, Modo Construtor 100% Automático na pasta com Auto-Fix + Mini-Auditor 0 ms, Preview App ao vivo (`▶ Rodar & Abrir App`), failover automático entre provedores, streaming paralelo via SSE, RAG BM25, voz neural individual e arquitetura *Security & Privacy by Design*.**
 
-`Node.js 20+` · `TypeScript (ESM)` · `Vanilla JS ES Modules (zero framework)` · `SSE Streaming` · `Auto-Builder + Preview App` · `AES-256-GCM / scrypt` · `Zero CDN` · `126 testes automatizados`
+`Node.js 20+` · `TypeScript (ESM)` · `Vanilla JS ES Modules (zero framework)` · `SSE Streaming` · `Auto-Builder + Preview App` · `AES-256-GCM / scrypt` · `Zero CDN` · `131 testes automatizados`
 
 ---
 
@@ -54,16 +54,16 @@ Em vez de depender de uma única IA, configurar projetos manualmente ou copiar/c
 - **Mini-Auditor Estático de Segurança 0 ms (`workspace-security-audit.ts`):** inspeciona o código gerado após `build` e `test`. Falhas críticas (`innerHTML`/`outerHTML` dinâmico, `document.write`, bind em `0.0.0.0`, `md5`/`sha1`/`sha256` em senha, `console.log` de PII/segredo, `eval`/`new Function`) reprovam a verificação e acionam o **Auto-Fix** automaticamente antes de aprovar o card.
 - **Preview App ao Vivo (`dev-server-manager.ts`):** no card verde do Construtor (somente PC local), o botão **`▶ Rodar & Abrir App`** sobe `npm run dev` (ou `npm start`) em `127.0.0.1`, detecta a porta loopback, confirma resposta HTTP, abre o app em uma nova aba e exibe indicador ao vivo + **`Abrir App ↗`** + **`■ Parar App`** (com auto-stop após 30 min ocioso).
 
-### 3. Orquestração, Modo `Auto`, Anti-Corte e Resiliência de LLMs
-- **Modo `Auto` como Padrão (`auto-router.ts`):** decide estratégia e participantes em **0 ms** sem gastar tokens extras:
-  - Criação de app em pasta vinculada → **Debate (1 rodada + Síntese única)** + Construtor automático;
-  - Edição pontual continuando projeto → **1 IA forte de código** (`Gemini` → fallback `OpenRouter`) + Construtor automático;
-  - Pergunta simples → **1 IA rápida** (`Groq` ou `Gemini` quando o contexto do projeto excede o limite TPM do Groq);
-  - Comparação/arquitetura/revisão → **Conselho (Trio em paralelo)**.
-- **Piloto Automático de Modelos (Gemini, Groq e OpenRouter):**
-  - Auto-descoberta de catálogos (`/models`, cache de 6h, **0 tokens / 0 requisições de geração**) com allowlists estritas de custo zero (`:free` + preço `0` no OpenRouter; famílias `Flash`/`Gemma` no Gemini; modelos de chat ativos na Groq).
-  - **Corrida cirúrgica (*Hedged Request* de 5s) no Gemini** com cooldown exponencial (`1h → 3h → 8h`), guarda de RPM (`5 RPM`) e quarentena automática de 24h para modelos com `429 limit: 0`.
-- **Anti-Corte & Streaming Seguro:** orçamentos ampliados de saída, teto de *thinking* no Gemini (`thinkingConfig`), guarda de TTFB no streaming (OpenRouter/Groq), detecção real de truncamento (`MAX_TOKENS`/`length`) com botão **`Continuar de onde parou →`** e **`UsageGate`** preventivo em 90% da cota diária/minuto.
+### 3. Orquestração, Modo `Auto`, Failover Automático e Resiliência de LLMs
+- **Modo `Auto` com Balanceamento Híbrido (`auto-router.ts`):** decide estratégia e participantes em **0 ms** sem gastar tokens extras, equilibrando velocidade e cota gratuita entre **Gemini, Groq, OpenRouter e NVIDIA NIM (opcional)**:
+  - Criação de app em pasta vinculada → **Debate (1 rodada + Síntese única)** + Construtor automático (prioriza **NVIDIA NIM + Groq + OpenRouter** quando a NVIDIA está ativa, poupando cota do Gemini);
+  - Build, Auto-Fix e edição pontual continuando projeto → **Gemini** em #1 pela velocidade/precisão TypeScript, com **failover automático imediato** para **NVIDIA NIM → OpenRouter** em caso de pico `503` ou cota baixa, e **Groq** (`~0,5s`) em arquivos leves (`package.json`, `tsconfig.json`, CSS, README) com extração automática de **contrato de interfaces** (`exports`, rotas HTTP e IDs DOM) para handoff limpo sem quebra de nomes;
+  - Pergunta simples & memória pessoal → **Groq** (`~900 req/dia`); contexto longo de leitura, veredito automático e compactação de memória compartilhada → **NVIDIA NIM**; PDFs escaneados e imagens → **Gemini**.
+- **Failover entre Provedores + Trava Anti-Abandono (`runner.ts`, `debate-engine.ts`):** se uma IA sofrer queda `503`, `404` ou limite durante um debate/síntese, o servidor transfere a tarefa automaticamente para uma IA reserva saudável sem pausar o fluxo. Na crítica (Rodada 2+), cada IA recebe sua própria resposta ancorada no topo (`[SUA RESPOSTA ANTERIOR]`) com regra explícita de independência para nunca abandonar acertos próprios só para concordar com colegas.
+- **Piloto Automático de Modelos (Gemini, Groq, OpenRouter e NVIDIA NIM):**
+  - Auto-descoberta de catálogos (`/models`, cache de 6h, **0 tokens / 0 requisições de geração**) com allowlists estritas de custo zero (`:free` + preço `0` no OpenRouter; famílias `Flash`/`Gemma` no Gemini; modelos rápidos de chat/código na Groq e NVIDIA NIM excluindo embeddings/guard/visão-VL e penalizando modelos lentos 550B–1T).
+  - **Corrida cirúrgica (*Hedged Request* de 5s) no Gemini** com cooldown exponencial (`1h → 3h → 8h`), guarda de TTFB (20s no Gemini/NVIDIA, 25s no OpenRouter, 18s na Groq), guarda de RPM e quarentena automática de 24h para modelos com `429 limit: 0`.
+- **Anti-Corte & Streaming Seguro:** orçamentos ampliados de saída, teto de *thinking* no Gemini (`thinkingConfig`), streaming interno no Auto-Fix (arquivos citados no erro lidos até 18k chars sem truncar linhas finais), detecção real de truncamento (`MAX_TOKENS`/`length`) com botão **`Continuar de onde parou →`** e **`UsageGate`** preventivo em 90% da cota diária/minuto.
 - **Persistência Resiliente no Windows (`atomic-fs.ts`):** gravação atômica (`.tmp` + `rename`) com backoff exponencial contra locks transitórios do Windows NTFS (`EPERM`/`EBUSY`) e fallback seguro.
 
 ### 4. Segurança, Cérebro Local (RAG), Voz e Experiência de Chat
@@ -97,6 +97,7 @@ flowchart TB
         Gemini["Google Gemini API"]
         Groq["Groq Cloud (LLM + Whisper)"]
         OpenRouter["OpenRouter (:free)"]
+        Nvidia["NVIDIA NIM (Opcional · grátis)"]
         EdgeTTS["Microsoft Edge Neural TTS"]
     end
 

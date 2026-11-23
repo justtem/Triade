@@ -1,5 +1,6 @@
 import {
   PLATFORMS,
+  CORE_AUTO_PLATFORM_IDS,
   AUTO_PLATFORM_IDS,
   ALL_PLATFORM_IDS,
   SVG_ICONS,
@@ -56,8 +57,8 @@ export function getActiveResponderInfo() {
 
   const selected = getSelectedParticipants();
   const isTrio =
-    selected.length === AUTO_PLATFORM_IDS.length &&
-    AUTO_PLATFORM_IDS.every((id) => selected.includes(id));
+    selected.length === CORE_AUTO_PLATFORM_IDS.length &&
+    CORE_AUTO_PLATFORM_IDS.every((id) => selected.includes(id));
 
   if (selected.length === 1) {
     const id = selected[0];
@@ -99,8 +100,8 @@ export function syncAiSelectionUi() {
   const isTrio =
     !isAuto &&
     !state.isSingleAiMode &&
-    checkedValues.length === AUTO_PLATFORM_IDS.length &&
-    AUTO_PLATFORM_IDS.every((id) => checkedValues.includes(id));
+    checkedValues.length === CORE_AUTO_PLATFORM_IDS.length &&
+    CORE_AUTO_PLATFORM_IDS.every((id) => checkedValues.includes(id));
 
   for (const pillsGroup of $$(".participant-pills")) {
     pillsGroup.classList.toggle("is-single-mode", !isAuto && state.isSingleAiMode);
@@ -287,7 +288,7 @@ export function applyComposerMode(modeKey, options = {}) {
     saveStoredOption(INTERACTION_MODE_STORAGE_KEY, "direct");
     saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
     for (const cb of $$('input[name="participants"]')) {
-      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+      cb.checked = CORE_AUTO_PLATFORM_IDS.includes(cb.value);
     }
   } else if (nextMode === "quick") {
     state.isAutoRouteMode = false;
@@ -321,7 +322,7 @@ export function applyComposerMode(modeKey, options = {}) {
     saveStoredOption(RESPONSE_MODE_STORAGE_KEY, "normal");
     saveStoredOption(AUTO_VERDICT_STORAGE_KEY, "off");
     for (const cb of $$('input[name="participants"]')) {
-      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+      cb.checked = CORE_AUTO_PLATFORM_IDS.includes(cb.value);
     }
   } else if (nextMode === "debate") {
     state.isAutoRouteMode = false;
@@ -337,7 +338,7 @@ export function applyComposerMode(modeKey, options = {}) {
       roundsSelect.value = "2";
     }
     for (const cb of $$('input[name="participants"]')) {
-      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+      cb.checked = CORE_AUTO_PLATFORM_IDS.includes(cb.value);
     }
   }
 
@@ -354,7 +355,7 @@ export function setAutoRouteMode(enabled = true) {
     state.activeComposerMode = "auto";
     saveStoredOption(COMPOSER_MODE_STORAGE_KEY, "auto");
     for (const cb of $$('input[name="participants"]')) {
-      cb.checked = AUTO_PLATFORM_IDS.includes(cb.value);
+      cb.checked = CORE_AUTO_PLATFORM_IDS.includes(cb.value);
     }
   } else if (state.activeComposerMode === "auto") {
     const fallback = state.selectedInteractionMode === "debate" ? "debate" : "council";
@@ -635,7 +636,7 @@ export async function handleCreateDebate(event) {
 
   const checkboxes = $$('input[name="participants"]:checked');
   const participants = state.isAutoRouteMode
-    ? [...AUTO_PLATFORM_IDS]
+    ? [...CORE_AUTO_PLATFORM_IDS]
     : checkboxes.map((cb) => cb.value);
 
   if (

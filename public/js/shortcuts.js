@@ -197,6 +197,18 @@ function buildPaletteItems(rawQuery) {
       }
     },
     {
+      id: "act:ai-nvidia",
+      section: "AÇÕES RÁPIDAS",
+      title: "Falar só com NVIDIA NIM",
+      subtitle: "Chat Rápido com catálogo gratuito NVIDIA (Qwen, Nemotron, Llama, DeepSeek)",
+      keywords: "ia nvidia nim qwen nemotron deepseek codigo",
+      run: () => {
+        setSelectedParticipants(["nvidia"], { singleMode: true });
+        switchView("chat");
+        $("#debate-topic")?.focus();
+      }
+    },
+    {
       id: "act:toggle-response-mode",
       section: "AÇÕES RÁPIDAS",
       title:

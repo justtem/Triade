@@ -26,6 +26,7 @@ describe("Ganho #1 — Setup Guiado em 1 Passo, Auto-.env & Segurança Localhost
       GEMINI_API_KEY: process.env.GEMINI_API_KEY,
       GROQ_API_KEY: process.env.GROQ_API_KEY,
       OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
       ACCESS_PASSWORD: process.env.ACCESS_PASSWORD
     };
     process.env.AI_COUNCIL_DATA_DIR = join(tempDir, "data");
@@ -88,6 +89,7 @@ describe("Ganho #1 — Setup Guiado em 1 Passo, Auto-.env & Segurança Localhost
     delete process.env.GEMINI_API_KEY;
     delete process.env.GROQ_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.NVIDIA_API_KEY;
     reinitProviders();
 
     const { server } = createMonitorServer({
@@ -177,9 +179,43 @@ describe("Ganho #1 — Setup Guiado em 1 Passo, Auto-.env & Segurança Localhost
       assert.equal(saveBody.providers.groq?.maskedKey, "••••2222");
       assert.equal(saveBody.providers.openrouter?.maskedKey, "••••3333");
 
-      // Verifica hot-reload dos 3 provedores em memória
+      // Verifica hot-reload dos 3 provedores obrigatórios em memória (NVIDIA permanece opcional)
       const liveProviders = await getProvidersStatus();
-      assert.equal(liveProviders.every((p) => p.ready), true);
+      const requiredReady = liveProviders
+        .filter((p) => !p.optional)
+        .every((p) => p.ready);
+      assert.equal(requiredReady, true);
+      const nvidiaBefore = liveProviders.find((p) => p.id === "nvidia");
+      assert.equal(nvidiaBefore?.optional, true);
+      assert.equal(nvidiaBefore?.ready, false);
+
+      // 5b. Adicionar NVIDIA NIM opcional com chave inválida -> 400
+      const badNvidiaRes = await fetch(`${base}/setup/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nvidiaApiKey: "nvapi-INVALID-key-0000"
+        })
+      });
+      assert.equal(badNvidiaRes.status, 400);
+
+      // 5c. Adicionar NVIDIA NIM opcional válida (mantendo as 3 chaves já salvas) -> 200 + hot-reload!
+      const okNvidiaRes = await fetch(`${base}/setup/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nvidiaApiKey: "nvapi-valid-key-nvidia-4444"
+        })
+      });
+      assert.equal(okNvidiaRes.status, 200);
+      const okNvidiaBody = (await okNvidiaRes.json()) as {
+        providers: Record<string, { configured: boolean; maskedKey: string; optional?: boolean }>;
+      };
+      assert.equal(okNvidiaBody.providers.nvidia?.configured, true);
+      assert.equal(okNvidiaBody.providers.nvidia?.maskedKey, "••••4444");
+
+      const liveAfterNvidia = await getProvidersStatus();
+      assert.equal(liveAfterNvidia.find((p) => p.id === "nvidia")?.ready, true);
 
       // Verifica hot-reload da nova ACCESS_PASSWORD no /auth/login
       const loginRes = await fetch(`${base}/auth/login`, {
