@@ -15,7 +15,7 @@ const SAFE_MODEL_ID_REGEX = /^[a-zA-Z0-9._:/-]{3,120}$/;
 
 // Cooldowns calibrados para piloto automático silencioso
 const COOLDOWN_LIMIT_ZERO_MS = 24 * 60 * 60 * 1000; // 24h (modelo sem cota grátis)
-const COOLDOWN_MODEL_404_MS = 30 * 60 * 1000; // 30m
+const COOLDOWN_MODEL_404_MS = 24 * 60 * 60 * 1000; // 24h (modelo descontinuado 404 não volta em 30m)
 const COOLDOWN_EMPTY_MS = 90 * 1000; // 90s
 const GEMINI_FLAGSHIP_BACKOFF_MS = [
   60 * 60 * 1000, // 1ª lentidão / 503: 1h
@@ -757,8 +757,12 @@ export function buildGeminiAutopilotQueue(
   for (const id of discovered) {
     pushUnique(id);
   }
-  for (const pref of preferredModels) {
-    pushUnique(pref);
+  // Só adiciona preferredModels como fallback offline quando o catálogo ao vivo NÃO foi carregado;
+  // quando hasCatalog=true, evita reinserir modelos descontinuados (ex.: 2.5-flash-lite 404) na fila!
+  if (!hasCatalog) {
+    for (const pref of preferredModels) {
+      pushUnique(pref);
+    }
   }
 
   const healthy: string[] = [];
@@ -826,8 +830,12 @@ export function buildGroqAutopilotQueue(
   for (const id of discovered) {
     pushUnique(id);
   }
-  for (const pref of preferredModels) {
-    pushUnique(pref);
+  // Só adiciona preferredModels como fallback offline quando o catálogo ao vivo NÃO foi carregado;
+  // quando hasCatalog=true, evita reinserir modelos descontinuados (ex.: 2.5-flash-lite 404) na fila!
+  if (!hasCatalog) {
+    for (const pref of preferredModels) {
+      pushUnique(pref);
+    }
   }
 
   const healthy: string[] = [];
@@ -916,8 +924,12 @@ export function buildNvidiaAutopilotQueue(
   for (const id of discovered) {
     pushUnique(id);
   }
-  for (const pref of preferredModels) {
-    pushUnique(pref);
+  // Só adiciona preferredModels como fallback offline quando o catálogo ao vivo NÃO foi carregado;
+  // quando hasCatalog=true, evita reinserir modelos descontinuados (ex.: 2.5-flash-lite 404) na fila!
+  if (!hasCatalog) {
+    for (const pref of preferredModels) {
+      pushUnique(pref);
+    }
   }
 
   const healthy: string[] = [];

@@ -69,6 +69,8 @@ export async function openAppBriefingForPrompt(
   }
 
   let analysis;
+  let designSystems = [];
+  let recommendedDesignSystemId = "auto";
   try {
     const res = await fetchJson("/projects/briefing/analyze", {
       method: "POST",
@@ -78,6 +80,11 @@ export async function openAppBriefingForPrompt(
       }
     });
     analysis = res?.analysis;
+    designSystems = Array.isArray(res?.designSystems) ? res.designSystems : [];
+    recommendedDesignSystemId =
+      typeof res?.recommendedDesignSystemId === "string" && res.recommendedDesignSystemId
+        ? res.recommendedDesignSystemId
+        : "auto";
   } catch {
     onSendPlainChat?.();
     return;
@@ -94,6 +101,12 @@ export async function openAppBriefingForPrompt(
     baseDir: analysis.baseDir || "",
     appKind: analysis.appKind || "web_app",
     theme: analysis.theme || "dark",
+    designSystemId: recommendedDesignSystemId || "auto",
+    grillQuestions: [],
+    grillAnswersById: new Map(),
+    grillOpen: false,
+    grillLoaded: false,
+    grillProvider: "",
     financial: Boolean(analysis.security?.financial),
     lgpd: Boolean(analysis.security?.lgpd),
     suppressedAsGame: Boolean(analysis.security?.suppressedAsGame),
@@ -259,6 +272,7 @@ export async function openAppBriefingForPrompt(
       draft.appKind,
       (val) => {
         draft.appKind = val;
+        syncDesignSystemSection();
       }
     ),
     makeChipGroup(
@@ -270,9 +284,320 @@ export async function openAppBriefingForPrompt(
       draft.theme,
       (val) => {
         draft.theme = val;
+        syncDesignSystemSection();
       }
     )
   );
+
+  // Linha 2b: Seletor de Design System (.md) com swatches reais ao vivo
+  const designSection = document.createElement("div");
+  designSection.className = "briefing-design-section";
+
+  const designTop = document.createElement("div");
+  designTop.className = "briefing-security-top";
+  const designLabel = document.createElement("label");
+  designLabel.setAttribute("for", "briefing-design-select");
+  designLabel.className = "briefing-field-label";
+  designLabel.textContent = `Estilo Visual · Design Systems (${designSystems.length} .md)`;
+  const designHint = document.createElement("span");
+  designHint.className = "briefing-security-hint";
+  designTop.append(designLabel, designHint);
+
+  const designRow = document.createElement("div");
+  designRow.className = "briefing-design-row";
+
+  const designSelect = document.createElement("select");
+  designSelect.id = "briefing-design-select";
+  designSelect.className = "briefing-design-select";
+
+  const baseOptions = [
+    { value: "auto", label: "Automático (casa com suas cores / Grill-me ou sorteia)" },
+    { value: "random", label: "Aleatório (sempre um estilo diferente)" }
+  ];
+  for (const item of baseOptions) {
+    const opt = document.createElement("option");
+    opt.value = item.value;
+    opt.textContent = item.label;
+    designSelect.appendChild(opt);
+  }
+  for (const ds of designSystems) {
+    const opt = document.createElement("option");
+    opt.value = ds.id;
+    opt.textContent = `${ds.name} (${ds.theme})`;
+    designSelect.appendChild(opt);
+  }
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "none";
+  noneOpt.textContent = "Padrão limpo (sem referência .md)";
+  designSelect.appendChild(noneOpt);
+  designSelect.value = draft.designSystemId;
+
+  const swatchesWrap = document.createElement("div");
+  swatchesWrap.className = "briefing-swatches";
+  swatchesWrap.setAttribute("aria-label", "Paleta de cores do estilo");
+
+  const matchDesignSystemClient = (text) => {
+    const norm = String(text || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    if (!norm || designSystems.length === 0) return null;
+    if (/\b(claro\s+minimalista|fundo\s+branco|tema\s+claro|light)\b/.test(norm)) {
+      const lightDs = designSystems.find((d) => d.theme === "light");
+      return lightDs ? lightDs.id : "auto";
+    }
+    const keywords = [
+      ["verde", /\b(verde|esmeralda|botanico|green|supabase)\b/],
+      ["roxo", /\b(roxo|violeta|purple|violet|iris)\b/],
+      ["azul", /\b(azul|blue|sky|ciano)\b/],
+      ["terminal", /\b(terminal|bloomberg|financeiro|preto\s+minimalista)\b/],
+      ["neon", /\b(neon|aurora|vidro|glass)\b/],
+      ["coral", /\b(coral|vermelho|laranja)\b/]
+    ]
+      .filter(([, re]) => re.test(norm))
+      .map(([tag]) => tag);
+    if (keywords.length === 0) return null;
+    let best = null;
+    let bestScore = 0;
+    for (const ds of designSystems) {
+      const score = keywords.filter((k) => Array.isArray(ds.tags) && ds.tags.includes(k)).length;
+      if (score > bestScore) {
+        bestScore = score;
+        best = ds.id;
+      }
+    }
+    return best;
+  };
+
+  const syncDesignSystemSection = () => {
+    designSection.hidden = draft.appKind === "api" || designSystems.length === 0;
+    if (designSection.hidden) return;
+
+    const selected = designSystems.find((d) => d.id === draft.designSystemId) || null;
+    swatchesWrap.replaceChildren();
+    if (selected) {
+      designHint.textContent = selected.tagline
+        ? selected.tagline.slice(0, 88)
+        : `Tema ${selected.theme} · destaque ${selected.accentHex}`;
+      const list = Array.isArray(selected.swatches) && selected.swatches.length > 0
+        ? selected.swatches.slice(0, 5)
+        : [
+            { name: "Fundo", hex: selected.backgroundHex },
+            { name: "Destaque", hex: selected.accentHex }
+          ];
+      for (const sw of list) {
+        const dot = document.createElement("span");
+        dot.className = "briefing-swatch-dot";
+        dot.style.backgroundColor = sw.hex;
+        dot.title = `${sw.name}: ${sw.hex}`;
+        swatchesWrap.appendChild(dot);
+      }
+    } else if (draft.designSystemId === "random") {
+      designHint.textContent = "Sorteia um Design System diferente a cada projeto criado";
+      for (const ds of designSystems.slice(0, 5)) {
+        const dot = document.createElement("span");
+        dot.className = "briefing-swatch-dot";
+        dot.style.backgroundColor = ds.accentHex;
+        dot.title = `${ds.name}: ${ds.accentHex}`;
+        swatchesWrap.appendChild(dot);
+      }
+    } else if (draft.designSystemId === "none") {
+      designHint.textContent = "Usa apenas o tema visual básico selecionado acima";
+    } else if (draft.theme === "light" && !designSystems.some((d) => d.theme === "light")) {
+      designHint.textContent = "Tema claro limpo (nenhum .md puramente claro na pasta ainda)";
+    } else {
+      designHint.textContent = "Casa automaticamente com as cores do prompt/Grill-me ou sorteia";
+      for (const ds of designSystems.slice(0, 5)) {
+        const dot = document.createElement("span");
+        dot.className = "briefing-swatch-dot";
+        dot.style.backgroundColor = ds.accentHex;
+        dot.title = `${ds.name}: ${ds.accentHex}`;
+        swatchesWrap.appendChild(dot);
+      }
+    }
+  };
+
+  designSelect.addEventListener("change", () => {
+    draft.designSystemId = designSelect.value;
+    syncDesignSystemSection();
+  });
+
+  designRow.append(designSelect, swatchesWrap);
+  designSection.append(designTop, designRow);
+  syncDesignSystemSection();
+
+  // Linha 2c: Painel opcional de Grill-me (3 a 10 perguntas adaptativas via Groq)
+  const grillSection = document.createElement("div");
+  grillSection.className = "briefing-grill-section";
+  grillSection.hidden = true;
+
+  const grillHeader = document.createElement("div");
+  grillHeader.className = "briefing-grill-header";
+  const grillTitle = document.createElement("span");
+  grillTitle.className = "briefing-field-label";
+  grillTitle.textContent = "GRILL-ME // REFINAMENTO OPCIONAL";
+  const grillHideBtn = document.createElement("button");
+  grillHideBtn.type = "button";
+  grillHideBtn.className = "btn-ghost-pill briefing-grill-hide-btn";
+  grillHideBtn.textContent = "Recolher";
+  grillHeader.append(grillTitle, grillHideBtn);
+
+  const grillList = document.createElement("div");
+  grillList.className = "briefing-grill-list";
+  grillSection.append(grillHeader, grillList);
+
+  const grillToggleBtn = document.createElement("button");
+  grillToggleBtn.type = "button";
+  grillToggleBtn.className = "btn-secondary briefing-grill-btn";
+  grillToggleBtn.textContent = "Refinar ideia (Grill-me)";
+  grillToggleBtn.title = "Opcional: responda de 3 a 10 perguntas rápidas (via Groq) para personalizar recursos e cores";
+
+  const syncGrillButtonLabel = () => {
+    const total = draft.grillQuestions.length;
+    const answered = Array.from(draft.grillAnswersById.values()).filter((v) => v.trim()).length;
+    if (total > 0) {
+      grillToggleBtn.textContent =
+        answered > 0
+          ? `Grill-me (${answered}/${total} respondidas)`
+          : `Grill-me (${total} perguntas)`;
+      grillToggleBtn.classList.toggle("is-active", answered > 0);
+    } else {
+      grillToggleBtn.textContent = "Refinar ideia (Grill-me)";
+      grillToggleBtn.classList.remove("is-active");
+    }
+  };
+
+  const renderGrillQuestions = () => {
+    grillList.replaceChildren();
+    const provLabel =
+      draft.grillProvider === "groq"
+        ? "via Groq"
+        : draft.grillProvider === "local_fallback"
+          ? "local"
+          : draft.grillProvider
+            ? `via ${draft.grillProvider}`
+            : "";
+    grillTitle.textContent = `GRILL-ME // ${draft.grillQuestions.length} PERGUNTA${
+      draft.grillQuestions.length === 1 ? "" : "S"
+    } RÁPIDA${draft.grillQuestions.length === 1 ? "" : "S"}${provLabel ? ` (${provLabel})` : ""}`;
+
+    draft.grillQuestions.forEach((q, idx) => {
+      const qCard = document.createElement("div");
+      qCard.className = "briefing-grill-item";
+
+      const qText = document.createElement("div");
+      qText.className = "briefing-grill-q";
+      qText.textContent = `${idx + 1}. ${q.question}`;
+
+      const optsRow = document.createElement("div");
+      optsRow.className = "briefing-chips";
+
+      const customInput = document.createElement("input");
+      customInput.type = "text";
+      customInput.className = "briefing-grill-input";
+      customInput.placeholder = "Ou digite sua resposta curta (opcional)...";
+      customInput.maxLength = 220;
+
+      const optButtons = [];
+      const applyAnswer = (val, fromCustom = false) => {
+        const clean = String(val || "").trim();
+        if (clean) {
+          draft.grillAnswersById.set(q.id, clean);
+        } else {
+          draft.grillAnswersById.delete(q.id);
+        }
+        for (const btn of optButtons) {
+          const isMatch = !fromCustom && btn.dataset.optValue === clean;
+          btn.classList.toggle("is-active", isMatch);
+          btn.setAttribute("aria-pressed", String(isMatch));
+        }
+        if (q.category === "visual" && clean) {
+          if (/\b(claro\s+minimalista|fundo\s+branco|tema\s+claro)\b/i.test(clean)) {
+            draft.theme = "light";
+          }
+          const matchedId = matchDesignSystemClient(clean);
+          if (matchedId) {
+            draft.designSystemId = matchedId;
+            designSelect.value = matchedId;
+            syncDesignSystemSection();
+          }
+        }
+        syncGrillButtonLabel();
+      };
+
+      const existingVal = draft.grillAnswersById.get(q.id) || "";
+      for (const optLabel of q.options || []) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `briefing-chip${existingVal === optLabel ? " is-active" : ""}`;
+        btn.dataset.optValue = optLabel;
+        btn.textContent = optLabel;
+        btn.setAttribute("aria-pressed", String(existingVal === optLabel));
+        btn.addEventListener("click", () => {
+          customInput.value = "";
+          if (draft.grillAnswersById.get(q.id) === optLabel) {
+            applyAnswer("");
+          } else {
+            applyAnswer(optLabel, false);
+          }
+        });
+        optButtons.push(btn);
+        optsRow.appendChild(btn);
+      }
+
+      if (existingVal && !(q.options || []).includes(existingVal)) {
+        customInput.value = existingVal;
+      }
+      customInput.addEventListener("input", () => {
+        applyAnswer(customInput.value, true);
+      });
+
+      qCard.append(qText, optsRow, customInput);
+      grillList.appendChild(qCard);
+    });
+
+    syncGrillButtonLabel();
+  };
+
+  grillHideBtn.addEventListener("click", () => {
+    draft.grillOpen = false;
+    grillSection.hidden = true;
+  });
+
+  grillToggleBtn.addEventListener("click", async () => {
+    if (draft.grillLoaded) {
+      draft.grillOpen = !draft.grillOpen;
+      grillSection.hidden = !draft.grillOpen;
+      return;
+    }
+    grillToggleBtn.disabled = true;
+    grillToggleBtn.textContent = "Gerando perguntas...";
+    feedbackEl.textContent = "Gerando perguntas rápidas (Grill-me)...";
+    try {
+      const res = await fetchJson("/projects/briefing/grill", {
+        method: "POST",
+        body: {
+          prompt: draft.rawPrompt,
+          appKind: draft.appKind,
+          theme: draft.theme
+        }
+      });
+      draft.grillQuestions = Array.isArray(res?.questions) ? res.questions : [];
+      draft.grillProvider = typeof res?.provider === "string" ? res.provider : "";
+      draft.grillLoaded = true;
+      draft.grillOpen = true;
+      grillSection.hidden = false;
+      renderGrillQuestions();
+      feedbackEl.textContent =
+        "Responda só o que quiser (tudo é opcional) e clique em Construir Projeto Agora.";
+    } catch (err) {
+      feedbackEl.textContent =
+        err instanceof Error ? err.message : "Não foi possível gerar perguntas do Grill-me.";
+    } finally {
+      grillToggleBtn.disabled = false;
+      syncGrillButtonLabel();
+    }
+  });
 
   // Linha 3: Boas práticas de Segurança & Privacidade (OWASP / Financeiro / LGPD)
   const securitySection = document.createElement("div");
@@ -382,7 +707,16 @@ export async function openAppBriefingForPrompt(
     confirmBtn.disabled = true;
     plainBtn.disabled = true;
     pickBtn.disabled = true;
+    grillToggleBtn.disabled = true;
     feedbackEl.textContent = "Criando pasta e preparando especificação técnica...";
+
+    const grillAnswers = draft.grillQuestions
+      .map((q) => ({
+        id: q.id,
+        question: q.question,
+        answer: (draft.grillAnswersById.get(q.id) || "").trim()
+      }))
+      .filter((item) => item.answer.length > 0);
 
     try {
       const prepared = await fetchJson("/projects/briefing/prepare", {
@@ -393,6 +727,8 @@ export async function openAppBriefingForPrompt(
           baseDir: draft.baseDir,
           appKind: draft.appKind,
           theme: draft.theme,
+          designSystemId: draft.designSystemId,
+          grillAnswers,
           security: {
             financial: draft.financial,
             lgpd: draft.lgpd
@@ -426,11 +762,16 @@ export async function openAppBriefingForPrompt(
       confirmBtn.disabled = false;
       plainBtn.disabled = false;
       pickBtn.disabled = false;
+      grillToggleBtn.disabled = false;
     }
   });
 
-  footer.append(feedbackEl, confirmBtn);
-  card.append(header, folderRow, optionsRow, securitySection, footer);
+  const footerActions = document.createElement("div");
+  footerActions.className = "briefing-footer-actions";
+  footerActions.append(grillToggleBtn, confirmBtn);
+
+  footer.append(feedbackEl, footerActions);
+  card.append(header, folderRow, optionsRow, designSection, grillSection, securitySection, footer);
   nameInput.focus();
   nameInput.select();
 }

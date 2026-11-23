@@ -83,7 +83,13 @@ function computeQuotaHealth(status: ProviderStatus): QuotaHealth {
       ap.cooledDown.length >= ap.activeModels.length
   );
 
-  const healthy = remainingRatio >= QUOTA_HEALTHY_MIN_RATIO && !allModelsCooledDown;
+  // OpenRouter gratuito tem teto curto (45 req/dia): preserva acima de 20% quando há folga em outras IAs.
+  const minHealthyRatio =
+    status.id === "openrouter" && usage.requestsDailyCap <= 60
+      ? 0.2
+      : QUOTA_HEALTHY_MIN_RATIO;
+
+  const healthy = remainingRatio >= minHealthyRatio && !allModelsCooledDown;
 
   return {
     platform: status.id,
@@ -297,8 +303,8 @@ export function resolveAutoRoute(
   }
 
   // 5. Contexto extenso (prompt longo, arquivo grande ou projeto volumoso)
-  //    Prioriza NVIDIA NIM quando ativa para preservar a cota do Gemini para PDFs/imagens;
-  //    se o Gemini estiver abaixo de 45% e OpenRouter saudável (>30%), alterna para OpenRouter.
+  //    Mantém Gemini em #1 quando saudável (>= 20% cota); NVIDIA NIM entra apenas como reserva
+  //    de emergência quando Gemini estiver em 503/cooldown ou com cota baixa (< 20%).
   const isLongContext =
     prompt.length >= 650 ||
     attachedTextChars >= 3_500 ||
@@ -306,24 +312,27 @@ export function resolveAutoRoute(
     (input.webSources?.length ?? 0) >= 3;
 
   if (isLongContext) {
-    const geminiRatio = healthMap.get("gemini")?.remainingRatio ?? 0;
+    const geminiHealth = healthMap.get("gemini");
+    const geminiRatio = geminiHealth?.remainingRatio ?? 0;
     const openRouterRatio = healthMap.get("openrouter")?.remainingRatio ?? 0;
     const longPriority: AutoPlatform[] =
-      geminiRatio < 0.45 && openRouterRatio >= 0.3
+      !geminiHealth?.healthy || geminiRatio < 0.2
         ? ["nvidia", "openrouter", "gemini", "groq"]
-        : ["nvidia", "gemini", "openrouter", "groq"];
+        : geminiRatio < 0.45 && openRouterRatio >= 0.3
+          ? ["openrouter", "gemini", "nvidia", "groq"]
+          : ["gemini", "nvidia", "openrouter", "groq"];
     const { chosen, skippedForQuota } = pickFromPriority(
       longPriority,
       healthMap,
       1,
       1
     );
-    const fellBack = chosen[0] !== "nvidia" && chosen[0] !== "gemini";
+    const fellBack = chosen[0] !== "gemini";
     return {
       participants: chosen,
       reason:
         chosen[0] === "nvidia"
-          ? "contexto extenso (NVIDIA NIM · Gemini preservado)"
+          ? "contexto extenso (NVIDIA NIM · reserva)"
           : fellBack
             ? "contexto longo (cota preservada)"
             : "contexto extenso",
@@ -335,9 +344,9 @@ export function resolveAutoRoute(
     };
   }
 
-  // 6. Padrão: pergunta direta / rápida -> Groq (ultrarrápido e 1.000 RPD), com NVIDIA antes do Gemini
+  // 6. Padrão: pergunta direta / rápida -> Groq (ultrarrápido e 1.000 RPD), Gemini em #2, NVIDIA só reserva
   const { chosen, skippedForQuota } = pickFromPriority(
-    ["groq", "nvidia", "gemini", "openrouter"],
+    ["groq", "gemini", "nvidia", "openrouter"],
     healthMap,
     1,
     1
@@ -408,15 +417,17 @@ export function resolveAutoComposerStrategy(
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase();
+    // Em projeto já existente (isContinuation=true), NUNCA dispara Debate só por texto longo (>=220 chars):
+    // mantém edição direta focada nos arquivos reais da pasta (preservando contrato frontend/backend),
+    // salvo quando o usuário pedir explicitamente "crie do zero / projeto completo".
     const isMajorBuild =
       !input.isContinuation ||
-      input.prompt.trim().length >= 220 ||
       FULL_PROJECT_BUILD_RE.test(normPrompt);
 
     if (isMajorBuild) {
       // Construção completa de app/site na pasta:
-      // prioriza NVIDIA NIM + Groq + OpenRouter quando NVIDIA está ativa (poupando 100% do Gemini!),
-      // mantendo Gemini + Groq + OpenRouter automaticamente quando NVIDIA não está configurada.
+      // Gemini volta para #1 (Gemini + Groq + OpenRouter) para código completo sem truncamento;
+      // NVIDIA NIM entra automaticamente apenas como reserva de emergência (503 / cota baixa).
       const healthMap = new Map<AutoPlatform, QuotaHealth>();
       for (const st of providerStatuses) {
         healthMap.set(st.id, computeQuotaHealth(st));
@@ -433,9 +444,7 @@ export function resolveAutoComposerStrategy(
           });
         }
       }
-      const buildOrder: AutoPlatform[] = healthMap.get("nvidia")?.healthy
-        ? ["nvidia", "groq", "openrouter", "gemini"]
-        : ["gemini", "groq", "openrouter", "nvidia"];
+      const buildOrder: AutoPlatform[] = ["gemini", "groq", "openrouter", "nvidia"];
       const { chosen, skippedForQuota } = pickFromPriority(
         buildOrder,
         healthMap,
@@ -450,10 +459,8 @@ export function resolveAutoComposerStrategy(
           category: "debate",
           reason:
             skippedForQuota.length > 0
-              ? "construção completa em Debate (cota/saúde preservada)"
-              : chosen.includes("nvidia")
-                ? "construção completa (NVIDIA NIM + Conselho · Gemini preservado)"
-                : "construção completa (Debate + Síntese)",
+              ? "construção completa em Debate (reserva automática ativa)"
+              : "construção completa (Debate + Síntese)",
           ...(skippedForQuota.length > 0 ? { skippedForQuota } : {})
         }
       };

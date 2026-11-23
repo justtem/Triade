@@ -766,24 +766,28 @@
             <!-- RODAPÉ COMPACTO DA SIDEBAR -->
             <div class="sidebar-footer">
                 <div class="connection-indicator" id="server-indicator">
-                    <span class="server-icon" aria-hidden="true">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-                            <line x1="6" y1="6" x2="6.01" y2="6"></line>
-                            <line x1="6" y1="18" x2="6.01" y2="18"></line>
-                        </svg>
-                    </span>
-                    <div class="connection-meta">
-                        <small id="server-status">Verificando conexão...</small>
+                    <div class="connection-row-top">
+                        <span class="server-icon" aria-hidden="true">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                                <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                                <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                            </svg>
+                        </span>
+                        <div class="connection-meta">
+                            <small id="server-status">Verificando conexão...</small>
+                        </div>
+                        <span class="system-clock" id="system-clock">--:--:--</span>
                     </div>
-                    <button type="button" class="btn-lock-remote" id="btn-lock-vault" title="Trancar cofre local" hidden>
-                        Trancar Cofre
-                    </button>
-                    <button type="button" class="btn-lock-remote" id="btn-lock-session" title="Bloquear acesso neste dispositivo" hidden>
-                        Bloquear
-                    </button>
-                    <span class="system-clock" id="system-clock">--:--:--</span>
+                    <div class="connection-row-actions">
+                        <button type="button" class="btn-lock-remote" id="btn-lock-vault" title="Trancar cofre local" hidden>
+                            Trancar Cofre
+                        </button>
+                        <button type="button" class="btn-lock-remote" id="btn-lock-session" title="Bloquear acesso neste dispositivo" hidden>
+                            Bloquear
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -831,6 +835,8 @@
                     </button>
 
                     <div class="topbar-title-group">
+                        <span class="topbar-brand-prefix" aria-hidden="true">AI Council</span>
+                        <span class="topbar-brand-slash" aria-hidden="true">/</span>
                         <span class="breadcrumb" id="topbar-breadcrumb" hidden>CHAT</span>
                         <h2 id="topbar-title">Nova Conversa</h2>
                         <p id="topbar-meta" hidden></p>
@@ -872,31 +878,34 @@
             <div class="mobile-ai-strip" id="mobile-ai-strip" aria-label="Status rápido das IAs"></div>
 
             <!-- =================================================
-                 VIEW 1: CHAT CENTRAL (PADRÃO AO ABRIR O SITE)
+                 VIEW 1: CHAT CENTRAL (ESTILO EDITORIAL MINIMALISTA)
             ================================================== -->
-            <section class="stage-view active" id="view-chat" data-view="chat">
+            <section class="stage-view active is-zero-mode" id="view-chat" data-view="chat">
 
                 <!-- ÁREA DE MENSAGENS ROLÁVEL -->
                 <div class="chat-scroll-area" id="chat-scroll-area">
 
-                    <!-- ZERO STATE MINIMALISTA ERASER: DISPLAY HEADLINE + FLOATING PILLS DE TEMPLATES -->
+                    <!-- ZERO STATE EDITORIAL MINIMALISTA: BADGE + HEADLINE SERIF + PALETA ERASER -->
                     <div class="chat-zero-state" id="chat-zero-state">
                         <div class="zero-state-inner">
-                            <h3 class="zero-state-heading" id="zero-parallax-heading" aria-label="Qual problema analisar hoje?">
-                                <span class="word-iris parallax-word" data-parallax-depth="1.1">QUAL</span>
-                                <span class="word-sky parallax-word" data-parallax-depth="-0.8">PROBLEMA</span>
-                                <span class="word-saffron parallax-word" data-parallax-depth="1.2">ANALISAR</span>
-                                <span class="word-rose parallax-word" data-parallax-depth="-0.9">HOJE?</span>
+                            <div class="zero-hero-eyebrow">
+                                <button type="button" class="zero-mode-pill" id="zero-hero-mode-badge" title="Modo ativo — clique para voltar ao Automático">Auto</button>
+                                <span class="zero-eraser-dots" aria-hidden="true">
+                                    <span class="edot edot-iris"></span>
+                                    <span class="edot edot-sky"></span>
+                                    <span class="edot edot-saffron"></span>
+                                    <span class="edot edot-rose"></span>
+                                </span>
+                                <span class="zero-status-copy" id="zero-hero-status-copy">Roteamento inteligente · Design Systems integrados</span>
+                            </div>
+
+                            <h3 class="zero-state-heading" id="zero-parallax-heading">
+                                Traga sua <span class="zero-word-sky">ideia</span> para o <span class="zero-heading-accent">Conselho</span>
                             </h3>
 
-                            <div class="zero-goals-grid" id="zero-goals-grid" role="list" aria-label="Começar por objetivo"></div>
-
-                            <div class="zero-templates-strip" id="zero-horizontal-showcase">
-                                <div class="zero-pills-row" id="zero-h-track" role="list" aria-label="Templates rápidos"></div>
-                                <button type="button" class="zero-manage-tpl-link" id="zero-manage-templates-btn" title="Gerenciar biblioteca de templates">
-                                    Gerenciar templates
-                                </button>
-                            </div>
+                            <p class="zero-state-subtitle">
+                                Converse, pesquise na <span class="zero-sub-sky">web</span> ou crie <span class="zero-sub-saffron">aplicativos completos</span> com <span class="zero-sub-rose">Design Systems</span> prontos — o AI Council escolhe automaticamente entre Gemini, Groq, OpenRouter e NVIDIA NIM no seu computador.
+                            </p>
                         </div>
                     </div>
 
@@ -1025,41 +1034,104 @@
                             <div class="slash-templates-list" id="slash-templates-list"></div>
                         </div>
 
-                        <!-- CAMPO PRINCIPAL DE TEXTO (AUTO-EXPANSÍVEL) -->
-                        <div class="composer-input-wrap">
-                            <label for="debate-topic" class="sr-only">Mensagem</label>
-                            <textarea
-                                id="debate-topic"
-                                rows="2"
-                                placeholder="Pergunte algo ou digite / para templates... (Enter envia, Shift + Enter quebra linha)"
-                                required
-                            ></textarea>
-                        </div>
-
-                        <!-- BARRA FIXA DE 4 MODOS EM 1 CLIQUE (AUTO PADRÃO + OVERRIDES MANUAIS) -->
-                        <div class="composer-modes-strip" id="composer-modes-strip">
-                            <div class="composer-mode-pills" id="composer-mode-pills" role="group" aria-label="Modo de atuação das IAs">
-                                <button type="button" class="composer-mode-btn is-active" data-composer-mode="auto" aria-pressed="true" title="Modo Automático: escolhe sozinho 1 IA rápida para perguntas simples, Conselho para comparações e Debate + Construtor para criar ou editar apps na pasta">
-                                    <span>Auto</span>
-                                </button>
-                                <button type="button" class="composer-mode-btn" data-composer-mode="quick" aria-pressed="false" title="1 IA rápida em resposta direta (em projetos com pasta, escreve e testa automaticamente quando você pedir código)">
-                                    <span>Chat Rápido</span>
-                                </button>
-                                <button type="button" class="composer-mode-btn" data-composer-mode="council" aria-pressed="false" title="Trio em paralelo para comparar opiniões sem sobrescrever arquivos automaticamente">
-                                    <span>Conselho</span>
-                                </button>
-                                <button type="button" class="composer-mode-btn" data-composer-mode="debate" aria-pressed="false" title="Trio debate entre si e fecha uma síntese única (em projetos com pasta, constrói e testa automaticamente quando você pedir código)">
-                                    <span>Debate</span>
-                                </button>
+                        <!-- CAMPO PRINCIPAL EM PÍLULA MINIMALISTA (INPUT + LIMPAR + VOZ + ENVIAR ↑) -->
+                        <div class="composer-pill-bar">
+                            <div class="composer-input-wrap">
+                                <label for="debate-topic" class="sr-only">Mensagem</label>
+                                <textarea
+                                    id="debate-topic"
+                                    rows="1"
+                                    placeholder="Pergunte algo, descreva um app ou digite /grill para refinar uma ideia..."
+                                    required
+                                ></textarea>
                             </div>
 
-                            <!-- SELETOR INLINE DE 1 IA (VISÍVEL SOMENTE NO MODO CHAT RÁPIDO) -->
+                            <div class="composer-pill-actions">
+                                <span class="composer-intent-chip" id="composer-intent-chip" hidden></span>
+                                <button
+                                    type="button"
+                                    class="composer-clear-btn"
+                                    id="composer-clear-btn"
+                                    aria-label="Limpar mensagem"
+                                    title="Limpar texto"
+                                    hidden
+                                >×</button>
+                                <button
+                                    type="button"
+                                    class="composer-voice-btn"
+                                    id="composer-voice-btn"
+                                    aria-label="Segure para gravar mensagem de voz"
+                                    aria-pressed="false"
+                                    title="Segure para gravar e solte para transcrever e enviar (Groq Whisper)"
+                                >
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+                                        <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+                                        <line x1="12" y1="18" x2="12" y2="22"></line>
+                                        <line x1="8" y1="22" x2="16" y2="22"></line>
+                                    </svg>
+                                </button>
+                                <button type="submit" class="composer-send-circle" id="composer-submit-btn" aria-label="Enviar mensagem" title="Enviar mensagem">
+                                    <span class="sr-only">Enviar</span>
+                                    <span class="cta-arrow" aria-hidden="true">↑</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <span id="debate-form-feedback" class="form-feedback composer-inline-feedback" role="status" aria-live="polite"></span>
+
+                        <!-- SELETOR INLINE DE 1 IA (VISÍVEL SOMENTE QUANDO CHAT RÁPIDO ESTÁ ATIVO) -->
+                        <div class="composer-modes-strip" id="composer-modes-strip" hidden>
+                            <div class="composer-mode-pills" id="composer-mode-pills" role="group" aria-label="Modo de atuação das IAs" hidden>
+                                <button type="button" class="composer-mode-btn is-active" data-composer-mode="auto" aria-pressed="true"><span>Auto</span></button>
+                                <button type="button" class="composer-mode-btn" data-composer-mode="quick" aria-pressed="false"><span>Chat Rápido</span></button>
+                                <button type="button" class="composer-mode-btn" data-composer-mode="council" aria-pressed="false"><span>Conselho</span></button>
+                                <button type="button" class="composer-mode-btn" data-composer-mode="debate" aria-pressed="false"><span>Debate</span></button>
+                            </div>
+
                             <div class="composer-quick-ai-picker" id="composer-quick-ai-picker" role="group" aria-label="Escolher IA do Chat Rápido" hidden>
                                 <button type="button" class="quick-ai-chip is-active" data-quick-ai="gemini" aria-pressed="true">Gemini</button>
                                 <button type="button" class="quick-ai-chip" data-quick-ai="groq" aria-pressed="false">Groq</button>
                                 <button type="button" class="quick-ai-chip" data-quick-ai="openrouter" aria-pressed="false">OpenRouter</button>
                                 <button type="button" class="quick-ai-chip" data-quick-ai="nvidia" aria-pressed="false">NVIDIA NIM</button>
                             </div>
+                        </div>
+
+                        <!-- ATALHOS EM SETAS (↳) PARA AS FUNCIONALIDADES EXISTENTES -->
+                        <div class="composer-arrow-shortcuts" id="composer-arrow-shortcuts" role="navigation" aria-label="Atalhos rápidos de funcionalidades">
+                            <button type="button" class="arrow-shortcut-btn is-zero-only" data-arrow-action="new-app" title="Criar um novo app ou site com Design System e Grill-me">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span>Criar novo app</span>
+                            </button>
+                            <button type="button" class="arrow-shortcut-btn" data-arrow-action="attach" title="Anexar imagem, PDF ou código (ou Ctrl+V)">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span>Anexar arquivo</span>
+                            </button>
+                            <button type="button" class="arrow-shortcut-btn is-web-active" data-arrow-action="web" aria-pressed="true" title="Alternar busca automática na Web">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span class="arrow-shortcut-label">Busca na Web</span>
+                                <span class="arrow-status-dot" aria-hidden="true"></span>
+                            </button>
+                            <button type="button" class="arrow-shortcut-btn" data-arrow-action="templates" title="Abrir biblioteca de templates (ou digite /)">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span>Templates (/)</span>
+                            </button>
+                            <button type="button" class="arrow-shortcut-btn" data-arrow-action="mode-quick" aria-pressed="false" title="1 IA rápida em resposta direta (clique de novo para Auto)">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span>Chat Rápido</span>
+                            </button>
+                            <button type="button" class="arrow-shortcut-btn" data-arrow-action="mode-council" aria-pressed="false" title="Comparar respostas paralelas das IAs (clique de novo para Auto)">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span>Conselho (3 IAs)</span>
+                            </button>
+                            <button type="button" class="arrow-shortcut-btn" data-arrow-action="mode-debate" aria-pressed="false" title="Debate entre IAs com síntese final (clique de novo para Auto)">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span>Modo Debate</span>
+                            </button>
+                            <button type="button" class="arrow-shortcut-btn" data-arrow-action="advanced" aria-expanded="false" aria-controls="composer-config-popover" title="Ajustes avançados: IAs manuais, Prompt MD, Veredito, Rodadas e Instruções">
+                                <span class="arrow-glyph" aria-hidden="true">↳</span>
+                                <span id="arrow-advanced-label">Opções avançadas</span>
+                            </button>
                         </div>
 
                         <!-- POPOVER AVANÇADO DO COMPOSER (AJUSTES FINOS SOB DEMANDA) -->
@@ -1176,61 +1248,23 @@
                             </div>
                         </div>
 
-                        <!-- BARRA ESSENCIAL ULTRA-LIMPA -->
-                        <div class="composer-footer">
+                        <!-- CONTROLES LEGADOS OCULTOS (PRESERVAM 100% DOS LISTENERS EXISTENTES) -->
+                        <div class="composer-footer" hidden>
                             <div class="composer-controls">
                                 <button type="button" class="btn-ghost-pill composer-tool-btn" id="composer-attach-btn" title="Anexar imagem, PDF ou código (ou cole print com Ctrl+V)">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-                                    </svg>
                                     <span>Anexar</span>
                                 </button>
 
                                 <button type="button" class="btn-ghost-pill btn-web-toggle is-web-active" id="composer-web-btn" aria-pressed="true" title="Busca na Web e leitura automática de links (Auto / Off)">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <circle cx="12" cy="12" r="9"></circle>
-                                        <line x1="3" y1="12" x2="21" y2="12"></line>
-                                        <path d="M12 3a14 14 0 0 1 0 18"></path>
-                                        <path d="M12 3a14 14 0 0 0 0 18"></path>
-                                    </svg>
                                     <span>Web</span>
                                 </button>
 
                                 <button type="button" class="btn-ghost-pill composer-tool-btn" id="composer-templates-quick-btn" title="Abrir biblioteca de templates (ou digite / no chat)">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                                        <line x1="3" y1="9" x2="21" y2="9"></line>
-                                        <line x1="9" y1="21" x2="9" y2="9"></line>
-                                    </svg>
                                     <span>Templates</span>
                                 </button>
 
-                                <button type="button" class="btn-ghost-pill composer-config-trigger" id="composer-config-btn" aria-expanded="false" aria-controls="composer-config-popover" title="Ajustes avançados: IAs manuais, formato, rodadas, veredito automático e instruções">
+                                <button type="button" class="btn-ghost-pill composer-config-trigger" id="composer-config-btn" aria-expanded="false" aria-controls="composer-config-popover" title="Ajustes avançados">
                                     <span id="composer-config-summary">Avançado</span>
-                                    <span class="topbar-ai-caret" aria-hidden="true">▾</span>
-                                </button>
-                            </div>
-
-                            <div class="composer-submit-group">
-                                <span id="debate-form-feedback" class="form-feedback" role="status" aria-live="polite"></span>
-                                <button
-                                    type="button"
-                                    class="btn-secondary composer-voice-btn"
-                                    id="composer-voice-btn"
-                                    aria-label="Segure para gravar mensagem de voz"
-                                    aria-pressed="false"
-                                    title="Segure para gravar e solte para transcrever e enviar (Groq Whisper)"
-                                >
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
-                                        <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
-                                        <line x1="12" y1="18" x2="12" y2="22"></line>
-                                        <line x1="8" y1="22" x2="16" y2="22"></line>
-                                    </svg>
-                                </button>
-                                <button type="submit" class="btn-primary composer-send-btn" id="composer-submit-btn">
-                                    <span>Enviar</span>
-                                    <span class="cta-arrow" aria-hidden="true">→</span>
                                 </button>
                             </div>
                         </div>
@@ -1834,6 +1868,15 @@
                                     </svg>
                                 </span>
                                 <h4>NVIDIA NIM</h4>
+                                <button
+                                    type="button"
+                                    class="ai-info-alert-btn"
+                                    id="nvidia-delay-info-btn"
+                                    aria-label="Por que a NVIDIA NIM pode demorar mais?"
+                                    aria-expanded="false"
+                                    aria-controls="nvidia-delay-note"
+                                    title="Modelo pesado de raciocínio (550B): pensa em detalhes antes de responder e pode levar de 25s a ~2 min para entregar código completo sem cortes."
+                                >!</button>
                             </div>
                             <span class="ai-exec-badge neutral" data-ai-badge="nvidia" data-live-timer-platform="nvidia">Opcional</span>
                         </div>
@@ -1843,6 +1886,11 @@
                                 <div class="ai-quota-fill" data-ai-quota-fill="nvidia" style="width: 0%"></div>
                             </div>
                             <span class="ai-quota-mono" data-ai-quota-value="nvidia">--/-- req</span>
+                        </div>
+
+                        <div class="ai-delay-note" id="nvidia-delay-note" hidden role="note">
+                            <strong>Por que pode demorar mais?</strong>
+                            <p id="nvidia-delay-note-text">A NVIDIA NIM atua como reserva usando modelos pesados de raciocínio (550B): pensa em detalhes antes de escrever e tem janela ampliada (até 16k tokens / 3 min) para não cortar arquivos no meio.</p>
                         </div>
                     </article>
 

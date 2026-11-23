@@ -17,6 +17,15 @@ import {
   type AppBriefingTheme
 } from "../projects/app-briefing.js";
 import {
+  generateBriefingGrillQuestions,
+  type GrillAnswer
+} from "../projects/app-grill-me.js";
+import {
+  listDesignSystems,
+  selectDesignSystem,
+  toPublicDesignSystemMeta
+} from "../projects/design-systems.js";
+import {
   getProjectDevServerStatus,
   startProjectDevServer,
   stopProjectDevServer
@@ -284,7 +293,32 @@ export async function handleProjectRoutes(
     return true;
   }
 
-  // Briefing 1-frase: analisa ideia em 0ms e sugere pasta + perfis de segurança (PC local apenas)
+  // Catálogo local de Design Systems (.md) — leitura leve de metadados (PC local apenas)
+  if (request.method === "GET" && url.pathname === "/projects/design-systems") {
+    if (!auth.isAuthorizedLocalClient(request)) {
+      sendJson(response, 401, { error: "Não autorizado." }, origin);
+      return true;
+    }
+    if (!auth.isDirectLocalPCRequest(request)) {
+      sendJson(
+        response,
+        403,
+        { error: "Catálogo de Design Systems disponível apenas no PC local." },
+        origin
+      );
+      return true;
+    }
+    const catalog = await listDesignSystems();
+    sendJson(
+      response,
+      200,
+      { designSystems: catalog.map(toPublicDesignSystemMeta) },
+      origin
+    );
+    return true;
+  }
+
+  // Briefing 1-frase: analisa ideia em 0ms e sugere pasta + perfis de segurança + Design Systems (PC local apenas)
   if (request.method === "POST" && url.pathname === "/projects/briefing/analyze") {
     if (!auth.isAuthorizedLocalClient(request)) {
       sendJson(response, 401, { error: "Não autorizado." }, origin);
@@ -320,8 +354,28 @@ export async function handleProjectRoutes(
         : undefined;
 
     try {
-      const analysis = await analyzeAppBriefing(prompt, { baseDir });
-      sendJson(response, 200, { analysis }, origin);
+      const [analysis, catalog] = await Promise.all([
+        analyzeAppBriefing(prompt, { baseDir }),
+        listDesignSystems()
+      ]);
+      const probeMatch = selectDesignSystem(catalog, {
+        modeOrId: "auto",
+        theme: analysis.theme,
+        queryText: prompt
+      });
+      sendJson(
+        response,
+        200,
+        {
+          analysis,
+          designSystems: catalog.map(toPublicDesignSystemMeta),
+          recommendedDesignSystemId:
+            probeMatch.reason === "matched" && probeMatch.entry
+              ? probeMatch.entry.id
+              : "auto"
+        },
+        origin
+      );
     } catch (error) {
       sendJson(
         response,
@@ -338,7 +392,74 @@ export async function handleProjectRoutes(
     return true;
   }
 
-  // Briefing 1-frase: cria subpasta + Projeto com regras OWASP/LGPD e devolve prompt expandido (PC local apenas)
+  // Grill-me opcional: gera de 3 a 10 perguntas adaptativas via Groq (sem gastar Gemini/OpenRouter)
+  if (request.method === "POST" && url.pathname === "/projects/briefing/grill") {
+    if (!auth.isAuthorizedLocalClient(request)) {
+      sendJson(response, 401, { error: "Não autorizado." }, origin);
+      return true;
+    }
+
+    if (!auth.isDirectLocalPCRequest(request)) {
+      sendJson(
+        response,
+        403,
+        {
+          error:
+            "Refinamento de briefing (Grill-me) disponível apenas diretamente no computador local."
+        },
+        origin
+      );
+      return true;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await readRequestBody(request));
+    } catch {
+      sendJson(response, 400, { error: "Corpo da requisição inválido." }, origin);
+      return true;
+    }
+
+    const prompt =
+      isRecord(payload) && typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+    if (!prompt) {
+      sendJson(response, 400, { error: "Informe a ideia do projeto para gerar perguntas." }, origin);
+      return true;
+    }
+
+    const appKind: AppBriefingKind =
+      isRecord(payload) && (payload.appKind === "api" || payload.appKind === "landing")
+        ? payload.appKind
+        : "web_app";
+    const theme: AppBriefingTheme =
+      isRecord(payload) && payload.theme === "light" ? "light" : "dark";
+
+    try {
+      const catalog = await listDesignSystems();
+      const result = await generateBriefingGrillQuestions({
+        prompt,
+        appKind,
+        theme,
+        designSystems: catalog.map(toPublicDesignSystemMeta)
+      });
+      sendJson(response, 200, result, origin);
+    } catch (error) {
+      sendJson(
+        response,
+        500,
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Não foi possível gerar as perguntas do Grill-me."
+        },
+        origin
+      );
+    }
+    return true;
+  }
+
+  // Briefing 1-frase: cria subpasta + Projeto com regras OWASP/LGPD + Design System + Grill-me (PC local apenas)
   if (request.method === "POST" && url.pathname === "/projects/briefing/prepare") {
     if (!auth.isAuthorizedLocalClient(request)) {
       sendJson(response, 401, { error: "Não autorizado." }, origin);
@@ -378,10 +499,27 @@ export async function handleProjectRoutes(
       payload.appKind === "api" || payload.appKind === "landing"
         ? payload.appKind
         : "web_app";
-    const theme: AppBriefingTheme = payload.theme === "light" ? "light" : "dark";
+    let theme: AppBriefingTheme = payload.theme === "light" ? "light" : "dark";
     const secRaw = isRecord(payload.security) ? payload.security : {};
     const financial = secRaw.financial === true;
     const lgpd = secRaw.lgpd === true;
+    const designSystemId =
+      typeof payload.designSystemId === "string"
+        ? payload.designSystemId.trim()
+        : "auto";
+    const grillAnswers: GrillAnswer[] = Array.isArray(payload.grillAnswers)
+      ? payload.grillAnswers
+          .filter((item): item is Record<string, unknown> => isRecord(item))
+          .slice(0, 10)
+          .map((item, idx) => ({
+            id: typeof item.id === "string" ? item.id.slice(0, 32) : `q${idx + 1}`,
+            question:
+              typeof item.question === "string" ? item.question.trim().slice(0, 180) : "",
+            answer:
+              typeof item.answer === "string" ? item.answer.trim().slice(0, 260) : ""
+          }))
+          .filter((item) => item.answer.length > 0)
+      : [];
 
     if (!rawIdea) {
       sendJson(response, 400, { error: "Descreva a ideia do aplicativo." }, origin);
@@ -389,11 +527,35 @@ export async function handleProjectRoutes(
     }
 
     try {
-      const analysis = await analyzeAppBriefing(rawIdea, {
-        baseDir: baseDir || undefined
-      });
+      const [analysis, catalog] = await Promise.all([
+        analyzeAppBriefing(rawIdea, { baseDir: baseDir || undefined }),
+        listDesignSystems()
+      ]);
       const finalName = appName || analysis.suggestedName;
       const finalBaseDir = baseDir || analysis.baseDir;
+
+      const combinedVisualQuery = [
+        rawIdea,
+        ...grillAnswers.map((a) => `${a.question} ${a.answer}`)
+      ].join(" ");
+
+      // Se o usuário respondeu no Grill-me pedindo fundo claro/branco, respeita o tema claro
+      if (
+        /\b(claro\s+minimalista|fundo\s+branco|tema\s+claro|modo\s+claro|light\s+mode)\b/i.test(
+          grillAnswers.map((a) => a.answer).join(" ")
+        )
+      ) {
+        theme = "light";
+      }
+
+      const selectedDs =
+        appKind === "api"
+          ? { entry: null, reason: "explicit" as const, matchedKeywords: [] }
+          : selectDesignSystem(catalog, {
+              modeOrId: designSystemId,
+              theme,
+              queryText: combinedVisualQuery
+            });
 
       const folderRes = await createSubfolderInParent(finalBaseDir, finalName);
       const spec = expandAppBriefingToSpec({
@@ -402,7 +564,9 @@ export async function handleProjectRoutes(
         appKind,
         theme,
         port: analysis.port,
-        security: { financial, lgpd }
+        security: { financial, lgpd },
+        designSystem: selectedDs.entry,
+        grillAnswers
       });
 
       const createdProject = await createProject({
@@ -423,7 +587,11 @@ export async function handleProjectRoutes(
           projects,
           folderPath: folderRes.path,
           expandedPrompt: spec.expandedPrompt,
-          port: spec.port
+          port: spec.port,
+          designSystem: selectedDs.entry
+            ? toPublicDesignSystemMeta(selectedDs.entry)
+            : null,
+          designSystemReason: selectedDs.reason
         },
         origin
       );

@@ -2903,11 +2903,13 @@ export function renderOptimisticChatThread(threadEl) {
 }
 
 export function renderChatStage() {
+  const viewChatEl = $("#view-chat");
   const zeroStateEl = $("#chat-zero-state");
   const threadEl = $("#chat-thread");
   if (!zeroStateEl || !threadEl) return;
 
   if (state.optimisticSubmission) {
+    viewChatEl?.classList.remove("is-zero-mode");
     zeroStateEl.hidden = true;
     threadEl.hidden = false;
     renderOptimisticChatThread(threadEl);
@@ -2917,6 +2919,7 @@ export function renderChatStage() {
   const debate = getActiveOrSelectedDebate();
 
   if (!debate) {
+    viewChatEl?.classList.add("is-zero-mode");
     zeroStateEl.hidden = false;
     threadEl.hidden = true;
     threadEl.replaceChildren();
@@ -2926,6 +2929,7 @@ export function renderChatStage() {
     return;
   }
 
+  viewChatEl?.classList.remove("is-zero-mode");
   zeroStateEl.hidden = true;
   threadEl.hidden = false;
 

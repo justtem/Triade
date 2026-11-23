@@ -159,6 +159,9 @@ function scoreFreeModel(id: string, contextLength: number, supportsVision: boole
   else if (/mistral.*(?:large|small|devstral|codestral)/.test(lower)) score += 24;
   else if (/glm-?(?:4|5)|kimi|command|north|phi-4|hermes/.test(lower)) score += 22;
 
+  // Penaliza modelos ultra-pesados de raciocínio (550B/1T) para não duplicar latência com NVIDIA NIM
+  if (/(?:550b|\b1t\b|-1t-|nemotron-3.*ultra)/.test(lower)) score -= 8;
+
   // Bônus leve para modelos flagship / grandes e multimodais
   if (/(?:70b|72b|120b|235b|253b|405b|550b|671b|deepseek-r1|deepseek-v3|deepseek-chat|kimi-k2)/i.test(lower)) score += 10;
   else if (/(?:27b|31b|32b|49b)/i.test(lower)) score += 6;

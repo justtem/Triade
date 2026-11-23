@@ -1211,11 +1211,11 @@ function createInitialParticipantStates(
 }
 
 function pickRelator(participants: AIPlatform[]): AIPlatform {
-  // Quando NVIDIA NIM participa do debate, ela assume a relatoria para aliviar a cota do Gemini;
-  // caso contrário mantém Gemini -> OpenRouter -> primeiro automático.
-  if (participants.includes("nvidia")) return "nvidia";
+  // Gemini lidera a síntese pela janela longa e código limpo (sem queimar tokens em reasoning oculto);
+  // OpenRouter e NVIDIA NIM entram como reserva automática quando Gemini não participa.
   if (participants.includes("gemini")) return "gemini";
   if (participants.includes("openrouter")) return "openrouter";
+  if (participants.includes("nvidia")) return "nvidia";
 
   const firstAuto = participants.find((p) => isAutoPlatform(p));
   return firstAuto ?? participants[0] ?? "gemini";

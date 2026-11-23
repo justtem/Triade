@@ -27,14 +27,17 @@ export interface OpenAICompatOptions {
   extraHeaders?: Record<string, string>;
 }
 
-/** Provedor para qualquer API compatível com o SDK da OpenAI (Groq, OpenRouter...). */
+/** Provedor para qualquer API compatível com o SDK da OpenAI (Groq, OpenRouter, NVIDIA NIM...). */
 export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
+  const isNvidia = options.id === "nvidia";
   const client = new OpenAI({
     apiKey: options.apiKey,
     baseURL: options.baseURL,
     // Sem retentativas escondidas do SDK: cada chamada HTTP passa pelo UsageGate.
     maxRetries: 0,
-    timeout: 60_000,
+    // Apenas NVIDIA NIM recebe janela longa (180s) para modelos 550B gerando projetos inteiros sem corte;
+    // Groq e OpenRouter mantêm 60s fixos (com proteção de inatividade/TTFB no stream abaixo).
+    timeout: isNvidia ? 180_000 : 60_000,
     defaultHeaders: options.extraHeaders
   });
 
@@ -79,13 +82,31 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                   ]
                 : request.user;
 
+            // Folga dedicada de saída para modelos reasoning pesados:
+            // - Na NVIDIA NIM (modelos 550B+): eleva até 16.384 tokens em código/debates (e teto 8.192 em modelos normais)
+            //   para comportar o reasoning_content oculto + arquivos completos sem truncar.
+            // - No OpenRouter: mantém +3.500 em modelos reasoning pesados; Groq/Gemini permanecem intactos.
+            const isHeavyReasoningModel =
+              /(?:nemotron-3.*ultra|deepseek-r1|reasoner|thinking|kimi-k3)/i.test(model);
+            let effectiveMaxTokens = request.maxTokens + headroom;
+            if (isNvidia) {
+              if (isHeavyReasoningModel) {
+                const reasoningExtra = request.maxTokens <= 1_200 ? 2_500 : 6_000;
+                effectiveMaxTokens = Math.min(16_384, request.maxTokens + headroom + reasoningExtra);
+              } else {
+                effectiveMaxTokens = Math.min(8_192, request.maxTokens + headroom);
+              }
+            } else if (options.id === "openrouter" && isHeavyReasoningModel) {
+              effectiveMaxTokens = request.maxTokens + headroom + 3_500;
+            }
+
             const baseParams = {
               model,
               messages: [
                 { role: "system" as const, content: request.system },
                 { role: "user" as const, content: userContent }
               ],
-              [options.maxTokensParam]: request.maxTokens + headroom,
+              [options.maxTokensParam]: effectiveMaxTokens,
               ...(options.extraBody ? options.extraBody(model) : {})
             };
 
@@ -98,15 +119,20 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                   : {})
               } as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming;
 
-              // Proteção anti-travamento (TTFB): evita que um modelo gratuito congestionado segure o fluxo
+              // Proteção anti-travamento (TTFB + inatividade no stream):
+              // Na NVIDIA NIM: 25s TTFB + 30s de folga para reasoning_content + 30s idle entre chunks
+              // (permite até 180s enquanto estiver escrevendo código ativamente, mas aborta rápido se congelar).
               const ttfbLimitMs =
                 options.id === "openrouter"
                   ? 25_000
-                  : options.id === "nvidia"
-                    ? 20_000
+                  : isNvidia
+                    ? 25_000
                     : 18_000;
+              const reasoningGraceMs = isNvidia ? 30_000 : 15_000;
+              const streamIdleLimitMs = isNvidia ? 30_000 : 0;
               const ttfbCtrl = new AbortController();
               let timedOutBeforeFirstToken = false;
+              let timedOutIdleStream = false;
               let firstContentSeen = false;
               let reasoningGraceUsed = false;
 
@@ -125,6 +151,16 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                   ttfbCtrl.abort();
                 }
               }, ttfbLimitMs);
+
+              let idleTimer: ReturnType<typeof setTimeout> | undefined;
+              const resetIdleTimer = () => {
+                if (!streamIdleLimitMs) return;
+                if (idleTimer) clearTimeout(idleTimer);
+                idleTimer = setTimeout(() => {
+                  timedOutIdleStream = true;
+                  ttfbCtrl.abort();
+                }, streamIdleLimitMs);
+              };
 
               try {
                 const stream = await client.chat.completions.create(streamParams, {
@@ -147,8 +183,11 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                     | undefined;
                   const piece = deltaObj?.content ?? "";
                   const reasoningPiece = deltaObj?.reasoning_content ?? "";
-                  // Se o modelo só está emitindo reasoning_content oculto, dá no máximo +15s de folga
-                  // (evita que um modelo reasoning 550B fique 90s pensando sem entregar 1 caractere de código)
+                  if (piece || reasoningPiece) {
+                    resetIdleTimer();
+                  }
+                  // Se o modelo só está emitindo reasoning_content oculto, dá folga dedicada
+                  // (30s na NVIDIA 550B / 15s nos demais) para começar a emitir código real.
                   if (reasoningPiece && !firstContentSeen && !reasoningGraceUsed) {
                     reasoningGraceUsed = true;
                     clearTimeout(ttfbTimer);
@@ -157,7 +196,7 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                         timedOutBeforeFirstToken = true;
                         ttfbCtrl.abort();
                       }
-                    }, 15_000);
+                    }, reasoningGraceMs);
                   }
                   if (piece) {
                     if (!firstContentSeen) {
@@ -182,6 +221,11 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                     `Timeout TTFB (${Math.round(ttfbLimitMs / 1000)}s sem primeiro token em ${model})`
                   );
                 }
+                if (timedOutIdleStream && !fullText) {
+                  throw new Error(
+                    `Timeout de inatividade (${Math.round(streamIdleLimitMs / 1000)}s sem tokens em ${model})`
+                  );
+                }
 
                 return {
                   text: fullText,
@@ -196,9 +240,15 @@ export function makeOpenAICompat(options: OpenAICompatOptions): Provider {
                     `Timeout TTFB (${Math.round(ttfbLimitMs / 1000)}s sem primeiro token em ${model})`
                   );
                 }
+                if (timedOutIdleStream && !effectiveSignal?.aborted) {
+                  throw new Error(
+                    `Timeout de inatividade (${Math.round(streamIdleLimitMs / 1000)}s sem tokens em ${model})`
+                  );
+                }
                 throw streamErr;
               } finally {
                 clearTimeout(ttfbTimer);
+                if (idleTimer) clearTimeout(idleTimer);
                 if (effectiveSignal) {
                   effectiveSignal.removeEventListener("abort", onOuterAbort);
                 }

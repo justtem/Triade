@@ -454,6 +454,35 @@ export function updateRightAiPanel() {
         mobileStrip.appendChild(chip);
       }
     }
+
+    if (platform === "nvidia") {
+      const infoBtn = $("#nvidia-delay-info-btn");
+      const infoNote = $("#nvidia-delay-note");
+      const infoText = $("#nvidia-delay-note-text");
+      if (infoBtn && infoNote) {
+        if (!infoBtn.dataset.bound) {
+          infoBtn.dataset.bound = "1";
+          infoBtn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const willOpen = infoNote.hidden;
+            infoNote.hidden = !willOpen;
+            infoBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+            infoBtn.classList.toggle("is-open", willOpen);
+          });
+        }
+
+        const activeModel = providerInfo?.autopilot?.primaryModel || "modelo 550B";
+        const isActiveNow = execState === "thinking";
+        infoBtn.classList.toggle("is-active", isActiveNow);
+        const explanation = isActiveNow
+          ? `NVIDIA NIM em uso agora (${activeModel}): modelo pesado de raciocínio pensando em detalhes antes de escrever para entregar arquivos completos sem cortes (pode levar de 25s a ~2 min).`
+          : `A NVIDIA NIM atua como reserva automática (${activeModel}): por ser um modelo de raciocínio gigante na fila gratuita, pode levar de 25s a ~2 min e usa janela ampliada (até 16k tokens / 3 min) para evitar cortes.`;
+        infoBtn.title = explanation;
+        if (infoText) {
+          infoText.textContent = explanation;
+        }
+      }
+    }
   }
 
   renderRightPanelTelemetryFeed(refDebate);

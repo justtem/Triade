@@ -359,6 +359,101 @@ async function runNodeTestTimeoutDiagnostic(
   return out;
 }
 
+async function auditFrontendLocalAssets(
+  rootReal: string
+): Promise<BuilderCommandRun | null> {
+  const startedAt = Date.now();
+  const htmlPath = join(rootReal, "public", "index.html");
+  if (!(await pathExists(htmlPath))) {
+    return null;
+  }
+
+  let html = "";
+  try {
+    html = await readFile(htmlPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const assetRefs: string[] = [];
+  const patterns = [
+    /<link\b[^>]*\bhref=["']([^"']+\.css)(?:\?[^"']*)?["'][^>]*>/gi,
+    /<script\b[^>]*\bsrc=["']([^"']+\.(?:js|mjs))(?:\?[^"']*)?["'][^>]*>/gi
+  ];
+
+  for (const re of patterns) {
+    for (const m of html.matchAll(re)) {
+      const rawHref = (m[1] ?? "").trim();
+      if (!rawHref || /^(?:https?:|\/\/|data:)/i.test(rawHref)) continue;
+      const cleanHref = rawHref.replace(/^\/+/, "").replace(/^\.\//, "");
+      if (!cleanHref || cleanHref.includes("..")) continue;
+      const relPath = cleanHref.startsWith("public/") ? cleanHref : `public/${cleanHref}`;
+      if (!assetRefs.includes(relPath)) assetRefs.push(relPath);
+    }
+  }
+
+  if (assetRefs.length === 0) return null;
+
+  const issues: string[] = [];
+  for (const relPath of assetRefs) {
+    const absPath = join(rootReal, ...relPath.split("/"));
+    if (!(await pathExists(absPath))) {
+      issues.push(
+        `Asset obrigatório ausente: \`${relPath}\` (referenciado em \`public/index.html\`). Crie o arquivo \`${relPath}\` 100% completo e compatível com os IDs de \`public/index.html\` e as rotas reais de \`src/server.ts\`.`
+      );
+      continue;
+    }
+
+    try {
+      const content = await readFile(absPath, "utf8");
+      if (content.trim().length < 20) {
+        issues.push(
+          `Asset vazio ou incompleto: \`${relPath}\` (${content.trim().length} bytes). Entregue o arquivo completo.`
+        );
+        continue;
+      }
+      if (relPath.toLowerCase().endsWith(".css")) {
+        const noComments = content.replace(/\/\*[\s\S]*?\*\//g, "");
+        const openBraces = (noComments.match(/\{/g) ?? []).length;
+        const closeBraces = (noComments.match(/\}/g) ?? []).length;
+        if (openBraces === 0 || openBraces !== closeBraces || /\n---\s*\n\s*#{1,3}\s+/.test(content)) {
+          issues.push(
+            `CSS inválido ou truncado em \`${relPath}\` (chaves {=${openBraces}, }=${closeBraces}). Entregue \`${relPath}\` completo e válido.`
+          );
+        }
+      }
+    } catch {
+      issues.push(`Não foi possível ler \`${relPath}\`.`);
+    }
+  }
+
+  const durationMs = Math.max(1, Date.now() - startedAt);
+  if (issues.length === 0) {
+    return {
+      label: "Assets Frontend",
+      command: "frontend-assets-check",
+      exitCode: 0,
+      ok: true,
+      durationMs,
+      output: `OK: ${assetRefs.length} asset(s) verificado(s) (${assetRefs.join(", ")}).`
+    };
+  }
+
+  return {
+    label: "Assets Frontend",
+    command: "frontend-assets-check",
+    exitCode: 1,
+    ok: false,
+    durationMs,
+    output: [
+      `Falha na integridade de assets frontend (${issues.length} problema(s)):`,
+      ...issues.map((i) => `- ${i}`),
+      "",
+      "Referências relevantes: public/index.html, src/server.ts"
+    ].join("\n")
+  };
+}
+
 export async function verifyWorkspaceProject(
   rootDir: string,
   options: {
@@ -415,6 +510,21 @@ export async function verifyWorkspaceProject(
         summary: run.timedOut
           ? `Timeout em "${run.command}" após ${(run.durationMs / 1000).toFixed(1)}s (processo travado — provável servidor/handle aberto).`
           : `Falha em "${run.command}" (exit ${run.exitCode}).`
+      };
+    }
+  }
+
+  // Checa integridade de assets locais citados em public/index.html (ex.: /app.js, /style.css):
+  // impede "falso verde" quando o app compila mas public/app.js está faltando ou style.css foi truncado!
+  const frontendAudit = await auditFrontendLocalAssets(rootReal);
+  if (frontendAudit) {
+    checks.push(frontendAudit);
+    if (!frontendAudit.ok) {
+      return {
+        allPassed: false,
+        ranAny: true,
+        checks,
+        summary: `Assets frontend ausentes ou quebrados (verifique public/app.js / public/style.css).`
       };
     }
   }

@@ -358,20 +358,80 @@ function initializeUiBindings() {
 
   const composerPopover = $("#composer-config-popover");
   const composerConfigBtn = $("#composer-config-btn");
+  const arrowAdvBtn = document.querySelector('#composer-arrow-shortcuts [data-arrow-action="advanced"]');
   const closeComposerPopover = () => {
     if (composerPopover && !composerPopover.hidden) {
       composerPopover.hidden = true;
       composerConfigBtn?.setAttribute("aria-expanded", "false");
+      arrowAdvBtn?.setAttribute("aria-expanded", "false");
+      arrowAdvBtn?.classList.remove("is-active");
     }
   };
-
-  composerConfigBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
+  const toggleComposerPopover = (e) => {
+    e?.stopPropagation?.();
     if (!composerPopover) return;
     const willOpen = composerPopover.hidden;
     composerPopover.hidden = !willOpen;
-    composerConfigBtn.setAttribute("aria-expanded", String(willOpen));
+    composerConfigBtn?.setAttribute("aria-expanded", String(willOpen));
+    arrowAdvBtn?.setAttribute("aria-expanded", String(willOpen));
+    arrowAdvBtn?.classList.toggle("is-active", willOpen);
+  };
+
+  composerConfigBtn?.addEventListener("click", toggleComposerPopover);
+
+  // Botão × interno da pílula para limpar o campo de texto rapidamente
+  $("#composer-clear-btn")?.addEventListener("click", () => {
+    const topicEl = $("#debate-topic");
+    if (!topicEl) return;
+    topicEl.value = "";
+    topicEl.style.height = "auto";
+    syncComposerSubmitIntentUi();
+    topicEl.focus();
   });
+
+  // Badge [Auto] no topo do Hero editorial volta imediatamente para Modo Automático
+  $("#zero-hero-mode-badge")?.addEventListener("click", () => {
+    applyComposerMode("auto");
+    $("#debate-topic")?.focus();
+  });
+
+  // Atalhos em setas (↳) abaixo da pílula conectando 100% das funcionalidades existentes
+  for (const arrowBtn of $$("#composer-arrow-shortcuts .arrow-shortcut-btn")) {
+    arrowBtn.addEventListener("click", (e) => {
+      const action = arrowBtn.getAttribute("data-arrow-action");
+      const topicEl = $("#debate-topic");
+      if (action === "new-app") {
+        applyComposerMode("auto");
+        if (topicEl) {
+          if (!topicEl.value.trim()) {
+            topicEl.value = "Cria um app de ";
+          }
+          topicEl.style.height = "auto";
+          topicEl.style.height = `${Math.min(160, topicEl.scrollHeight)}px`;
+          syncComposerSubmitIntentUi();
+          topicEl.focus();
+          topicEl.setSelectionRange(topicEl.value.length, topicEl.value.length);
+        }
+      } else if (action === "attach") {
+        $("#composer-attach-btn")?.click();
+      } else if (action === "web") {
+        $("#composer-web-btn")?.click();
+      } else if (action === "templates") {
+        openTemplatesModal();
+      } else if (action === "mode-quick") {
+        applyComposerMode(state.activeComposerMode === "quick" ? "auto" : "quick");
+        topicEl?.focus();
+      } else if (action === "mode-council") {
+        applyComposerMode(state.activeComposerMode === "council" ? "auto" : "council");
+        topicEl?.focus();
+      } else if (action === "mode-debate") {
+        applyComposerMode(state.activeComposerMode === "debate" ? "auto" : "debate");
+        topicEl?.focus();
+      } else if (action === "advanced") {
+        toggleComposerPopover(e);
+      }
+    });
+  }
 
   composerPopover?.addEventListener("click", (e) => {
     e.stopPropagation();

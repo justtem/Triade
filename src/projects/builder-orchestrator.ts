@@ -96,7 +96,7 @@ function collectTurnMarkdownSources(
   session: DebateSession,
   turn: ChatTurn,
   sourcePlatform?: AIPlatform
-): { primaryMarkdown: string; allMarkdown: string; sourceLabel?: string } {
+): { primaryMarkdown: string; peerMarkdownPieces: string[]; sourceLabel?: string } {
   const turnResponses = (session.responses ?? []).filter(
     (r) => r.turnId === turn.id || (turn.index === 1 && !r.turnId)
   );
@@ -106,7 +106,7 @@ function collectTurnMarkdownSources(
     const content = specific?.content?.trim() || "";
     return {
       primaryMarkdown: content,
-      allMarkdown: content,
+      peerMarkdownPieces: content ? [content] : [],
       sourceLabel: sourcePlatform
     };
   }
@@ -131,6 +131,8 @@ function collectTurnMarkdownSources(
     (longestResp?.content && longestResp.content.trim()) ||
     "";
 
+  // Mantém cada resposta separada (NUNCA concatena cru com "---") para impedir que um bloco
+  // ``` não fechado de uma IA engula texto Markdown da IA seguinte!
   const pieces = [
     turn.conclusion,
     synth?.content,
@@ -141,7 +143,7 @@ function collectTurnMarkdownSources(
 
   return {
     primaryMarkdown,
-    allMarkdown: Array.from(new Set(pieces)).join("\n\n---\n\n")
+    peerMarkdownPieces: Array.from(new Set(pieces))
   };
 }
 
@@ -238,10 +240,11 @@ export function resolveBuilderProviderOrder(params: {
   }
 
   // Build / testes / Auto-Fix: Gemini em #1 pela velocidade (Flash-Lite ~2s) e precisão em TypeScript;
-  // se Gemini estiver em 503/cooldown ou cota baixa (< 12%), NVIDIA NIM e OpenRouter assumem na hora.
+  // se Gemini estiver em 503/cooldown ou cota baixa (< 12%), NVIDIA NIM assume antes do OpenRouter
+  // (que exige >= 25% de cota livre para não drenar os 45/dia gratuitos em loops de correção).
   if (isHealthy("gemini", 0.12)) push("gemini");
   if (isHealthy("nvidia", 0.08)) push("nvidia");
-  if (isHealthy("openrouter", 0.1)) push("openrouter");
+  if (isHealthy("openrouter", 0.25)) push("openrouter");
 
   // Fallback final para qualquer provedor ainda ready com cota > 0
   const fallbackPool: AutoPlatform[] = groqFitsSafely
@@ -315,7 +318,16 @@ export function extractWorkspaceContractSummary(
         if (m[1]) idsSet.add(`#${m[1]}`);
       }
       if (idsSet.size > 0) {
-        details.push(`IDs DOM: ${Array.from(idsSet).slice(0, 14).join(", ")}`);
+        details.push(`IDs DOM: ${Array.from(idsSet).slice(0, 18).join(", ")}`);
+      }
+      const classesSet = new Set<string>();
+      for (const m of file.content.matchAll(/\bclass=["']([^"']{1,120})["']/g)) {
+        for (const cls of (m[1] ?? "").split(/\s+/)) {
+          if (/^[A-Za-z][A-Za-z0-9_-]{1,40}$/.test(cls)) classesSet.add(`.${cls}`);
+        }
+      }
+      if (classesSet.size > 0) {
+        details.push(`Classes CSS: ${Array.from(classesSet).slice(0, 24).join(", ")}`);
       }
     }
 
@@ -329,10 +341,10 @@ export function extractWorkspaceContractSummary(
 
 function isLightweightConfigOrDocFile(relPath: string): boolean {
   const lower = relPath.toLowerCase();
-  return (
-    /(?:^|\/)(?:package\.json|tsconfig\.json|readme\.md|\.gitignore|\.env\.example)$/.test(
-      lower
-    ) || lower.endsWith(".css")
+  // NOTA: .css NÃO é arquivo leve — Design Systems ricos precisam de 3.000-5.500 tokens
+  // para estilizar todos os componentes, formulários, cards e estados responsivos sem truncar.
+  return /(?:^|\/)(?:package\.json|tsconfig\.json|readme\.md|\.gitignore|\.env\.example)$/.test(
+    lower
   );
 }
 
@@ -341,27 +353,39 @@ async function callBuilderModel(params: {
   userPrompt: string;
   maxTokens: number;
   signal?: AbortSignal;
+  excludePlatforms?: AutoPlatform[];
+  allowGroqFallback?: boolean;
   onAttempt?: (platform: AutoPlatform) => void;
 }): Promise<{ content: string; platform: AutoPlatform; model: string }> {
   const statuses = await getProvidersStatus();
-  const order = resolveBuilderProviderOrder({
+  const baseOrder = resolveBuilderProviderOrder({
     promptChars: params.systemPrompt.length + params.userPrompt.length,
     maxTokens: params.maxTokens,
     statuses
   });
+  const order: AutoPlatform[] = [...baseOrder];
+  if (params.allowGroqFallback && !order.includes("groq")) {
+    const groqSt = statuses.find((s) => s.id === "groq");
+    if (groqSt?.ready) order.push("groq");
+  }
+  const excluded = new Set(params.excludePlatforms ?? []);
+  const filteredOrder = order.filter((p) => !excluded.has(p));
   let lastError: unknown = null;
 
-  for (const plat of order) {
+  for (const plat of filteredOrder) {
     const provider = getProvider(plat);
     if (!provider) continue;
     params.onAttempt?.(plat);
     try {
+      // Para Groq no fallback de arquivo único, respeita o teto de 8k TPM com maxTokens enxuto
+      const effectiveMaxTokens =
+        plat === "groq" ? Math.min(params.maxTokens, 3_000) : params.maxTokens;
       // Usa streaming interno (onDelta no-op) para ativar a trava TTFB (18-25s)
       // e impedir que um modelo lento/congestionado trave o Auto-Fix por 60-90s.
       const res = await provider.generate({
         system: params.systemPrompt,
         user: params.userPrompt,
-        maxTokens: params.maxTokens,
+        maxTokens: effectiveMaxTokens,
         signal: params.signal,
         onDelta: () => {}
       });
@@ -380,8 +404,8 @@ async function callBuilderModel(params: {
 
   throw new Error(
     lastError instanceof Error
-      ? `Nenhum provedor disponível para o Construtor (${order.join("/")}): ${lastError.message}`
-      : `Nenhum provedor configurado para o Construtor (${order.join("/")}).`
+      ? `Nenhum provedor disponível para o Construtor (${filteredOrder.join("/")}): ${lastError.message}`
+      : `Nenhum provedor configurado para o Construtor (${filteredOrder.join("/")}).`
   );
 }
 
@@ -439,30 +463,49 @@ export async function extractBuilderFilesForTurn(
   if (!turn) throw new Error("Turno não encontrado.");
 
   const proj = await resolveProjectFolderForSession(session);
-  const { primaryMarkdown, allMarkdown, sourceLabel } = collectTurnMarkdownSources(
+  const { primaryMarkdown, peerMarkdownPieces, sourceLabel } = collectTurnMarkdownSources(
     session,
     turn,
     options.sourcePlatform
   );
 
   let extraction = extractWorkspaceFilesFromMarkdown(primaryMarkdown);
-  if (!options.sourcePlatform && allMarkdown !== primaryMarkdown) {
-    if (extraction.files.length === 0) {
-      extraction = extractWorkspaceFilesFromMarkdown(allMarkdown);
+  if (!options.sourcePlatform && peerMarkdownPieces.length > 1) {
+    // Extrai cada resposta de IA separadamente para impedir que um fence não fechado
+    // de uma IA contamine o código com o Markdown da IA seguinte!
+    const completePeerByPath = new Map<string, ExtractedWorkspaceFile>();
+    const allPeerMissing = new Set<string>();
+    for (const piece of peerMarkdownPieces) {
+      if (piece === primaryMarkdown) continue;
+      const peerRes = extractWorkspaceFilesFromMarkdown(piece);
+      for (const f of peerRes.files) {
+        if (!f.incomplete && f.content.trim().length > 0) {
+          const key = f.path.toLowerCase();
+          const prev = completePeerByPath.get(key);
+          if (!prev || f.content.length > prev.content.length) {
+            completePeerByPath.set(key, f);
+          }
+        }
+      }
+      for (const mp of peerRes.missingPaths) {
+        allPeerMissing.add(mp);
+      }
+    }
+
+    if (extraction.files.length === 0 && completePeerByPath.size > 0) {
+      const peerFiles = Array.from(completePeerByPath.values());
+      const peerSet = new Set(peerFiles.map((f) => f.path.toLowerCase()));
+      extraction = {
+        files: peerFiles,
+        missingPaths: Array.from(allPeerMissing).filter((p) => !peerSet.has(p.toLowerCase())),
+        deletes: extraction.deletes
+      };
     } else if (
       extraction.missingPaths.length > 0 ||
       extraction.files.some((f) => f.incomplete)
     ) {
       // Handoff limpo por fronteira de arquivo: se a resposta principal truncou/omitiu
       // algum arquivo, aproveita versões 100% completas entregues por colegas no mesmo turno.
-      const peerExtraction = extractWorkspaceFilesFromMarkdown(allMarkdown);
-      const completePeerByPath = new Map<string, ExtractedWorkspaceFile>();
-      for (const f of peerExtraction.files) {
-        if (!f.incomplete && f.content.trim().length > 0) {
-          completePeerByPath.set(f.path.toLowerCase(), f);
-        }
-      }
-
       const mergedFiles: ExtractedWorkspaceFile[] = extraction.files.map((f) => {
         if (!f.incomplete) return f;
         const peerComplete = completePeerByPath.get(f.path.toLowerCase());
@@ -609,11 +652,23 @@ export async function generateRemainingBuilderFiles(
       }));
 
       const contractSummary = extractWorkspaceContractSummary(workingFiles);
+      const isFrontendTarget = /\.(?:css|html|js|mjs)$/i.test(targetPath) && targetPath.toLowerCase().startsWith("public/");
       const knownSummary = workingFiles
         .filter((f) => !f.incomplete && f.path !== targetPath)
         .slice(0, 8)
-        .map((f) => `### \`${f.path}\`\n\`\`\`\n${f.content.slice(0, 1800)}\n\`\`\``)
+        .map((f) => {
+          const isImportantFrontendRef =
+            isFrontendTarget && /\.(?:html|css|js|ts)$/i.test(f.path);
+          const cap = isImportantFrontendRef ? 5_500 : 1_800;
+          return `### \`${f.path}\`\n\`\`\`\n${f.content.slice(0, cap)}\n\`\`\``;
+        })
         .join("\n\n");
+
+      const frontendQualityRule = targetPath.toLowerCase().endsWith(".css")
+        ? "\nREGRA DE QUALIDADE CSS (OBRIGATÓRIA): estilize 100% das classes, tags, inputs, selects, textareas, botões, abas (inclua `.view { display: none; } .view.active { display: block; } .hidden { display: none !important; }`), cards, KPIs e layout responsivo presentes no `public/index.html`, seguindo fielmente o Design System do projeto. PROIBIDO deixar qualquer input/select/button com aparência branca/cinza padrão do navegador. Feche TODAS as chaves CSS corretamente."
+        : targetPath.toLowerCase().endsWith(".js") && targetPath.toLowerCase().startsWith("public/")
+          ? "\nREGRA DE QUALIDADE FRONTEND JS: conecte TODOS os botões, abas (`data-view` / `.view.active`), filtros, formulários e chamadas `fetch('/api/...')` aos IDs exatos de `public/index.html` e rotas de `src/server.ts`. Nunca use `innerHTML` com dados do usuário (use `textContent` / `createElement`)."
+          : "";
 
       const userPrompt = [
         `Pedido do usuário:\n${turn.prompt}`,
@@ -624,7 +679,8 @@ export async function generateRemainingBuilderFiles(
         knownSummary
           ? `\nArquivos já definidos (somente completos, mantenha 100% de compatibilidade):\n${knownSummary}`
           : "",
-        `\nGere agora o arquivo completo: \`${targetPath}\``
+        frontendQualityRule,
+        `\nGere agora o arquivo 100% completo e fechado: \`${targetPath}\``
       ]
         .filter(Boolean)
         .join("\n");
@@ -633,17 +689,34 @@ export async function generateRemainingBuilderFiles(
         ? 1_600
         : 6_000;
 
-      const res = await callBuilderModel({
-        systemPrompt,
-        userPrompt,
-        maxTokens: maxTokensForTarget,
-        signal
-      });
-
-      const generatedContent = extractSingleFileContentFromModelOutput(
-        res.content,
-        targetPath
-      );
+      // Nunca silencia falha de extração: tenta até 2 provedores distintos se o 1º devolver
+      // saída vazia, sem bloco de código ou truncada (ex.: modelo reasoning que cortou public/app.js).
+      let generatedContent = "";
+      const triedPlatforms: AutoPlatform[] = [];
+      for (let genAttempt = 0; genAttempt < 2 && !generatedContent; genAttempt++) {
+        if (signal.aborted) break;
+        try {
+          const res = await callBuilderModel({
+            systemPrompt,
+            userPrompt,
+            maxTokens: maxTokensForTarget,
+            signal,
+            excludePlatforms: triedPlatforms,
+            allowGroqFallback: true
+          });
+          triedPlatforms.push(res.platform);
+          const candidate = extractSingleFileContentFromModelOutput(
+            res.content,
+            targetPath
+          );
+          if (candidate && candidate.trim().length > 0) {
+            generatedContent = candidate;
+          }
+        } catch (genErr) {
+          if (signal.aborted) throw genErr;
+          break;
+        }
+      }
 
       if (generatedContent) {
         const merged = mergeExtractedFiles(workingFiles, [

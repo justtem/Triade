@@ -301,8 +301,8 @@ function initOpenRouter(): void {
         void recordAutopilotFailure("openrouter", model, error);
       },
       gate,
-      // Cada tentativa gasta 1 das 50 requisições diárias: no máximo 3, com troca de modelo.
-      maxHttpAttempts: envInt("OPENROUTER_MAX_ATTEMPTS", 3),
+      // Cada tentativa gasta 1 das 50 requisições diárias: máximo 2 para economizar cota :free.
+      maxHttpAttempts: envInt("OPENROUTER_MAX_ATTEMPTS", 2),
       maxTokensParam: "max_tokens",
       tokenHeadroom: 400,
       extraHeaders: { "X-Title": "AI Council" }

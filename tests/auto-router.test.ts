@@ -384,7 +384,7 @@ describe("auto-router (Modo Auto 0ms)", () => {
     );
     assert.deepEqual(editResFailover.autoRoute.participants, ["nvidia"]);
 
-    // 2. Contexto extenso (sem PDF/imagem) -> NVIDIA NIM preservando Gemini
+    // 2. Contexto extenso: mantém Gemini em #1 quando saudável; NVIDIA NIM assume como reserva se Gemini < 20%
     const longRes = resolveAutoRoute(
       {
         prompt: "Resuma os pontos principais desse código.",
@@ -406,8 +406,52 @@ describe("auto-router (Modo Auto 0ms)", () => {
       },
       withNvidia
     );
-    assert.deepEqual(longRes.participants, ["nvidia"]);
+    assert.deepEqual(longRes.participants, ["gemini"]);
     assert.equal(longRes.category, "long_context");
+
+    const longResFailover = resolveAutoRoute(
+      {
+        prompt: "Resuma os pontos principais desse código.",
+        responseMode: "normal",
+        interactionMode: "direct",
+        resolvedProjectContext: {
+          projectId: "proj-2",
+          projectName: "FinBolso",
+          instructions: "Seja claro.",
+          chunks: [
+            {
+              source: "server.ts",
+              kind: "folder",
+              score: 5,
+              content: "x".repeat(4500)
+            }
+          ]
+        }
+      },
+      [
+        makeProviderStatus("gemini", { requestsToday: 85, requestsDailyCap: 100 }),
+        makeProviderStatus("groq", { requestsToday: 20, requestsDailyCap: 900 }),
+        makeProviderStatus("openrouter", { requestsToday: 5, requestsDailyCap: 45 }),
+        makeProviderStatus("nvidia", { requestsToday: 5, requestsDailyCap: 270 })
+      ]
+    );
+    assert.deepEqual(longResFailover.participants, ["nvidia"]);
+
+    // 2b. Edição longa (>= 220 chars) em projeto JÁ existente (isContinuation=true) NÃO dispara Debate completo
+    const longEditInContinuation = resolveAutoComposerStrategy(
+      {
+        prompt:
+          "Refaça completamente public/style.css, public/index.html e crie o public/app.js que estava faltando, aplicando fielmente a estética AngelList com fundo #001d21, superfícies #002b31, texto #e0fee6, CTA pill #cdcbff e cards KPI de resumo no topo mantendo total compatibilidade com src/server.ts.",
+        isContinuation: true,
+        hasLinkedFolder: true,
+        isLocalPc: true,
+        folderPolicy: "auto",
+        responseMode: "normal"
+      },
+      withNvidia
+    );
+    assert.equal(longEditInContinuation.interactionMode, "direct");
+    assert.deepEqual(longEditInContinuation.autoRoute.participants, ["gemini"]);
 
     // 3. Reserva automática no Debate quando OpenRouter cai abaixo de 10%
     const lowOrWithNvidia: ProviderStatus[] = [
@@ -445,7 +489,8 @@ describe("auto-router (Modo Auto 0ms)", () => {
     );
     assert.deepEqual(rotatedEdit.autoRoute.participants, ["openrouter"]);
 
-    // 5. Construção completa de app novo com NVIDIA ativa -> NVIDIA + Groq + OpenRouter (poupa 100% do Gemini!)
+    // 5. Construção completa de app novo mantém Gemini em #1 (Gemini + Groq + OpenRouter);
+    //    NVIDIA NIM entra como reserva automática apenas quando Gemini/OpenRouter falhar ou cair cota!
     const majorBuildWithNvidia = resolveAutoComposerStrategy(
       {
         prompt: "Crie na pasta um app completo CineLista para organizar filmes e séries",
@@ -459,7 +504,7 @@ describe("auto-router (Modo Auto 0ms)", () => {
     );
     assert.equal(majorBuildWithNvidia.interactionMode, "debate");
     assert.deepEqual(majorBuildWithNvidia.autoRoute.participants, [
-      "nvidia",
+      "gemini",
       "groq",
       "openrouter"
     ]);

@@ -33,9 +33,14 @@ import {
 } from "./user-memory.js";
 import {
   closeAppBriefingCard,
-  looksLikeNewAppIdeaClient,
-  openAppBriefingForPrompt
+  looksLikeNewAppIdeaClient
 } from "./briefing.js";
+import {
+  closeGrillWizard,
+  looksLikeBroadIdeaForGrillClient,
+  openGrillWizardForApp,
+  openGrillWizardForGeneralPrompt
+} from "./grill-wizard.js";
 
 let bypassBriefingOnce = false;
 
@@ -239,15 +244,33 @@ export function syncComposerSubmitIntentUi() {
     willAutoBuild || willConfirmDiff || willOpenBriefing
   );
 
+  const intentChip = $("#composer-intent-chip");
+  const clearBtn = $("#composer-clear-btn");
+  if (clearBtn) {
+    clearBtn.hidden = typedText.length === 0;
+  }
+
   if (willAutoBuild) {
     submitBtn.title = `Construtor automático: vai gerar arquivos, gravar em "${linkedProj.name}" (com backup) e rodar build/test`;
     if (submitSpan) submitSpan.textContent = "Construir na Pasta";
+    if (intentChip) {
+      intentChip.textContent = "Construir";
+      intentChip.hidden = false;
+    }
   } else if (willConfirmDiff) {
     submitBtn.title = `Vai gerar o preview/diff para você confirmar antes de gravar em "${linkedProj.name}"`;
     if (submitSpan) submitSpan.textContent = "Preparar Diff";
+    if (intentChip) {
+      intentChip.textContent = "Diff";
+      intentChip.hidden = false;
+    }
   } else if (willOpenBriefing) {
-    submitBtn.title = "Abre o briefing rápido para criar a pasta, ativar boas práticas OWASP/LGPD e construir o app";
+    submitBtn.title = "Abre o briefing rápido para criar a pasta, escolher Design System e construir o app";
     if (submitSpan) submitSpan.textContent = "Preparar Novo App";
+    if (intentChip) {
+      intentChip.textContent = "Novo App";
+      intentChip.hidden = false;
+    }
   } else {
     submitBtn.title = "Enviar mensagem";
     if (submitSpan) {
@@ -257,9 +280,13 @@ export function syncComposerSubmitIntentUi() {
           ? "Debater"
           : "Enviar";
     }
+    if (intentChip) {
+      intentChip.hidden = true;
+      intentChip.textContent = "";
+    }
   }
 
-  if (submitArrow) submitArrow.textContent = "→";
+  if (submitArrow) submitArrow.textContent = "↑";
 }
 
 export function deriveComposerModeFromState() {
@@ -458,8 +485,13 @@ export function syncComposerModeUi() {
   }
 
   const quickPicker = $("#composer-quick-ai-picker");
+  const modesStrip = $("#composer-modes-strip");
+  const hideQuickPicker = modeKey !== "quick" || Boolean(state.isAutoRouteMode);
   if (quickPicker) {
-    quickPicker.hidden = modeKey !== "quick" || Boolean(state.isAutoRouteMode);
+    quickPicker.hidden = hideQuickPicker;
+  }
+  if (modesStrip) {
+    modesStrip.hidden = hideQuickPicker;
   }
 
   for (const btn of $$("#response-mode-toggle .mode-seg-btn")) {
@@ -503,9 +535,9 @@ export function syncComposerModeUi() {
   const responder = getActiveResponderInfo();
 
   const summaryEl = $("#composer-config-summary");
-  if (summaryEl) {
+  const arrowAdvLabel = $("#arrow-advanced-label");
+  if (summaryEl || arrowAdvLabel) {
     const extras = [];
-    if (state.isAutoRouteMode) extras.push("Auto");
     if (state.selectedResponseMode === "prompt_markdown") {
       extras.push("Prompt MD");
     }
@@ -514,7 +546,44 @@ export function syncComposerModeUi() {
     if (checkedNow.some((id) => !AUTO_PLATFORM_IDS.includes(id))) {
       extras.push("Manual");
     }
-    summaryEl.textContent = extras.length > 0 ? `Avançado · ${extras.join(" · ")}` : "Avançado";
+    if (summaryEl) {
+      const legacyExtras = state.isAutoRouteMode ? ["Auto", ...extras] : extras;
+      summaryEl.textContent = legacyExtras.length > 0 ? `Avançado · ${legacyExtras.join(" · ")}` : "Avançado";
+    }
+    if (arrowAdvLabel) {
+      arrowAdvLabel.textContent = extras.length > 0 ? `Opções (${extras.join(" · ")})` : "Opções avançadas";
+    }
+  }
+
+  // Sincroniza o badge do Hero minimalista e os atalhos em setas (↳)
+  const heroModeBadge = $("#zero-hero-mode-badge");
+  if (heroModeBadge) {
+    heroModeBadge.textContent = COMPOSER_MODE_LABELS[modeKey] || "Auto";
+    heroModeBadge.classList.toggle("is-custom", modeKey !== "auto");
+  }
+
+  const isWebOn = state.selectedWebSearchMode !== "off";
+  for (const btn of $$("#composer-arrow-shortcuts .arrow-shortcut-btn")) {
+    const act = btn.getAttribute("data-arrow-action");
+    if (act === "web") {
+      btn.classList.toggle("is-web-active", isWebOn);
+      btn.classList.toggle("is-active", isWebOn);
+      btn.setAttribute("aria-pressed", String(isWebOn));
+      const lbl = btn.querySelector(".arrow-shortcut-label");
+      if (lbl) lbl.textContent = isWebOn ? "Busca na Web" : "Web desativada";
+    } else if (act === "mode-quick") {
+      const active = modeKey === "quick";
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", String(active));
+    } else if (act === "mode-council") {
+      const active = modeKey === "council";
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", String(active));
+    } else if (act === "mode-debate") {
+      const active = modeKey === "debate";
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", String(active));
+    }
   }
 
   syncComposerSubmitIntentUi();
@@ -599,12 +668,56 @@ export async function handleCreateDebate(event) {
     return;
   }
 
-  // Briefing 1-frase: em conversa nova sem pasta vinculada no PC local,
-  // intercepta ideias de novos apps para oferecer criação de pasta + Expansor OWASP/LGPD
+  // 1. Gatilho explícito `/grill <ideia>`: abre o Grill-me Wizard sob demanda para qualquer assunto
   const shouldBypassBriefing = bypassBriefingOnce;
   bypassBriefingOnce = false;
   const effectiveProjectNow = uiHooks.getEffectiveProjectForComposer();
   const activeModeNow = state.activeComposerMode || deriveComposerModeFromState();
+
+  const manualGrillMatch = topicValue.match(/^\/grill(?:-me)?\s+([\s\S]+)$/i);
+  if (!shouldBypassBriefing && manualGrillMatch?.[1]?.trim()) {
+    const cleanIdea = manualGrillMatch[1].trim();
+    if (feedback) feedback.textContent = "";
+    const isLocalAppIdea =
+      !currentDebate &&
+      !effectiveProjectNow?.linkedFolderPath &&
+      isDirectLocalBrowser() &&
+      looksLikeNewAppIdeaClient(cleanIdea);
+
+    if (isLocalAppIdea) {
+      await openGrillWizardForApp(cleanIdea, {
+        onBuildReady: ({ expandedPrompt, title }) => {
+          applyComposerMode("auto");
+          if (titleInput && title) titleInput.value = title;
+          if (topicInput && expandedPrompt) topicInput.value = expandedPrompt;
+          bypassBriefingOnce = true;
+          $("#create-debate-form")?.requestSubmit();
+        },
+        onSendPlainChat: () => {
+          if (topicInput) topicInput.value = cleanIdea;
+          bypassBriefingOnce = true;
+          $("#create-debate-form")?.requestSubmit();
+        }
+      });
+    } else {
+      await openGrillWizardForGeneralPrompt(cleanIdea, {
+        onSendEnriched: (enrichedPrompt) => {
+          if (topicInput) topicInput.value = enrichedPrompt;
+          bypassBriefingOnce = true;
+          $("#create-debate-form")?.requestSubmit();
+        },
+        onSkipPlain: () => {
+          if (topicInput) topicInput.value = cleanIdea;
+          bypassBriefingOnce = true;
+          $("#create-debate-form")?.requestSubmit();
+        }
+      });
+    }
+    return;
+  }
+
+  // 2. Ideia de novo app (PC local, conversa nova sem pasta): abre direto o Grill-me Wizard unificado
+  //    (1 pergunta por vez -> resumo compacto final de Pasta + Design System + Segurança)
   if (
     !shouldBypassBriefing &&
     !currentDebate &&
@@ -614,7 +727,7 @@ export async function handleCreateDebate(event) {
     looksLikeNewAppIdeaClient(topicValue)
   ) {
     if (feedback) feedback.textContent = "";
-    await openAppBriefingForPrompt(topicValue, {
+    await openGrillWizardForApp(topicValue, {
       onBuildReady: ({ expandedPrompt, title }) => {
         applyComposerMode("auto");
         if (titleInput && title) titleInput.value = title;
@@ -632,6 +745,31 @@ export async function handleCreateDebate(event) {
     return;
   }
 
+  // 3. Pedido geral amplo/aberto em conversa nova (planejamento, arquitetura, estratégia):
+  //    abre o Grill-me Wizard com botão "Pular e ir direto →"
+  if (
+    !shouldBypassBriefing &&
+    !currentDebate &&
+    state.pendingAttachments.length === 0 &&
+    (activeModeNow === "auto" || activeModeNow === "debate" || activeModeNow === "council") &&
+    looksLikeBroadIdeaForGrillClient(topicValue)
+  ) {
+    if (feedback) feedback.textContent = "";
+    await openGrillWizardForGeneralPrompt(topicValue, {
+      onSendEnriched: (enrichedPrompt) => {
+        if (topicInput) topicInput.value = enrichedPrompt;
+        bypassBriefingOnce = true;
+        $("#create-debate-form")?.requestSubmit();
+      },
+      onSkipPlain: () => {
+        bypassBriefingOnce = true;
+        $("#create-debate-form")?.requestSubmit();
+      }
+    });
+    return;
+  }
+
+  closeGrillWizard();
   closeAppBriefingCard();
 
   const checkboxes = $$('input[name="participants"]:checked');
@@ -743,6 +881,7 @@ export async function handleCreateDebate(event) {
             timeoutMs: 32000,
             body: {
               title: finalTitle,
+              titleAutoGenerated: !rawTitle,
               topic: topicValue,
               rules: rules || undefined,
               participants,

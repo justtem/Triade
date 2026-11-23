@@ -334,7 +334,7 @@ function extractPathFromCodeFirstLine(code: string): string | null {
   return null;
 }
 
-function detectIncompleteCode(content: string): boolean {
+function detectIncompleteCode(content: string, filePath = ""): boolean {
   const text = content.trim();
   if (!text) return true;
   const incompletePatterns = [
@@ -343,7 +343,81 @@ function detectIncompleteCode(content: string): boolean {
     /#\s*\.\.\.\s*(?:resto|existing|omitido)/i,
     /\/\/\s*TODO:\s*implementar\s+(?:o\s+resto|aqui)/i
   ];
-  return incompletePatterns.some((re) => re.test(text));
+  if (incompletePatterns.some((re) => re.test(text))) {
+    return true;
+  }
+
+  const lower = filePath.toLowerCase();
+
+  // Proteção crítica contra vazamento de Markdown/prosa de outra resposta dentro de arquivos de código
+  if (/\.(?:css|js|mjs|cjs|ts|tsx|jsx|json)$/.test(lower)) {
+    if (/\n---\s*\n\s*#{1,3}\s+/.test(text) || /\n##\s+[A-ZÀ-Ý]/.test(text)) {
+      return true;
+    }
+  }
+
+  // Validação sintática estrutural para CSS (detecta truncamento no meio de uma regra!)
+  if (lower.endsWith(".css")) {
+    const withoutComments = text.replace(/\/\*[\s\S]*?\*\//g, "");
+    const openBraces = (withoutComments.match(/\{/g) ?? []).length;
+    const closeBraces = (withoutComments.match(/\}/g) ?? []).length;
+    if (openBraces === 0 || openBraces !== closeBraces) {
+      return true;
+    }
+    if (!/\}\s*$/.test(withoutComments.trim())) {
+      return true;
+    }
+  }
+
+  // Validação estrutural para HTML completo
+  if (lower.endsWith(".html") && /<(?:!doctype\s+html|html)\b/i.test(text)) {
+    if (!/<\/html>\s*$/i.test(text)) {
+      return true;
+    }
+  }
+
+  // Validação estrutural para JSON
+  if (lower.endsWith(".json")) {
+    try {
+      JSON.parse(text);
+    } catch {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function extractHtmlLocalAssets(
+  files: readonly ExtractedWorkspaceFile[],
+  extractedSet: Set<string>
+): string[] {
+  const missing: string[] = [];
+  for (const file of files) {
+    if (!file.path.toLowerCase().endsWith(".html")) continue;
+    const baseDir = file.path.includes("/")
+      ? file.path.slice(0, file.path.lastIndexOf("/"))
+      : "";
+    const assetMatches = [
+      ...file.content.matchAll(/<link\b[^>]*\bhref=["']([^"']+\.css)(?:\?[^"']*)?["'][^>]*>/gi),
+      ...file.content.matchAll(/<script\b[^>]*\bsrc=["']([^"']+\.(?:js|mjs))(?:\?[^"']*)?["'][^>]*>/gi)
+    ];
+    for (const m of assetMatches) {
+      const rawHref = (m[1] ?? "").trim();
+      if (!rawHref || /^(?:https?:|\/\/|data:)/i.test(rawHref)) continue;
+      const cleanHref = rawHref.replace(/^\/+/, "").replace(/^\.\//, "");
+      if (!cleanHref || cleanHref.includes("..")) continue;
+      const candidate = baseDir && !cleanHref.startsWith(`${baseDir}/`)
+        ? `${baseDir}/${cleanHref}`
+        : cleanHref;
+      const check = validateRelativeWorkspacePath(candidate);
+      if (!check.valid || !check.relPath) continue;
+      if (!extractedSet.has(check.relPath) && !missing.includes(check.relPath)) {
+        missing.push(check.relPath);
+      }
+    }
+  }
+  return missing;
 }
 
 function extractReferencedPlanPaths(markdown: string, extractedSet: Set<string>): string[] {
@@ -560,10 +634,10 @@ export function extractWorkspaceFilesFromMarkdown(
     if (!candidatePath || isDummyRootExamplePath(candidatePath)) continue;
 
     const cleanBody = bodyRaw.replace(/\r\n/g, "\n");
-    const incomplete = detectIncompleteCode(cleanBody);
+    const incomplete = detectIncompleteCode(cleanBody, candidatePath);
     const existing = filesMap.get(candidatePath);
     // Se já existe versão completa e a nova parece incompleta, mantém a completa
-    if (!existing || (existing.incomplete && !incomplete) || cleanBody.length >= existing.content.length) {
+    if (!existing || (existing.incomplete && !incomplete) || (!incomplete && cleanBody.length >= existing.content.length)) {
       filesMap.set(candidatePath, {
         path: candidatePath,
         content: cleanBody,
@@ -572,11 +646,70 @@ export function extractWorkspaceFilesFromMarkdown(
     }
   }
 
+  // Detecta também eventual bloco de código NÃO FECHADO no fim da resposta (quando o LLM atingiu maxTokens)
+  // e marca como `incomplete: true` para o Construtor regenerá-lo 100% completo sem corromper o projeto.
+  const trailingStart = text.lastIndexOf("```");
+  if (trailingStart >= 0) {
+    const afterTrailing = text.slice(trailingStart + 3);
+    const nlIdx = afterTrailing.indexOf("\n");
+    if (nlIdx >= 0 && !afterTrailing.includes("```")) {
+      const infoRaw = afterTrailing.slice(0, nlIdx).trim();
+      const bodyRaw = afterTrailing.slice(nlIdx + 1);
+      const langLower = (infoRaw.split(/[\s:]/)[0] ?? "").toLowerCase();
+      if (
+        infoRaw.length > 0 &&
+        bodyRaw.trim().length > 0 &&
+        !["mermaid", "text", "txt", "console", "output"].includes(langLower)
+      ) {
+        let candidatePath: string | null = null;
+        const infoColon = infoRaw.match(/^[a-zA-Z0-9_-]+:(.+)$/);
+        if (infoColon?.[1] && isLikelyFilePath(infoColon[1])) {
+          candidatePath = normalizeRelativeWorkspacePath(infoColon[1]);
+        }
+        if (!candidatePath) {
+          candidatePath = extractPathFromCodeFirstLine(bodyRaw);
+        }
+        if (!candidatePath) {
+          const before = text.slice(Math.max(0, trailingStart - 500), trailingStart);
+          const prevLines = before
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .slice(-3)
+            .reverse();
+          for (const prevLine of prevLines) {
+            const found = extractPathFromContextLine(prevLine);
+            if (found) {
+              candidatePath = found;
+              break;
+            }
+          }
+        }
+        if (candidatePath && !isDummyRootExamplePath(candidatePath)) {
+          const existing = filesMap.get(candidatePath);
+          if (!existing) {
+            filesMap.set(candidatePath, {
+              path: candidatePath,
+              content: bodyRaw.replace(/\r\n/g, "\n"),
+              incomplete: true
+            });
+          }
+        }
+      }
+    }
+  }
+
   const files = Array.from(filesMap.values()).slice(0, MAX_FILES_PER_BATCH);
   const extractedSet = new Set(files.map((f) => f.path));
   const deletes = extractDeleteDirectivesOutsideFences(text, extractedSet);
   const deletedSet = new Set(deletes);
-  const missingPaths = extractReferencedPlanPaths(text, extractedSet)
+  const htmlAssetsMissing = extractHtmlLocalAssets(files, extractedSet);
+  const missingPaths = Array.from(
+    new Set([
+      ...htmlAssetsMissing,
+      ...extractReferencedPlanPaths(text, extractedSet)
+    ])
+  )
     .filter((p) => !deletedSet.has(p))
     .slice(0, 20);
 

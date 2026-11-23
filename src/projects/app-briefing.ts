@@ -4,6 +4,8 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { validateSubfolderName } from "./folder-picker.js";
 import { inspectLinkedFolder } from "./project-rag.js";
+import type { GrillAnswer } from "./app-grill-me.js";
+import type { DesignSystemEntry } from "./design-systems.js";
 
 export type AppBriefingKind = "web_app" | "api" | "landing";
 export type AppBriefingTheme = "dark" | "light";
@@ -38,6 +40,8 @@ export interface ExpandAppBriefingInput {
     financial: boolean;
     lgpd: boolean;
   };
+  designSystem?: DesignSystemEntry | null;
+  grillAnswers?: GrillAnswer[];
 }
 
 export interface ExpandedAppBriefingSpec {
@@ -369,10 +373,20 @@ export function expandAppBriefingToSpec(
     );
   }
 
+  const activeDesignSystem =
+    input.appKind !== "api" && input.designSystem ? input.designSystem : null;
+
+  if (activeDesignSystem) {
+    extraRules.push(
+      `Identidade Visual (Design System "${activeDesignSystem.name}" — ${activeDesignSystem.theme}, destaque ${activeDesignSystem.accentHex}, fundo ${activeDesignSystem.backgroundHex}): preserve exatamente esta paleta, tipografia com fallback nativo (zero CDN) e estilo de superfícies em todas as edições futuras; nunca copie marcas ou textos de exemplo da referência.`
+    );
+  }
+
   const projectInstructions = [...baseRules, ...extraRules].join("\n");
 
-  const themeInstruction =
-    input.theme === "light"
+  const themeInstruction = activeDesignSystem
+    ? `Siga o Design System "${activeDesignSystem.name}" detalhado abaixo (use os tokens :root dele em public/style.css, com zero CDN externa).`
+    : input.theme === "light"
       ? "Tema visual claro minimalista (fundo claro limpo, alto contraste, tipografia nítida, bordas finas sólidas, responsivo, zero CDN externa)."
       : "Tema visual escuro moderno (fundo escuro limpo, alto contraste, tipografia nítida, bordas finas sólidas, responsivo, zero CDN externa).";
 
@@ -391,7 +405,7 @@ export function expandAppBriefingToSpec(
         : [
             `3. src/server.ts: exporta createApp() retornando o http.Server com API REST completa em JSON (/api/...) + serviço seguro de arquivos estáticos da pasta public/ (/, /style.css, /app.js) resolvendo o diretório via resolve(process.cwd(), "public") (para funcionar tanto em src/ quanto compilado em dist/), com proteção anti-path-traversal e headers X-Content-Type-Options: nosniff e X-Frame-Options: DENY.`,
             `4. src/index.ts: sobe o servidor em 127.0.0.1 na porta process.env.PORT || ${port} e imprime a URL pronta no terminal.`,
-            `5. public/index.html, public/style.css e public/app.js: interface funcional completa, interativa e responsiva ligada à API (sem innerHTML com dados do usuário; inclua nos testes verificação de GET / retornando HTTP 200 com text/html). ${themeInstruction}`
+            `5. public/index.html, public/style.css e public/app.js (ENTREGUE OS 3 ARQUIVOS 100% COMPLETOS, NUNCA TRUNCADOS): interface de produto acabado, interativa e responsiva ligada à API — inclua cabeçalho polido, faixa hero/resumo com cards KPI em destaque, barra de filtros estilizada, grid responsivo de cards ricos com badges/pills de status e ações, formulário bem diagramado em card próprio (ZERO inputs/selects/botões com estilo padrão cinza/branco do navegador; sem innerHTML com dados do usuário; inclua teste verificando GET / retornando HTTP 200 com text/html). ${themeInstruction}`
           ];
 
   const securityPromptLines: string[] = [];
@@ -411,27 +425,43 @@ export function expandAppBriefingToSpec(
       ? `7. README.md + .gitignore (ignorando node_modules/, dist/, data/ e .env): inclua uma seção honesta e curta separando "Boas práticas aplicadas neste protótipo local" e "Passos necessários antes de ir para produção pública (HTTPS/TLS, banco criptografado, autenticação/RBAC e avaliação jurídica da LGPD)".`
       : `7. .gitignore ignorando node_modules/, dist/, data/ e .env.`;
 
+  const cleanGrillAnswers = (input.grillAnswers ?? [])
+    .filter((a) => a && typeof a.answer === "string" && a.answer.trim().length > 0)
+    .slice(0, 10)
+    .map((a) => {
+      const q = String(a.question || a.id || "Decisão").replace(/[\r\n]+/g, " ").trim().slice(0, 140);
+      const ans = a.answer.replace(/[\r\n]+/g, " ").trim().slice(0, 220);
+      return `- ${q} → ${ans}`;
+    });
+
   const expandedPrompt = [
     `Crie na pasta o projeto completo e funcional "${cleanName}" pronto para rodar com \`npm run dev\` em http://127.0.0.1:${port} (ou process.env.PORT).`,
     "",
     `Ideia solicitada pelo usuário:\n"${input.rawIdea.trim()}"`,
+    ...(cleanGrillAnswers.length > 0
+      ? ["", "Decisões refinadas pelo usuário (Grill-me — siga todas):", ...cleanGrillAnswers]
+      : []),
     "",
     "Arquitetura e entregáveis obrigatórios:",
     `1. package.json ("type": "module", scripts dev/build/test, apenas devDependencies typescript, tsx, @types/node) e tsconfig.json (rootDir "./src", outDir "./dist", include ["src/**/*"], strict: true).`,
-    `2. src/store.ts: persistência atômica em arquivo JSON (caminho configurável via process.env.${envDataVar}, padrão data/${slug}.json).`,
+    `2. src/store.ts: persistência atômica em arquivo JSON (caminho configurável via process.env.${envDataVar}, padrão data/${slug}.json). Se o arquivo ainda não existir e o usuário não tiver pedido para começar vazio, semeie automaticamente 4 a 5 registros iniciais realistas para que a interface já abra preenchida e visualmente rica no primeiro acesso.`,
     ...kindBlock,
     `6. tests/app.test.ts: pelo menos 5 testes automatizados reais usando node:test + node:assert/strict em diretório temporário isolado, testando fluxo principal, validação 400, 404${financial ? ", valor inválido/idempotência 409" : ""}${lgpd ? ", mascaramento/portabilidade/exclusão" : ""} e fechando o servidor com server.closeAllConnections?.() e server.close() no finally.`,
     readmeRequirement,
     ...(securityPromptLines.length > 0
       ? ["", "Boas práticas reforçadas ativadas:", ...securityPromptLines]
+      : []),
+    ...(activeDesignSystem
+      ? ["", "---", activeDesignSystem.compactPromptBlock]
       : [])
   ].join("\n");
 
   const profileLabels = ["Base OWASP"];
   if (financial) profileLabels.push("Financeiro");
   if (lgpd) profileLabels.push("Privacidade (LGPD)");
+  if (activeDesignSystem) profileLabels.push(`Estilo: ${activeDesignSystem.name}`);
 
-  const description = `${input.rawIdea.trim().slice(0, 150)} · ${profileLabels.join(" + ")}`;
+  const description = `${input.rawIdea.trim().slice(0, 140)} · ${profileLabels.join(" + ")}`;
   const color: "iris" | "sky" | "saffron" | "rose" =
     financial && lgpd
       ? "rose"
