@@ -53,10 +53,12 @@ import {
 } from "../projects/builder-orchestrator.js";
 
 const TICK_MS = 2_500;
-// Cada tarefa já faz até 2-3 tentativas HTTP dentro do provedor (e cada uma conta
-// no limite diário). Por isso uma falha pausa o debate de imediato.
+// Em erro não-transitório pausa de imediato; em 503 transitório (pico momentâneo)
+// faz 1 retentativa automática rápida (4s) EM PARALELO sem travar nem pausar a conversa.
 const MAX_TASK_ATTEMPTS = 1;
+const MAX_TRANSIENT_ATTEMPTS = 2;
 const RETRY_BASE_DELAY_MS = 8_000;
+const TRANSIENT_RETRY_DELAY_MS = 4_000;
 const MEMORY_RETRY_COOLDOWN_MS = 120_000;
 const MAX_CHAINED_PASSES = 12;
 // Quórum de rodada: assim que 2+ IAs já responderam em uma rodada de 3 IAs,
@@ -69,9 +71,182 @@ const inFlight = new Set<string>();
 const stragglerAborted = new Set<string>();
 const activeControllers = new Map<
   string,
-  { debateId: string; controller: AbortController; partialText: string }
+  {
+    debateId: string;
+    turnId?: string;
+    round: number;
+    stage: string;
+    platform: AutoPlatform;
+    controller: AbortController;
+    partialText: string;
+  }
 >();
 const retryNotBefore = new Map<string, number>();
+
+interface StageQuorumTracker {
+  key: string;
+  debateId: string;
+  turnId?: string;
+  round: number;
+  stage: string;
+  totalTasks: number;
+  succeededTaskIds: Set<string>;
+  graceTimer?: NodeJS.Timeout;
+}
+const stageTrackers = new Map<string, StageQuorumTracker>();
+
+function buildStageTrackerKey(
+  debateId: string,
+  turnId: string | undefined,
+  round: number,
+  stage: string
+): string {
+  return `${debateId}:${turnId ?? "legacy"}:${round}:${stage}`;
+}
+
+function clearStageTrackersForDebate(debateId: string): void {
+  for (const [key, tracker] of stageTrackers.entries()) {
+    if (tracker.debateId !== debateId) continue;
+    if (tracker.graceTimer) {
+      clearTimeout(tracker.graceTimer);
+      tracker.graceTimer = undefined;
+    }
+    stageTrackers.delete(key);
+  }
+}
+
+function clearAllStageTrackers(): void {
+  for (const tracker of stageTrackers.values()) {
+    if (tracker.graceTimer) {
+      clearTimeout(tracker.graceTimer);
+      tracker.graceTimer = undefined;
+    }
+  }
+  stageTrackers.clear();
+}
+
+function getOrCreateStageTracker(
+  session: DebateSession,
+  activeTurnId: string | undefined
+): StageQuorumTracker | null {
+  if (session.currentStage === "synthesis") return null;
+
+  const stageTasks = session.tasks.filter(
+    (t) =>
+      (!activeTurnId || !t.turnId || t.turnId === activeTurnId) &&
+      t.round === session.currentRound &&
+      t.stage === session.currentStage &&
+      isAutoPlatform(t.platform)
+  );
+  if (stageTasks.length < 2) return null;
+
+  const key = buildStageTrackerKey(
+    session.id,
+    activeTurnId,
+    session.currentRound,
+    session.currentStage
+  );
+
+  let tracker = stageTrackers.get(key);
+  if (!tracker) {
+    tracker = {
+      key,
+      debateId: session.id,
+      ...(activeTurnId ? { turnId: activeTurnId } : {}),
+      round: session.currentRound,
+      stage: session.currentStage,
+      totalTasks: stageTasks.length,
+      succeededTaskIds: new Set<string>()
+    };
+    stageTrackers.set(key, tracker);
+  } else {
+    tracker.totalTasks = Math.max(tracker.totalTasks, stageTasks.length);
+  }
+
+  // Sincroniza tarefas que já responderam nesta etapa (útil após Retomar ou failover)
+  for (const r of session.responses) {
+    if (
+      (!activeTurnId || !r.turnId || r.turnId === activeTurnId) &&
+      r.round === session.currentRound &&
+      r.stage === session.currentStage &&
+      r.taskId
+    ) {
+      tracker.succeededTaskIds.add(r.taskId);
+    }
+  }
+
+  return tracker;
+}
+
+function listInFlightControllersForTracker(tracker: StageQuorumTracker): Array<{
+  taskId: string;
+  platform: AutoPlatform;
+  controller: AbortController;
+}> {
+  const result: Array<{
+    taskId: string;
+    platform: AutoPlatform;
+    controller: AbortController;
+  }> = [];
+  for (const [taskId, entry] of activeControllers.entries()) {
+    if (
+      entry.debateId === tracker.debateId &&
+      entry.round === tracker.round &&
+      entry.stage === tracker.stage &&
+      (!tracker.turnId || !entry.turnId || entry.turnId === tracker.turnId)
+    ) {
+      result.push({ taskId, platform: entry.platform, controller: entry.controller });
+    }
+  }
+  return result;
+}
+
+function makeStageBatchContext(tracker: StageQuorumTracker): StageBatchContext {
+  const quorumSize = tracker.totalTasks >= 3 ? 2 : 1;
+
+  return {
+    hasQuorum: () => tracker.succeededTaskIds.size >= quorumSize,
+    onTaskFinished: (finishedTaskId, succeeded) => {
+      if (succeeded) {
+        tracker.succeededTaskIds.add(finishedTaskId);
+      }
+
+      const remaining = listInFlightControllersForTracker(tracker);
+      if (remaining.length === 0) {
+        if (tracker.graceTimer) {
+          clearTimeout(tracker.graceTimer);
+          tracker.graceTimer = undefined;
+        }
+        if (tracker.succeededTaskIds.size >= tracker.totalTasks) {
+          stageTrackers.delete(tracker.key);
+        }
+        return;
+      }
+
+      if (tracker.succeededTaskIds.size >= quorumSize && !tracker.graceTimer) {
+        const graceMs =
+          tracker.totalTasks >= 3
+            ? ROUND_STRAGGLER_GRACE_MS
+            : remaining.some((r) => r.platform === "gemini")
+              ? PAIR_GEMINI_GRACE_MS
+              : PAIR_STRAGGLER_GRACE_MS;
+
+        tracker.graceTimer = setTimeout(() => {
+          tracker.graceTimer = undefined;
+          const stillSlow = listInFlightControllersForTracker(tracker);
+          for (const slow of stillSlow) {
+            stragglerAborted.add(slow.taskId);
+            try {
+              slow.controller.abort();
+            } catch {
+              // Ignora erro de aborto duplicado
+            }
+          }
+        }, graceMs);
+      }
+    }
+  };
+}
 const memoryInFlight = new Set<string>();
 const memoryRetryNotBefore = new Map<string, number>();
 const autoVerdictInFlight = new Set<string>();
@@ -162,6 +337,7 @@ async function pickHealthyFailoverProvider(
  */
 export function abortDebateTasks(debateId: string): Map<string, string> {
   abortBuilderRun(debateId);
+  clearStageTrackersForDebate(debateId);
   const partials = new Map<string, string>();
 
   for (const stream of getActiveStreams(debateId)) {
@@ -275,7 +451,15 @@ async function runTask(
     let result;
     let streamStarted = false;
     const controller = new AbortController();
-    const controllerEntry = { debateId, controller, partialText: "" };
+    const controllerEntry = {
+      debateId,
+      ...(task.turnId ? { turnId: task.turnId } : {}),
+      round: task.round,
+      stage: task.stage,
+      platform,
+      controller,
+      partialText: ""
+    };
     activeControllers.set(task.id, controllerEntry);
 
     try {
@@ -424,20 +608,36 @@ async function runTask(
       }
 
       const fatal = failure.kind === "auth" || failure.kind === "model";
+      const isTransientRetryable = failure.kind === "transient";
+      const maxAttemptsForError = isTransientRetryable
+        ? MAX_TRANSIENT_ATTEMPTS
+        : MAX_TASK_ATTEMPTS;
 
       const updated = await recordTaskFailure(debateId, task.id, failure.message, {
-        maxAttempts: MAX_TASK_ATTEMPTS,
+        maxAttempts: maxAttemptsForError,
         fatal
       });
 
       const attempts =
         updated?.tasks.find((t) => t.id === task.id)?.attempts ?? 1;
+      const delayMs = isTransientRetryable
+        ? TRANSIENT_RETRY_DELAY_MS
+        : RETRY_BASE_DELAY_MS * attempts;
 
-      retryNotBefore.set(task.id, Date.now() + RETRY_BASE_DELAY_MS * attempts);
+      retryNotBefore.set(task.id, Date.now() + delayMs);
 
-      console.warn(
-        `[AI Council] ${label} falhou (${failure.kind}): ${failure.message.slice(0, 160)}`
-      );
+      if (isTransientRetryable && attempts < maxAttemptsForError) {
+        console.warn(
+          `[AI Council] ${label} sofreu erro transitório (503/rede) — nova tentativa automática em ${Math.round(delayMs / 1000)}s em paralelo (sem pausar).`
+        );
+        setTimeout(() => {
+          kickRunner();
+        }, delayMs + 100);
+      } else {
+        console.warn(
+          `[AI Council] ${label} falhou (${failure.kind}): ${failure.message.slice(0, 160)}`
+        );
+      }
 
       return false;
     }
@@ -609,10 +809,9 @@ async function runUserMemoryExtraction(
 // Varredura
 // ---------------------------------------------------------------
 
-async function processOnce(): Promise<boolean> {
+async function processOnce(): Promise<void> {
   const summaries = await listDebateSummaries();
   const now = Date.now();
-  let didWork = false;
 
   // Lê apenas o arquivo JSON das sessões realmente ativas (0 leituras em repouso).
   const activeSummaries = summaries.filter(
@@ -624,91 +823,52 @@ async function processOnce(): Promise<boolean> {
     if (!session || session.status !== "running") continue;
 
     const activeTurnId = session.turns?.at(-1)?.id;
-    const pending = session.tasks.filter(
-      (task) =>
-        task.status === "pending" &&
-        (task.singleTaskOnly === true ||
+    const pending = session.tasks.filter((task) => {
+      if (
+        task.status !== "pending" ||
+        !(
+          task.singleTaskOnly === true ||
           !activeTurnId ||
           !task.turnId ||
-          task.turnId === activeTurnId) &&
-        task.round === session.currentRound &&
-        task.stage === session.currentStage &&
-        isAutoPlatform(task.platform) &&
-        !inFlight.has(task.id) &&
-        (retryNotBefore.get(task.id) ?? 0) <= now
-    );
+          task.turnId === activeTurnId
+        ) ||
+        task.round !== session.currentRound ||
+        task.stage !== session.currentStage ||
+        !isAutoPlatform(task.platform) ||
+        inFlight.has(task.id)
+      ) {
+        return false;
+      }
+      // Se o usuário clicou em Retomar (attempts foi limpo), libera cooldown imediatamente!
+      if (task.attempts === undefined && retryNotBefore.has(task.id)) {
+        retryNotBefore.delete(task.id);
+      }
+      return (retryNotBefore.get(task.id) ?? 0) <= now;
+    });
 
     if (pending.length === 0) continue;
 
-    // Provedores diferentes em paralelo; cada um respeita o próprio UsageGate.
-    // Em rodadas multi-IA (não síntese), aplica quórum com prazo curto para que
-    // uma IA lenta não trave a síntese do Gemini por minutos.
-    let outcomes: boolean[];
-    if (pending.length >= 2 && session.currentStage !== "synthesis") {
-      const quorumSize = pending.length >= 3 ? 2 : 1;
-      const finishedIds = new Set<string>();
-      let succeededCount = 0;
-      let graceTimer: NodeJS.Timeout | undefined;
+    // Despacho 100% NÃO-BLOQUEANTE por tarefa:
+    // NUNCA espera uma IA lenta (ex.: NVIDIA 120s) dentro de Promise.all para liberar o runner!
+    // Assim, se Gemini der 503 e retentar (ou o usuário clicar Retomar / failover),
+    // ela inicia IMEDIATAMENTE em paralelo enquanto as outras IAs ainda estão escrevendo.
+    const tracker = getOrCreateStageTracker(session, activeTurnId);
+    const batchContext = tracker ? makeStageBatchContext(tracker) : undefined;
 
-      const batchContext: StageBatchContext = {
-        hasQuorum: () => succeededCount >= quorumSize,
-        onTaskFinished: (finishedTaskId, succeeded) => {
-          finishedIds.add(finishedTaskId);
-          if (succeeded) succeededCount += 1;
-
-          const remaining = pending.filter((t) => !finishedIds.has(t.id));
-          if (remaining.length === 0) {
-            if (graceTimer) {
-              clearTimeout(graceTimer);
-              graceTimer = undefined;
-            }
-            return;
-          }
-
-          if (succeededCount >= quorumSize && !graceTimer) {
-            const graceMs =
-              pending.length >= 3
-                ? ROUND_STRAGGLER_GRACE_MS
-                : remaining.some((t) => t.platform === "gemini")
-                  ? PAIR_GEMINI_GRACE_MS
-                  : PAIR_STRAGGLER_GRACE_MS;
-
-            graceTimer = setTimeout(() => {
-              graceTimer = undefined;
-              for (const slowTask of pending) {
-                if (finishedIds.has(slowTask.id)) continue;
-                const ctrlEntry = activeControllers.get(slowTask.id);
-                if (!ctrlEntry) continue;
-                stragglerAborted.add(slowTask.id);
-                try {
-                  ctrlEntry.controller.abort();
-                } catch {
-                  // Ignora erro de aborto duplicado
-                }
-              }
-            }, graceMs);
-          }
-        }
-      };
-
-      try {
-        outcomes = await Promise.all(
-          pending.map((task) => runTask(session.id, task, session, batchContext))
-        );
-      } finally {
-        if (graceTimer) {
-          clearTimeout(graceTimer);
-          graceTimer = undefined;
-        }
-      }
-    } else {
-      outcomes = await Promise.all(
-        pending.map((task) => runTask(session.id, task, session))
-      );
-    }
-
-    if (outcomes.some(Boolean)) {
-      didWork = true;
+    for (const task of pending) {
+      inFlight.add(task.id);
+      void runTask(session.id, task, session, batchContext)
+        .catch((err) => {
+          console.error(
+            "[AI Council] Erro inesperado em tarefa paralela:",
+            err instanceof Error ? err.message : err
+          );
+        })
+        .finally(() => {
+          // Assim que qualquer tarefa termina (resposta, failover ou dispensa), acorda
+          // o runner em 0ms para iniciar próxima etapa / síntese ou retry sem esperar lentas.
+          kickRunner();
+        });
     }
   }
 
@@ -765,8 +925,6 @@ async function processOnce(): Promise<boolean> {
       }
     }
   }
-
-  return didWork;
 }
 
 async function tick(): Promise<void> {
@@ -782,11 +940,8 @@ async function tick(): Promise<void> {
 
     do {
       rerunRequested = false;
-      const didWork = await processOnce();
+      await processOnce();
       passes += 1;
-
-      // Se algo foi concluído, a etapa pode ter avançado: varre de novo já.
-      if (didWork) rerunRequested = true;
     } while (rerunRequested && passes < MAX_CHAINED_PASSES);
   } catch (error) {
     console.error(
@@ -816,6 +971,7 @@ export function startRunner(): void {
 }
 
 export function stopRunner(): void {
+  clearAllStageTrackers();
   if (timer) {
     clearInterval(timer);
     timer = undefined;

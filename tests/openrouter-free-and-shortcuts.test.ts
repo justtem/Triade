@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { describe, it, beforeEach } from "node:test";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { after, describe, it, beforeEach } from "node:test";
 
-import {
+// Isola data/usage.json em pasta temporária para os testes nunca lerem ou consumirem a cota real do usuário.
+const tempDataDir = mkdtempSync(join(tmpdir(), "ai-council-or-test-"));
+process.env.AI_COUNCIL_DATA_DIR = tempDataDir;
+
+after(() => {
+  rmSync(tempDataDir, { recursive: true, force: true });
+});
+
+const {
   buildHybridFreeModelList,
   getOpenRouterFreeDiscoverySnapshot,
   isStrictlyFreeOpenRouterEntry,
@@ -13,10 +23,10 @@ import {
   refreshOpenRouterFreeCatalog,
   resetOpenRouterFreeDiscoveryForTests,
   resolveOpenRouterFreeModels
-} from "../src/providers/openrouter-free.js";
-import { runWithFallback } from "../src/providers/policy.js";
-import { ProviderError } from "../src/providers/types.js";
-import { UsageGate } from "../src/providers/usage-gate.js";
+} = await import("../src/providers/openrouter-free.js");
+const { runWithFallback } = await import("../src/providers/policy.js");
+const { ProviderError } = await import("../src/providers/types.js");
+const { UsageGate } = await import("../src/providers/usage-gate.js");
 
 describe("OpenRouter :free Auto-Discovery & Fallback Híbrido", () => {
   beforeEach(() => {
