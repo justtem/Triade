@@ -27,6 +27,11 @@ import {
   startProjectDevServer,
   stopProjectDevServer
 } from "./dev-server-manager.js";
+import {
+  ensureDefaultLandingSlotPlaceholders,
+  exportStaticLandingBundle,
+  type ExportStaticBundleResult
+} from "./landing-assets.js";
 import { verifyWorkspaceProject } from "./workspace-verifier.js";
 import {
   applyWorkspaceChanges,
@@ -1317,6 +1322,9 @@ export async function applyBuilderTurnToDisk(
       toApply.map((f) => ({ path: f.path, content: f.content }))
     );
 
+    // Onda 4: garante placeholders SVG locais para slots /assets/slot-N.svg referenciados em public/index.html
+    await ensureDefaultLandingSlotPlaceholders(proj.folderPath).catch(() => []);
+
     const postPreview = await previewWorkspaceChanges(
       proj.folderPath,
       allFiles.map((f) => ({ path: f.path, content: f.content, incomplete: Boolean(f.incomplete) }))
@@ -1462,6 +1470,18 @@ export async function undoBuilderTurnBackup(
 
   if (!updated) throw new Error("Falha ao atualizar estado após desfazer.");
   return updated;
+}
+
+/**
+ * 5b. Exporta a pasta `public/` da Landing Page / site para `deploy-static/` pronta para publicar.
+ */
+export async function exportBuilderStaticSite(
+  debateId: string
+): Promise<ExportStaticBundleResult> {
+  const session = await readDebateSessionById(debateId);
+  if (!session) throw new Error("Conversa não encontrada.");
+  const proj = await resolveProjectFolderForSession(session);
+  return exportStaticLandingBundle(proj.folderPath);
 }
 
 /**

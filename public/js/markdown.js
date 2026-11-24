@@ -306,6 +306,53 @@ function createMathBlockElement(latexRaw, isStreaming) {
   return wrap;
 }
 
+function parseCodeFenceHeader(rawHeader, rawBody) {
+  const header = String(rawHeader || "").trim();
+  let body = String(rawBody || "").replace(/\n$/, "");
+
+  if (!header) {
+    return { lang: "code", label: "código", body };
+  }
+
+  const firstSpace = header.search(/\s/);
+  if (firstSpace < 0) {
+    // Ex.: "ts", "html", "ts:src/server.ts"
+    const colonIdx = header.indexOf(":");
+    if (colonIdx > 0) {
+      const langPart = header.slice(0, colonIdx).trim();
+      const filePart = header.slice(colonIdx + 1).trim();
+      return {
+        lang: langPart || "code",
+        label: filePart ? `${langPart} · ${filePart}` : langPart,
+        body
+      };
+    }
+    return { lang: header, label: header, body };
+  }
+
+  const firstToken = header.slice(0, firstSpace).trim();
+  const rest = header.slice(firstSpace).trim();
+
+  // Caso a IA coloque código na mesma linha da abertura (ex.: ```html <!DOCTYPE html>...)
+  const looksLikeInlineCodeStart =
+    /^(?:<[!a-zA-Z/?]|[{[(]|import\b|export\b|const\b|let\b|var\b|function\b|class\b|\/[/*]|#include|SELECT\b|body\b|:root\b|@media\b)/i.test(
+      rest
+    );
+
+  if (looksLikeInlineCodeStart) {
+    body = body ? `${rest}\n${body}` : rest;
+    return { lang: firstToken || "code", label: firstToken || "código", body };
+  }
+
+  // Caso a IA coloque o caminho do arquivo na abertura (ex.: ```html public/index.html)
+  const cleanTitle = rest.replace(/^title=["']?|["']?$/g, "").trim();
+  return {
+    lang: firstToken || "code",
+    label: cleanTitle ? `${firstToken} · ${cleanTitle}` : firstToken || "código",
+    body
+  };
+}
+
 export function buildMarkdownDom(markdownText, options = {}) {
   const isStreaming = Boolean(options.isStreaming);
   const container = document.createElement("div");
@@ -314,10 +361,11 @@ export function buildMarkdownDom(markdownText, options = {}) {
   const raw = String(markdownText || "").replace(/\r\n/g, "\n").trim();
   if (!raw) return container;
 
-  // 1. Divide blocos cercados (```lang ... ```), blocos de matemática ($$...$$ e \[...\]) e bloco mermaid aberto em streaming
+  // 1. Divide blocos cercados (```lang [opcional] ... ```), blocos de matemática ($$...$$ e \[...\])
+  //    e também blocos abertos (durante streaming ou truncados sem ``` final) para NUNCA virar texto branco.
   const segments = [];
   const blockRegex =
-    /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g;
+    /```([^\n`]*)(?:\n([\s\S]*?))?```|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g;
   let lastIndex = 0;
   let match;
 
@@ -328,18 +376,19 @@ export function buildMarkdownDom(markdownText, options = {}) {
         content: raw.slice(lastIndex, match.index)
       });
     }
-    if (match[2] !== undefined) {
-      const lang = (match[1] || "code").trim().toLowerCase();
-      const body = match[2].replace(/\n$/, "");
-      if (lang === "mermaid") {
-        segments.push({ type: "mermaid", content: body });
-      } else if (lang === "math" || lang === "latex") {
-        segments.push({ type: "math", content: body });
+    if (match[1] !== undefined) {
+      const parsed = parseCodeFenceHeader(match[1], match[2] ?? "");
+      const langNorm = parsed.lang.toLowerCase();
+      if (langNorm === "mermaid") {
+        segments.push({ type: "mermaid", content: parsed.body });
+      } else if (langNorm === "math" || langNorm === "latex") {
+        segments.push({ type: "math", content: parsed.body });
       } else {
         segments.push({
           type: "code",
-          lang: (match[1] || "code").trim(),
-          content: body
+          lang: parsed.lang,
+          label: parsed.label,
+          content: parsed.body
         });
       }
     } else if (match[3] !== undefined || match[4] !== undefined) {
@@ -353,13 +402,26 @@ export function buildMarkdownDom(markdownText, options = {}) {
 
   if (lastIndex < raw.length) {
     const tail = raw.slice(lastIndex);
-    // Durante streaming, detecta bloco ```mermaid aberto antes de fechar para evitar piscar
-    const openMermaid = isStreaming ? tail.match(/^([\s\S]*?)```mermaid\n([\s\S]*)$/i) : null;
-    if (openMermaid) {
-      if (openMermaid[1].trim()) {
-        segments.push({ type: "prose", content: openMermaid[1] });
+    // Captura qualquer bloco ``` aberto (streaming ao vivo OU resposta truncada sem ``` de fechamento)
+    const openFence = tail.match(/^([\s\S]*?)```([^\n`]*)(?:\n([\s\S]*))?$/);
+    if (openFence) {
+      if (openFence[1] && openFence[1].trim()) {
+        segments.push({ type: "prose", content: openFence[1] });
       }
-      segments.push({ type: "mermaid", content: openMermaid[2] });
+      const parsedOpen = parseCodeFenceHeader(openFence[2] ?? "", openFence[3] ?? "");
+      const langNorm = parsedOpen.lang.toLowerCase();
+      if (langNorm === "mermaid") {
+        segments.push({ type: "mermaid", content: parsedOpen.body });
+      } else if (langNorm === "math" || langNorm === "latex") {
+        segments.push({ type: "math", content: parsedOpen.body });
+      } else {
+        segments.push({
+          type: "code",
+          lang: parsedOpen.lang,
+          label: parsedOpen.label,
+          content: parsedOpen.body
+        });
+      }
     } else {
       segments.push({ type: "prose", content: tail });
     }
@@ -385,7 +447,7 @@ export function buildMarkdownDom(markdownText, options = {}) {
 
       const langSpan = document.createElement("span");
       langSpan.className = "code-lang-label";
-      langSpan.textContent = seg.lang || "código";
+      langSpan.textContent = seg.label || seg.lang || "código";
 
       const copyCodeBtn = document.createElement("button");
       copyCodeBtn.type = "button";

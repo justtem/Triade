@@ -25,6 +25,7 @@ import {
   selectDesignSystem,
   toPublicDesignSystemMeta
 } from "../projects/design-systems.js";
+import { selectLandingArchetype } from "../projects/landing-archetypes.js";
 import {
   getProjectDevServerStatus,
   startProjectDevServer,
@@ -548,8 +549,20 @@ export async function handleProjectRoutes(
         theme = "light";
       }
 
+      const selectedArchetype =
+        appKind === "landing"
+          ? await selectLandingArchetype({
+              prompt: rawIdea,
+              grillAnswers
+            })
+          : { archetype: null, matchReason: "not_landing" };
+
+      if (selectedArchetype.archetype) {
+        theme = selectedArchetype.archetype.theme;
+      }
+
       const selectedDs =
-        appKind === "api"
+        appKind === "api" || selectedArchetype.archetype
           ? { entry: null, reason: "explicit" as const, matchedKeywords: [] }
           : selectDesignSystem(catalog, {
               modeOrId: designSystemId,
@@ -566,6 +579,7 @@ export async function handleProjectRoutes(
         port: analysis.port,
         security: { financial, lgpd },
         designSystem: selectedDs.entry,
+        landingArchetype: selectedArchetype.archetype,
         grillAnswers
       });
 
@@ -591,7 +605,15 @@ export async function handleProjectRoutes(
           designSystem: selectedDs.entry
             ? toPublicDesignSystemMeta(selectedDs.entry)
             : null,
-          designSystemReason: selectedDs.reason
+          designSystemReason: selectedDs.reason,
+          landingArchetype: selectedArchetype.archetype
+            ? {
+                id: selectedArchetype.archetype.id,
+                name: selectedArchetype.archetype.name,
+                theme: selectedArchetype.archetype.theme,
+                vibe: selectedArchetype.archetype.vibe
+              }
+            : null
         },
         origin
       );

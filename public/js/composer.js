@@ -776,7 +776,10 @@ export async function handleCreateDebate(event) {
 
     if (isLocalAppIdea) {
       await openGrillWizardForApp(cleanIdea, {
-        onBuildReady: ({ expandedPrompt, title }) => {
+        onBuildReady: ({ project, expandedPrompt, title }) => {
+          if (project?.id) {
+            state.activeNewChatProjectId = project.id;
+          }
           applyComposerMode("auto");
           if (titleInput && title) titleInput.value = title;
           if (topicInput && expandedPrompt) topicInput.value = expandedPrompt;
@@ -818,7 +821,10 @@ export async function handleCreateDebate(event) {
   ) {
     if (feedback) feedback.textContent = "";
     await openGrillWizardForApp(topicValue, {
-      onBuildReady: ({ expandedPrompt, title }) => {
+      onBuildReady: ({ project, expandedPrompt, title }) => {
+        if (project?.id) {
+          state.activeNewChatProjectId = project.id;
+        }
         applyComposerMode("auto");
         if (titleInput && title) titleInput.value = title;
         if (topicInput && expandedPrompt) {

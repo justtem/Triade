@@ -6,6 +6,7 @@ import { validateSubfolderName } from "./folder-picker.js";
 import { inspectLinkedFolder } from "./project-rag.js";
 import type { GrillAnswer } from "./app-grill-me.js";
 import type { DesignSystemEntry } from "./design-systems.js";
+import type { LandingArchetypeEntry } from "./landing-archetypes.js";
 
 export type AppBriefingKind = "web_app" | "api" | "landing";
 export type AppBriefingTheme = "dark" | "light";
@@ -41,6 +42,7 @@ export interface ExpandAppBriefingInput {
     lgpd: boolean;
   };
   designSystem?: DesignSystemEntry | null;
+  landingArchetype?: LandingArchetypeEntry | null;
   grillAnswers?: GrillAnswer[];
 }
 
@@ -212,7 +214,11 @@ export function detectSecurityProfiles(prompt: string): SecurityProfileDetection
 
 export function inferAppKindFromPrompt(prompt: string): AppBriefingKind {
   const norm = normalizeText(prompt);
-  if (/\b(landing\s*page|landing|pagina\s+de\s+vendas|pagina\s+institucional|portfolio|portifolio)\b/.test(norm)) {
+  if (
+    /\b(landing\s*page|landing|pagina\s+de\s+(?:vendas|captura|lancamento|conversao)|captura\s+de\s+leads?|pagina\s+institucional|site\s+institucional|site\s+(?:para|de)\s+(?:meu\s+)?(?:negocio|clinica|loja|restaurante|cafeteria|barbearia|escritorio|consultorio|academia|empresa|servicos?)|negocio\s+local|portfolio|portifolio)\b/.test(
+      norm
+    )
+  ) {
     return "landing";
   }
   if (
@@ -373,10 +379,18 @@ export function expandAppBriefingToSpec(
     );
   }
 
+  const activeLandingArchetype =
+    input.appKind === "landing" && input.landingArchetype ? input.landingArchetype : null;
   const activeDesignSystem =
-    input.appKind !== "api" && input.designSystem ? input.designSystem : null;
+    input.appKind !== "api" && !activeLandingArchetype && input.designSystem
+      ? input.designSystem
+      : null;
 
-  if (activeDesignSystem) {
+  if (activeLandingArchetype) {
+    extraRules.push(
+      `Arquétipo de Landing Page ("${activeLandingArchetype.name}" — tema ${activeLandingArchetype.theme}): preserve exatamente a hierarquia tipográfica, paleta :root, ritmo de seções, placeholders de imagem numerados (data-image-slot="1", "2", "3") e conversão dupla (WhatsApp + Formulário de Leads). Zero links de imagem externos quebrados e zero CDN.`
+    );
+  } else if (activeDesignSystem) {
     extraRules.push(
       `Identidade Visual (Design System "${activeDesignSystem.name}" — ${activeDesignSystem.theme}, destaque ${activeDesignSystem.accentHex}, fundo ${activeDesignSystem.backgroundHex}): preserve exatamente esta paleta, tipografia com fallback nativo (zero CDN) e estilo de superfícies em todas as edições futuras; nunca copie marcas ou textos de exemplo da referência.`
     );
@@ -384,11 +398,13 @@ export function expandAppBriefingToSpec(
 
   const projectInstructions = [...baseRules, ...extraRules].join("\n");
 
-  const themeInstruction = activeDesignSystem
-    ? `Siga o Design System "${activeDesignSystem.name}" detalhado abaixo (use os tokens :root dele em public/style.css, com zero CDN externa).`
-    : input.theme === "light"
-      ? "Tema visual claro minimalista (fundo claro limpo, alto contraste, tipografia nítida, bordas finas sólidas, responsivo, zero CDN externa)."
-      : "Tema visual escuro moderno (fundo escuro limpo, alto contraste, tipografia nítida, bordas finas sólidas, responsivo, zero CDN externa).";
+  const themeInstruction = activeLandingArchetype
+    ? `Siga rigorosamente o Arquétipo de Landing Page "${activeLandingArchetype.name}" detalhado abaixo (use exatamente os tokens :root, tipografia e ritmo de seções dele em public/style.css, com zero CDN externa).`
+    : activeDesignSystem
+      ? `Siga o Design System "${activeDesignSystem.name}" detalhado abaixo (use os tokens :root dele em public/style.css, com zero CDN externa).`
+      : input.theme === "light"
+        ? "Tema visual claro minimalista (fundo claro limpo, alto contraste, tipografia nítida, bordas finas sólidas, responsivo, zero CDN externa)."
+        : "Tema visual escuro moderno (fundo escuro limpo, alto contraste, tipografia nítida, bordas finas sólidas, responsivo, zero CDN externa).";
 
   const kindBlock =
     input.appKind === "api"
@@ -398,9 +414,14 @@ export function expandAppBriefingToSpec(
         ]
       : input.appKind === "landing"
         ? [
-            `3. src/server.ts: exporta createApp() servindo public/index.html, public/style.css e public/app.js de forma segura (anti-path-traversal, resolvendo a pasta com resolve(process.cwd(), "public") para funcionar tanto em src/ quanto em dist/), mais endpoint leve de contato/interação em /api/entries se aplicável.`,
+            `3. src/server.ts: exporta createApp() servindo public/index.html, public/style.css, public/app.js e a subpasta public/assets/* (suportando .svg, .png, .jpg, .webp, .gif com Content-Type correto e anti-path-traversal resolvendo via resolve(process.cwd(), "public")), mais API real de captura de leads: POST /api/leads (valida nome + contato/email/whatsapp, retorna 201 ou 400 em payload inválido, salva atomicamente em data/leads.json) e GET /api/leads (lista leads capturados localmente).`,
             `4. src/index.ts: sobe o servidor em 127.0.0.1 na porta process.env.PORT || ${port} e imprime a URL pronta no terminal.`,
-            `5. public/index.html, public/style.css e public/app.js: landing page completa, interativa e responsiva (inclua teste verificando GET / retornando HTTP 200 com text/html). ${themeInstruction}`
+            `5. public/index.html, public/style.css e public/app.js (ENTREGUE OS 3 ARQUIVOS 100% COMPLETOS, NUNCA TRUNCADOS): Landing Page Pro de nível agência pronta para publicar:`,
+            `   - Copywriting real e persuasivo em português do Brasil (zero Lorem Ipsum); meta tags SEO/OpenGraph completas.`,
+            `   - Conversão dupla obrigatória: (a) Botão de WhatsApp no Hero, seção final e botão flutuante discreto (configurável via const LANDING_CONFIG = { whatsappNumber: "5511999999999", whatsappMessage: "...", externalFormAction: "" } no topo de public/app.js) e (b) Formulário de Captura de Leads conectado a POST /api/leads localmente (ou externalFormAction como Formspree quando configurado), com feedback visual elegante e sem innerHTML inseguro.`,
+            `   - Slots numerados de imagem (ZERO URLs externas de imagem): inclua 3 espaços visuais bem enquadrados usando <figure class="media-slot" data-slot-wrapper="1"><img src="/assets/slot-1.svg" data-image-slot="1" alt="..."><figcaption class="slot-badge" data-slot-placeholder="1">Espaço Imagem 1 · Envie no chat para trocar</figcaption></figure> (repita para slots 2 e 3 nas seções certas — o sistema gera automaticamente os SVG locais e substitui quando o usuário enviar fotos no chat).`,
+            `   - Motion & interatividade 60fps: IntersectionObserver com reveal escalonado (respeitando prefers-reduced-motion), contadores numéricos animados, tabs/passos interativos (01/02/03 ou seletor de serviços/planos), FAQ acordeão suave e navbar sticky.`,
+            `   - ${themeInstruction}`
           ]
         : [
             `3. src/server.ts: exporta createApp() retornando o http.Server com API REST completa em JSON (/api/...) + serviço seguro de arquivos estáticos da pasta public/ (/, /style.css, /app.js) resolvendo o diretório via resolve(process.cwd(), "public") (para funcionar tanto em src/ quanto compilado em dist/), com proteção anti-path-traversal e headers X-Content-Type-Options: nosniff e X-Frame-Options: DENY.`,
@@ -451,15 +472,21 @@ export function expandAppBriefingToSpec(
     ...(securityPromptLines.length > 0
       ? ["", "Boas práticas reforçadas ativadas:", ...securityPromptLines]
       : []),
-    ...(activeDesignSystem
-      ? ["", "---", activeDesignSystem.compactPromptBlock]
-      : [])
+    ...(activeLandingArchetype
+      ? ["", "---", activeLandingArchetype.compactPrompt]
+      : activeDesignSystem
+        ? ["", "---", activeDesignSystem.compactPromptBlock]
+        : [])
   ].join("\n");
 
   const profileLabels = ["Base OWASP"];
   if (financial) profileLabels.push("Financeiro");
   if (lgpd) profileLabels.push("Privacidade (LGPD)");
-  if (activeDesignSystem) profileLabels.push(`Estilo: ${activeDesignSystem.name}`);
+  if (activeLandingArchetype) {
+    profileLabels.push(`Landing: ${activeLandingArchetype.name}`);
+  } else if (activeDesignSystem) {
+    profileLabels.push(`Estilo: ${activeDesignSystem.name}`);
+  }
 
   const description = `${input.rawIdea.trim().slice(0, 140)} · ${profileLabels.join(" + ")}`;
   const color: "iris" | "sky" | "saffron" | "rose" =

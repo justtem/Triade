@@ -4,6 +4,7 @@ import { getDebateSessionById } from "../debate/debate-engine.js";
 import {
   abortBuilderRun,
   applyBuilderTurnToDisk,
+  exportBuilderStaticSite,
   extractBuilderFilesForTurn,
   generateRemainingBuilderFiles,
   isBuilderRunning,
@@ -23,7 +24,7 @@ export async function handleBuilderRoutes(
   auth: AuthManager
 ): Promise<boolean> {
   const match = url.pathname.match(
-    /^\/debates\/([a-zA-Z0-9_-]{6,64})\/builder\/(extract|generate-missing|apply|verify|undo|stop)$/
+    /^\/debates\/([a-zA-Z0-9_-]{6,64})\/builder\/(extract|generate-missing|apply|verify|undo|stop|export-static)$/
   );
   if (!match || request.method !== "POST") {
     return false;
@@ -123,6 +124,21 @@ export async function handleBuilderRoutes(
         response,
         400,
         { error: err instanceof Error ? err.message : "Erro ao desfazer alterações." },
+        origin
+      );
+    }
+    return true;
+  }
+
+  if (action === "export-static") {
+    try {
+      const exported = await exportBuilderStaticSite(debateId);
+      sendJson(response, 200, { ok: true, export: exported }, origin);
+    } catch (err) {
+      sendJson(
+        response,
+        400,
+        { error: err instanceof Error ? err.message : "Erro ao exportar pacote estático." },
         origin
       );
     }

@@ -95,6 +95,21 @@ const GRILL_GENERAL_SYSTEM_PROMPT = [
   ANTI_INJECTION_SYSTEM_RULE
 ].join("\n");
 
+const GRILL_LANDING_SYSTEM_PROMPT = [
+  "Você é um diretor criativo e estrategista de conversão conduzindo um Grill-me rápido antes de construir uma Landing Page de alto impacto.",
+  "Objetivo: resolver apenas as decisões que realmente elevam a conversão e o visual (objetivo principal, público/oferta, seções essenciais, slots de imagem e estilo visual).",
+  "Responda APENAS com um objeto JSON válido (sem texto fora do JSON) no formato:",
+  '{ "questions": [{ "id": "q1", "category": "product|ux|visual|data", "question": "Pergunta curta e direta?", "options": ["Opção recomendada", "Opção 2", "Opção 3"], "recommended": "Opção recomendada" }] }',
+  "Regras estritas:",
+  `- Gere ENTRE 4 e 6 perguntas objetivas (teto absoluto ${MAX_GRILL_QUESTIONS}). Nunca faça perguntas óbvias já respondidas na ideia.`,
+  "- Escreva em português do Brasil (pt-BR), linguagem humana de negócios/marketing (zero jargão de programação).",
+  "- Coloque SEMPRE a melhor opção recomendada em PRIMEIRO lugar na lista options (options[0] === recommended).",
+  '- Inclua EXATAMENTE 1 pergunta com category="visual" escolhendo um dos 5 arquétipos: "Editorial Luxo (claro sofisticado, serif itálico)", "Conversão Bold (claro + preto + cor vibrante)", "Contraste Escuro e Claro (alternância dramática)", "Vitrine de Negócio Local (orgânico interativo)", ou "Dark Bento Tech (escuro cinematográfico)".',
+  "- Considere que a página sempre terá WhatsApp + Formulário de Leads integrados; foque em oferta, público, seções (prova social, preços, FAQ, localização) e se quer espaços numerados de imagem (Imagem 1, 2, 3) para trocar fotos depois pelo chat.",
+  "- NUNCA peça senhas, chaves de API, CPF, dados bancários ou dados pessoais reais.",
+  ANTI_INJECTION_SYSTEM_RULE
+].join("\n");
+
 function sanitizeShortText(raw: unknown, maxLen: number): string {
   return String(raw ?? "")
     .replace(/[\r\n\t]+/g, " ")
@@ -111,9 +126,31 @@ function normalizeCategory(raw: unknown): GrillQuestion["category"] {
   return "product";
 }
 
+function buildLandingArchetypeQuestion(): GrillQuestion {
+  const options = [
+    "Editorial Luxo (claro sofisticado, serif itálico — clínicas, serviços premium)",
+    "Conversão Bold (claro + preto + cor vibrante — vendas, leads, SaaS)",
+    "Vitrine de Negócio Local (paleta orgânica + vitrine interativa — lojas, cafés)",
+    "Contraste Escuro e Claro (alternância dramática — B2B e consultoria)",
+    "Dark Bento Tech (escuro cinematográfico — agências e lançamentos)"
+  ];
+  return {
+    id: "q_archetype",
+    category: "visual",
+    question: "Qual dos 5 estilos visuais de Landing Page combina mais com essa marca?",
+    options,
+    allowCustom: true,
+    recommended: options[0]
+  };
+}
+
 function buildVisualStyleQuestion(
-  designSystems: DesignSystemPublicMeta[] = []
+  designSystems: DesignSystemPublicMeta[] = [],
+  appKind?: "web_app" | "api" | "landing"
 ): GrillQuestion {
+  if (appKind === "landing") {
+    return buildLandingArchetypeQuestion();
+  }
   const hasGreen = designSystems.some((d) => d.tags.includes("verde"));
   const hasViolet = designSystems.some((d) => d.tags.includes("roxo") || d.tags.includes("violeta"));
   const hasBlue = designSystems.some((d) => d.tags.includes("azul"));
@@ -183,18 +220,61 @@ export function buildFallbackGrillQuestions(
   const isApi = input.appKind === "api";
   const isLanding = input.appKind === "landing";
 
+  if (isLanding) {
+    return [
+      {
+        id: "q_landing_goal",
+        category: "product",
+        question: "Qual é o objetivo principal dessa Landing Page?",
+        options: [
+          "Capturar leads e agendamentos (WhatsApp + formulário)",
+          "Vender um produto, serviço ou plano diretamente",
+          "Apresentar negócio local (cardápio/serviços, endereço e WhatsApp)",
+          "Lançamento ou lista de espera de novo produto"
+        ],
+        allowCustom: true,
+        recommended: "Capturar leads e agendamentos (WhatsApp + formulário)"
+      },
+      {
+        id: "q_landing_sections",
+        category: "ux",
+        question: "Quais seções estratégicas não podem faltar na página?",
+        options: [
+          "Completo: Hero + Prova social + Benefícios + Como funciona + FAQ + Leads/WhatsApp",
+          "Foco em vendas: Hero + Planos/Preços + Depoimentos + Garantia + FAQ",
+          "Negócio local: Vitrine de serviços/itens + Horários/Endereço + Avaliações + WhatsApp"
+        ],
+        allowCustom: true,
+        recommended: "Completo: Hero + Prova social + Benefícios + Como funciona + FAQ + Leads/WhatsApp"
+      },
+      {
+        id: "q_landing_images",
+        category: "data",
+        question: "Como prefere montar os espaços de imagem da página?",
+        options: [
+          "Placeholders numerados (Imagem 1, 2, 3) prontos para eu enviar fotos no chat depois",
+          "Misturar espaços numerados de foto + mockups e gráficos visuais em SVG",
+          "Sem fotos externas — apenas mockups de interface e gráficos vetoriais limpos"
+        ],
+        allowCustom: true,
+        recommended: "Placeholders numerados (Imagem 1, 2, 3) prontos para eu enviar fotos no chat depois"
+      },
+      buildLandingArchetypeQuestion()
+    ];
+  }
+
   const questions: GrillQuestion[] = [
     {
       id: "q_scope",
       category: "product",
-      question: isLanding
-        ? "Qual é a ação principal que o visitante deve fazer na página?"
-        : "Qual é o fluxo principal que você vai usar todos os dias nesse app?",
-      options: isLanding
-        ? ["Preencher formulário / contato", "Explorar recursos e benefícios", "Comparar planos ou portfólio"]
-        : ["Cadastrar e organizar itens rapidamente", "Acompanhar metas/indicadores em painel", "Filtrar, buscar e exportar registros"],
+      question: "Qual é o fluxo principal que você vai usar todos os dias nesse app?",
+      options: [
+        "Cadastrar e organizar itens rapidamente",
+        "Acompanhar metas/indicadores em painel",
+        "Filtrar, buscar e exportar registros"
+      ],
       allowCustom: true,
-      recommended: isLanding ? "Explorar recursos e benefícios" : "Cadastrar e organizar itens rapidamente"
+      recommended: "Cadastrar e organizar itens rapidamente"
     },
     {
       id: "q_features",
@@ -222,7 +302,7 @@ export function buildFallbackGrillQuestions(
   ];
 
   if (!isApi) {
-    questions.push(buildVisualStyleQuestion(input.designSystems));
+    questions.push(buildVisualStyleQuestion(input.designSystems, input.appKind));
   }
 
   return questions.slice(0, MAX_GRILL_QUESTIONS);
@@ -307,9 +387,9 @@ export function parseGrillQuestionsJson(
         const needsVisual = input.mode !== "general" && input.appKind !== "api";
         if (needsVisual && !out.some((q) => q.category === "visual")) {
           if (out.length >= MAX_GRILL_QUESTIONS) {
-            out[out.length - 1] = buildVisualStyleQuestion(input.designSystems);
+            out[out.length - 1] = buildVisualStyleQuestion(input.designSystems, input.appKind);
           } else {
-            out.push(buildVisualStyleQuestion(input.designSystems));
+            out.push(buildVisualStyleQuestion(input.designSystems, input.appKind));
           }
         }
         return out.slice(0, MAX_GRILL_QUESTIONS);
@@ -343,20 +423,33 @@ export async function generateBriefingGrillQuestions(
       : "dark minimalista, verde escuro, violeta tech, claro minimalista";
 
   const isGeneral = input.mode === "general";
-  const systemPrompt = isGeneral ? GRILL_GENERAL_SYSTEM_PROMPT : GRILL_APP_SYSTEM_PROMPT;
+  const isLanding = !isGeneral && input.appKind === "landing";
+  const systemPrompt = isGeneral
+    ? GRILL_GENERAL_SYSTEM_PROMPT
+    : isLanding
+      ? GRILL_LANDING_SYSTEM_PROMPT
+      : GRILL_APP_SYSTEM_PROMPT;
   const userPrompt = isGeneral
     ? [
         `Pedido amplo do usuário: "${sanitizeShortText(input.prompt, 700)}"`,
         "",
         "Gere apenas as 3 a 5 perguntas mais decisivas (máx. 10) colocando a opção recomendada em primeiro. Retorne SOMENTE o JSON."
       ].join("\n")
-    : [
-        `Ideia inicial do usuário: "${sanitizeShortText(input.prompt, 700)}"`,
-        `Tipo provável: ${input.appKind ?? "web_app"} | Tema sugerido: ${input.theme ?? "dark"}`,
-        `Estilos visuais disponíveis no catálogo local: ${catalogHint}`,
-        "",
-        "Gere apenas as perguntas que realmente fazem diferença (entre 3 e 6; máx. 10), com a opção recomendada em primeiro. Retorne SOMENTE o JSON."
-      ].join("\n");
+    : isLanding
+      ? [
+          `Ideia de Landing Page do usuário: "${sanitizeShortText(input.prompt, 700)}"`,
+          `Tema sugerido: ${input.theme ?? "light"}`,
+          "Arquétipos disponíveis: Editorial Luxo, Conversão Bold, Vitrine de Negócio Local, Contraste Escuro e Claro, Dark Bento Tech.",
+          "",
+          "Gere de 4 a 6 perguntas curtas focadas em conversão, público, seções, espaços numerados de imagem (Imagem 1, 2, 3) e escolha de arquétipo visual. Coloque a opção recomendada em primeiro. Retorne SOMENTE o JSON."
+        ].join("\n")
+      : [
+          `Ideia inicial do usuário: "${sanitizeShortText(input.prompt, 700)}"`,
+          `Tipo provável: ${input.appKind ?? "web_app"} | Tema sugerido: ${input.theme ?? "dark"}`,
+          `Estilos visuais disponíveis no catálogo local: ${catalogHint}`,
+          "",
+          "Gere apenas as perguntas que realmente fazem diferença (entre 3 e 6; máx. 10), com a opção recomendada em primeiro. Retorne SOMENTE o JSON."
+        ].join("\n");
 
   for (const plat of priority) {
     const st = statuses.find((s) => s.id === plat);

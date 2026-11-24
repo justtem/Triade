@@ -37,6 +37,7 @@ const VERDICT_SYSTEM_PROMPT = [
   "- Em consensus: 2 a 4 itens curtos.",
   "- Em divergences: 1 a 4 itens curtos (se não houver divergência relevante, informe isso em 1 item).",
   "- Em winner: use APENAS o ID exato de uma das IAs presentes ou \"tie\" em caso de empate real.",
+  "- NUNCA favoreça sua própria resposta; avalie imparcialmente completude real, código completo sem truncamento e aderência ao pedido.",
   "- Seja crítico: aponte alucinações, omissões ou riscos de segurança se alguma IA tiver errado."
 ].join("\n");
 
@@ -221,11 +222,12 @@ export function shouldTriggerAutoVerdict(
  */
 export async function rankJudgeCandidates(
   preferredJudge?: AutoPlatform,
-  options: { minRemainingQuotaRatio?: number } = {}
+  options: { minRemainingQuotaRatio?: number; totalResponsesChars?: number } = {}
 ): Promise<AutoPlatform[]> {
   initProviders();
   const statuses = await getProvidersStatus();
   const minRatio = options.minRemainingQuotaRatio ?? 0;
+  const isLongTechnicalComparison = (options.totalResponsesChars ?? 0) > 4_500;
 
   const available = statuses.filter(
     (s) => s.ready && Boolean(getProvider(s.id))
@@ -242,10 +244,17 @@ export async function rankJudgeCandidates(
         tokCap && tokCap > 0 ? Math.max(0, 1 - tokUsed / tokCap) : 1;
       const remainingRatio = Math.min(reqRatio, tokRatio);
 
-      // Onda 3: prioriza Groq (~0,5s e 900 req/dia) como Juiz do Veredito Automático,
-      // com Gemini e OpenRouter como reserva imediata (e NVIDIA por último por ser mais lenta).
-      const contextBonus =
-        s.id === "groq"
+      // Para respostas longas/código (> 4.5k chars), Groq (janela 2k chars) corta 90% do código e gera viés:
+      // prioriza Gemini -> OpenRouter -> NVIDIA. Para perguntas curtas, Groq (~0,5s) lidera.
+      const contextBonus = isLongTechnicalComparison
+        ? s.id === "gemini"
+          ? 0.35
+          : s.id === "openrouter"
+            ? 0.22
+            : s.id === "nvidia"
+              ? 0.12
+              : -0.25
+        : s.id === "groq"
           ? 0.3
           : s.id === "gemini"
             ? 0.18
@@ -357,7 +366,13 @@ export async function generateTurnVerdict(
     );
   }
 
+  const totalResponsesChars = candidateResponses.reduce(
+    (sum, r) => sum + (r.content?.length ?? 0),
+    0
+  );
+
   const judgeOrder = await rankJudgeCandidates(options.judge, {
+    totalResponsesChars,
     ...(options.minRemainingQuotaRatio !== undefined
       ? { minRemainingQuotaRatio: options.minRemainingQuotaRatio }
       : {})

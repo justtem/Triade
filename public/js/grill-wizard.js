@@ -843,7 +843,7 @@ export async function openGrillWizardForApp(
           state.userProjects = prepared.projects;
         }
         if (prepared?.project?.id) {
-          state.activeProjectId = prepared.project.id;
+          state.activeNewChatProjectId = prepared.project.id;
           uiHooks.renderSidebarProjects?.();
           uiHooks.syncComposerProjectPill?.();
         }

@@ -79,6 +79,7 @@ const activeControllers = new Map<
     platform: AutoPlatform;
     controller: AbortController;
     partialText: string;
+    lastDeltaAt: number;
   }
 >();
 const retryNotBefore = new Map<string, number>();
@@ -129,7 +130,11 @@ function getOrCreateStageTracker(
   session: DebateSession,
   activeTurnId: string | undefined
 ): StageQuorumTracker | null {
-  if (session.currentStage === "synthesis") return null;
+  // Só aplica prazo de quórum em modo Debate (onde a Síntese aguarda a rodada);
+  // no modo Direto/Conselho cada IA termina livremente sem nunca interromper streaming!
+  if (session.interactionMode === "direct" || session.currentStage === "synthesis") {
+    return null;
+  }
 
   const stageTasks = session.tasks.filter(
     (t) =>
@@ -182,11 +187,15 @@ function listInFlightControllersForTracker(tracker: StageQuorumTracker): Array<{
   taskId: string;
   platform: AutoPlatform;
   controller: AbortController;
+  partialText: string;
+  lastDeltaAt: number;
 }> {
   const result: Array<{
     taskId: string;
     platform: AutoPlatform;
     controller: AbortController;
+    partialText: string;
+    lastDeltaAt: number;
   }> = [];
   for (const [taskId, entry] of activeControllers.entries()) {
     if (
@@ -195,14 +204,51 @@ function listInFlightControllersForTracker(tracker: StageQuorumTracker): Array<{
       entry.stage === tracker.stage &&
       (!tracker.turnId || !entry.turnId || entry.turnId === tracker.turnId)
     ) {
-      result.push({ taskId, platform: entry.platform, controller: entry.controller });
+      result.push({
+        taskId,
+        platform: entry.platform,
+        controller: entry.controller,
+        partialText: entry.partialText,
+        lastDeltaAt: entry.lastDeltaAt
+      });
     }
   }
   return result;
 }
 
+const ACTIVE_STREAM_PROTECT_MS = 15_000;
+
 function makeStageBatchContext(tracker: StageQuorumTracker): StageBatchContext {
   const quorumSize = tracker.totalTasks >= 3 ? 2 : 1;
+
+  const scheduleStragglerCheck = (delayMs: number) => {
+    if (tracker.graceTimer) return;
+    tracker.graceTimer = setTimeout(() => {
+      tracker.graceTimer = undefined;
+      const now = Date.now();
+      const stillSlow = listInFlightControllersForTracker(tracker);
+      let anyActivelyStreaming = false;
+
+      for (const slow of stillSlow) {
+        // NUNCA interrompe uma IA que está escrevendo ativamente na tela!
+        if (slow.partialText.length > 0 && now - slow.lastDeltaAt < ACTIVE_STREAM_PROTECT_MS) {
+          anyActivelyStreaming = true;
+          continue;
+        }
+        stragglerAborted.add(slow.taskId);
+        try {
+          slow.controller.abort();
+        } catch {
+          // Ignora erro de aborto duplicado
+        }
+      }
+
+      // Se alguma IA ainda estava escrevendo tokens, reavalia depois sem matar o código dela
+      if (anyActivelyStreaming) {
+        scheduleStragglerCheck(ACTIVE_STREAM_PROTECT_MS);
+      }
+    }, delayMs);
+  };
 
   return {
     hasQuorum: () => tracker.succeededTaskIds.size >= quorumSize,
@@ -231,18 +277,7 @@ function makeStageBatchContext(tracker: StageQuorumTracker): StageBatchContext {
               ? PAIR_GEMINI_GRACE_MS
               : PAIR_STRAGGLER_GRACE_MS;
 
-        tracker.graceTimer = setTimeout(() => {
-          tracker.graceTimer = undefined;
-          const stillSlow = listInFlightControllersForTracker(tracker);
-          for (const slow of stillSlow) {
-            stragglerAborted.add(slow.taskId);
-            try {
-              slow.controller.abort();
-            } catch {
-              // Ignora erro de aborto duplicado
-            }
-          }
-        }, graceMs);
+        scheduleStragglerCheck(graceMs);
       }
     }
   };
@@ -458,7 +493,8 @@ async function runTask(
       stage: task.stage,
       platform,
       controller,
-      partialText: ""
+      partialText: "",
+      lastDeltaAt: 0
     };
     activeControllers.set(task.id, controllerEntry);
 
@@ -499,6 +535,7 @@ async function runTask(
         onDelta: (delta) => {
           if (controller.signal.aborted) return;
           controllerEntry.partialText += delta;
+          controllerEntry.lastDeltaAt = Date.now();
           pushTaskStreamDelta(debateId, task.id, delta);
         },
         onReset: () => {
@@ -519,7 +556,8 @@ async function runTask(
         const skipped = await skipStragglerTaskAndAdvanceStage(
           debateId,
           task.id,
-          `${label} excedeu o prazo da rodada após quórum — dispensada para acelerar a síntese.`
+          `${label} excedeu o prazo da rodada após quórum — dispensada para acelerar a síntese.`,
+          controllerEntry.partialText
         );
         console.log(
           `[AI Council] ${label} dispensada por prazo da rodada (quórum já concluído — avançando etapa).`
@@ -651,7 +689,8 @@ async function runTask(
         const skipped = await skipStragglerTaskAndAdvanceStage(
           debateId,
           task.id,
-          `${label} excedeu o prazo da rodada após quórum — dispensada para acelerar a síntese.`
+          `${label} excedeu o prazo da rodada após quórum — dispensada para acelerar a síntese.`,
+          controllerEntry.partialText
         );
         return Boolean(skipped);
       }

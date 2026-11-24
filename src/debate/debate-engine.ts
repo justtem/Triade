@@ -2267,7 +2267,8 @@ export async function submitDebateTaskResponse(
 export async function skipStragglerTaskAndAdvanceStage(
   debateId: string,
   taskId: string,
-  reason = "Dispensada por prazo da rodada para acelerar a síntese."
+  reason = "Dispensada por prazo da rodada para acelerar a síntese.",
+  partialContent?: string
 ): Promise<DebateSession | null> {
   return withDebateLock(async () => {
     const session = await readDebateSessionById(debateId);
@@ -2304,6 +2305,26 @@ export async function skipStragglerTaskAndAdvanceStage(
     delete task.systemPrompt;
     task.prompt = "";
     session.updatedAt = now;
+
+    // Nunca apaga texto parcial relevante que a IA já tinha escrito na tela!
+    const cleanPartial = partialContent ? stripLegacyWrappers(partialContent) : "";
+    if (cleanPartial.length >= 80) {
+      const alreadySaved = session.responses.some((r) => r.taskId === task.id);
+      if (!alreadySaved) {
+        session.responses.push({
+          id: randomUUID(),
+          ...(task.turnId ? { turnId: task.turnId } : {}),
+          taskId: task.id,
+          round: task.round,
+          stage: task.stage,
+          platform: task.platform,
+          promptUsed: "",
+          content: cleanPartial,
+          submittedAt: now,
+          interrupted: true
+        });
+      }
+    }
 
     if (session.participantStates[task.platform]) {
       session.participantStates[task.platform] = {

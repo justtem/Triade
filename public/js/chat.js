@@ -2564,7 +2564,36 @@ function buildBuilderPanelForTurn(debate, turn, turnResponses) {
 
     // Fluxo enxuto e automático: no máximo 1 ação principal relevante + Desfazer (segurança) + menu "⋯" discreto
     if (stKey === "completed") {
-      // Concluído e validado: zero botões primários redundantes (apenas Desfazer + ⋯)
+      // Concluído e validado: se houver public/index.html, oferece botão rápido de exportar pacote estático (deploy-static/)
+      const hasStaticPublicHtml = files.some((f) =>
+        /(?:^|\/)public\/index\.html$/i.test(String(f.path || ""))
+      );
+      if (hasStaticPublicHtml) {
+        const exportBtn = document.createElement("button");
+        exportBtn.type = "button";
+        exportBtn.className = "btn-secondary builder-act-btn";
+        exportBtn.textContent = "Exportar p/ publicar";
+        exportBtn.title = "Gera a pasta deploy-static/ pronta para Netlify Drop, Vercel ou GitHub Pages";
+        exportBtn.addEventListener("click", async () => {
+          exportBtn.disabled = true;
+          feedbackEl.textContent = "Gerando pacote estático em deploy-static/...";
+          try {
+            const res = await fetchJson(`/debates/${debate.id}/builder/export-static`, {
+              method: "POST",
+              body: { turnId: turn.id }
+            });
+            const count = res?.export?.copiedFiles?.length ?? 0;
+            feedbackEl.textContent = `Pacote pronto em deploy-static/ (${count} arquivo${count === 1 ? "" : "s"}) — arraste na Netlify Drop, Vercel ou GitHub Pages!`;
+          } catch (err) {
+            feedbackEl.textContent =
+              err instanceof Error ? err.message : "Erro ao exportar pacote estático.";
+          } finally {
+            exportBtn.disabled = false;
+          }
+        });
+        actionsRow.appendChild(exportBtn);
+      }
+
       secondaryMenuItems.push({
         label: "Rodar build / test novamente",
         onClick: () =>
